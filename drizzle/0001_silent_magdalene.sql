@@ -1,0 +1,1 @@
+ALTER TABLE `reports` ADD CONSTRAINT `reports_parent_org_fk` FOREIGN KEY (`parentReportId`,`organizationId`) REFERENCES `reports`(`id`,`organizationId`) ON DELETE restrict ON UPDATE no action;

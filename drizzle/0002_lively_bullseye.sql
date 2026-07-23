@@ -1,0 +1,1 @@
+ALTER TABLE `evidence_items` ADD `clinicalDomain` enum('germline_classification','oncogenicity','therapeutic','diagnostic','prognostic','population','functional','other') DEFAULT 'other' NOT NULL;

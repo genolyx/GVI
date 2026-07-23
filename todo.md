@@ -1,0 +1,63 @@
+# Genolyx Variant Interpreter — Project TODO
+
+- [x] `genolyx/GVI` 원격 저장소 상태를 확인하고 현재 프로젝트의 Git 원격으로 연결한다.
+- [x] 제품명, 의료용 면책 범위, 디자인 원칙, 테넌트 보안 원칙을 README에 문서화한다.
+- [x] 조직, 조직 구성원, 프로젝트, 케이스, 샘플, 파일, 분석 작업, 변이, 근거, 판정, 보고서, 감사 이벤트의 데이터 모델을 구현한다.
+- [x] 조직 역할을 `administrator`, `analyst`, `clinician`, `viewer`로 정의하고 액션 단위 권한 매트릭스를 구현한다.
+- [x] 모든 테넌트 소유 레코드에 `organizationId`를 강제하고 서버 조회가 조직 컨텍스트 없이는 실행되지 않도록 한다.
+- [x] 다른 조직 ID를 주입한 케이스·변이·보고서 직접 객체 참조가 거부되는 테넌트 침범 테스트를 작성한다.
+- [x] 사용자별 활성 조직 선택과 조직 생성 기능을 구현한다.
+- [x] 조직 초대 생성·수락·취소와 역할 변경 기능을 구현한다.
+- [x] 프로젝트 생성·목록·상세와 프로젝트 단위 데이터 범위 필터를 구현한다.
+- [x] Germline·Somatic 검사 목적, FASTQ·VCF 입력 방식, 샘플, 패널, 레퍼런스 빌드, 동의 여부를 받는 분석 의뢰 양식을 구현한다.
+- [x] VCF/FASTQ 파일을 S3에 저장하고 조직·케이스 경로 및 체크섬 메타데이터를 DB에 기록한다.
+- [x] 분석 작업 상태를 `queued`, `running`, `review_ready`, `failed`, `completed`로 관리하고 타임라인을 표시한다.
+- [x] gx-daemon/gx-exome 연동을 위한 outbound job manifest와 상태 callback 계약을 구현한다.
+- [x] 변이 정규화 식별자, 유전자, HGVS, 좌표, 변이 유형, 빈도, 영향도, 품질 정보를 저장하는 변이 모델을 구현한다.
+- [x] 유전자·변이 유형·빈도·영향도·분류 기준 필터와 정렬이 가능한 변이 워크벤치를 구현한다.
+- [x] 변이 선택 시 근거, 분류 체크리스트, 메모, 감사 이력을 보여주는 상세 패널을 구현한다.
+- [x] Germline용 ACMG 2015 코드 PVS1, PS1–PS4, PM1–PM6, PP1–PP5, BA1, BS1–BS4, BP1–BP7 체크리스트를 구현한다.
+- [x] Germline 분류를 Pathogenic, Likely Pathogenic, VUS, Likely Benign, Benign으로 저장하고 근거 메모를 요구한다.
+- [x] Somatic용 AMP/ASCO/CAP Tier I–IV와 oncogenicity를 분리 저장하는 해석 워크플로를 구현한다.
+- [x] Somatic 검체 유형, 종양 함량, VAF, read depth, 질환 맥락, 치료·진단·예후 근거를 구조화한다.
+- [x] ClinVar, OMIM, gnomAD, 문헌 출처를 provenance와 함께 저장하는 Evidence Ledger를 구현한다.
+- [x] AI 근거 코파일럿이 선택 변이와 출처 근거만으로 인용 가능한 해석 초안을 생성하도록 구현한다.
+- [x] AI 코파일럿이 분류·서명을 확정하지 못하도록 하고 인용 없는 문장을 표시하는 안전 가드레일을 구현한다.
+- [x] 전문가 검토 전용 AI 채팅 인터페이스와 변이 컨텍스트·대화 이력을 구현한다.
+- [x] 보고서 템플릿, 결과 요약, 주요 변이, 해석, 근거, 방법·한계 섹션 편집 기능을 구현한다.
+- [x] Draft → In Review → Signed → Amended 보고서 상태 전이를 서버에서 검증한다.
+- [x] 서명 시 보고서 JSON 스냅샷과 SHA-256 해시를 생성하고 이후 수정이 불가능하도록 구현한다.
+- [x] 전문의 전자서명, 서명 시각, 서명자 역할, 보고서 버전을 기록한다.
+- [x] Signed 보고서의 인쇄·PDF 저장용 화면을 구현하고 서명·버전·해시를 표시한다.
+- [x] 감사 로그에 조직, 사용자, 시각, 대상, 변경 전후, 요청 ID를 기록한다.
+- [x] 감사 로그 검색·필터·상세 조회 화면을 구현한다.
+- [x] 대시보드에 분석 상태, 최근 케이스, 검토 대기, 조직 케이스 수, 분류 분포를 표시한다.
+- [x] 보안 투명성 콘솔에 활성 조직, 사용자 역할, 접근 가능한 프로젝트, 적용된 격리 통제를 표시한다.
+- [x] 역할별로 메뉴뿐 아니라 생성·수정·판정·서명·초대·내보내기 액션을 숨기고 서버에서도 거부한다.
+- [x] 정제된 의료 SaaS 디자인 시스템과 반응형 전문가용 사이드바 레이아웃을 구현한다.
+- [x] 로딩·빈 상태·오류·권한 부족 상태와 키보드 접근성·포커스 상태를 구현한다.
+- [x] 데이터 모델 마이그레이션을 생성하고 실제 데이터베이스에 적용한다.
+- [x] 테넌트 격리, RBAC, 상태 전이, ACMG/AMP 코드, 불변 보고서, 감사 기록 Vitest를 작성한다.
+- [x] TypeScript 검사, Vitest, 프로덕션 빌드를 통과시킨다.
+- [x] 데스크톱·모바일 주요 화면을 시각 검증하고 발견된 레이아웃 문제를 수정한다.
+- [x] 완료된 기능을 README와 아키텍처·보안 문서에 기록한다.
+- [x] 최종 체크포인트를 생성하고 `genolyx/GVI` 푸시를 시도했으나 GitHub App 쓰기 권한 403을 확인해 사용자 직접 푸시 방식으로 전환한다.
+- [x] 주요 페이지(Home, Reports, ReportEditor 포함)에 query/mutation 오류 상태 UI를 추가하고 공통 Error/Empty/Forbidden 패턴으로 정리한다.
+- [x] 주요 화면의 탭 이동, 포커스 가시성, 클릭 가능한 카드의 키보드 조작 가능 여부를 점검하고 보완한다.
+- [x] Cases, Workbench, SecurityConsole, CaseDetail 등 남은 주요 화면에 query/mutation 오류 상태와 재시도 UI를 추가한다.
+- [x] 권한 부족·빈 상태 패턴을 주요 화면 전반에서 공통 StatePanel 컴포넌트로 통일한다.
+- [x] Workbench의 models/messageQuery 오류·재시도 UI를 AI Copilot 탭에 명시적으로 노출한다.
+- [x] Reports와 Cases의 잔여 empty 상태를 공통 StatePanel로 교체한다.
+- [x] OrganizationContext의 조직 목록 조회 실패를 전역 레이아웃에서 복구 가능한 StatePanel로 노출한다.
+- [x] Workbench의 refresh/saveInterpretation/saveCriterion/approve/ask 실패 상태에 작업별 재시도 액션을 추가한다.
+- [x] index.css와 주요 화면의 포커스·reduced-motion·키보드 상호작용 적용 여부를 코드로 재검증하고 누락을 보완한다.
+- [x] 전체 라우트와 주요·보조 화면별 loading·empty·error·forbidden·키보드·포커스 적용 여부를 파일 단위로 감사하고 누락을 보완한다.
+- [x] Cases, CaseDetail, Workbench, Reports, ReportEditor 직접 URL 접근에 명시적 read 권한 부족 StatePanel을 적용한다.
+- [x] `/workbench` 루트에 케이스 선택 안내 화면을 제공해 사이드바 탐색 단절을 제거한다.
+- [x] 사이드바에 권한 기반 감사 로그 진입점을 추가하고 전체 라우트 상태·접근성 감사 근거 문서를 작성한다.
+- [x] Git 이력·의존성·빌드 산출물·비밀값을 제외한 소스 ZIP과 SHA-256 체크섬을 생성하고 압축 내용 및 재현 명령을 검증한다.
+- [x] ZIP을 새 임시 디렉터리에 풀고 `pnpm install && pnpm check && pnpm vitest run && pnpm build`를 문서와 동일한 순서로 실행한다.
+- [x] ZIP 단독 재현 검증의 테스트 수와 빌드 결과를 VALIDATION.md에 기록한 뒤 패키지와 체크섬을 다시 생성한다.
+- [x] `gatewayAuth.test.ts`가 외부 `GVI_GATEWAY_TOKEN` 없이 자체 테스트 토큰을 사용하도록 수정하고 환경을 원상 복구한다.
+- [x] `GVI_GATEWAY_TOKEN`을 제거한 프로세스에서 TypeScript 검사, 22개 테스트, 프로덕션 빌드를 다시 실행한다.
+- [x] 로컬 환경 독립 검증 결과를 문서화하고 수정 소스 ZIP·SHA-256 체크섬·체크포인트를 재생성한다.
