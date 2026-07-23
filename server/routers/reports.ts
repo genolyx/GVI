@@ -86,13 +86,13 @@ export const reportsRouter = router({
         `${variant.gene || "Intergenic"} ${variant.hgvsC || variant.normalizedId}: ${interpretation.germlineClassification || interpretation.somaticTier || "Reviewed"}${interpretation.oncogenicity ? ` / ${interpretation.oncogenicity}` : ""}`
       );
       const content = {
-        summary: approved.length ? `${approved.length}개의 승인된 변이가 본 보고서 초안에 포함되었습니다.` : "승인된 변이가 아직 없습니다. 전문가 검토 후 결과를 기술하십시오.",
+        summary: approved.length ? `${approved.length} approved variant(s) included in this report draft.` : "No approved variants yet. Describe findings after expert review.",
         indication: clinicalCase.indication || "",
         findings: findingLines.join("\n"),
         interpretation: approved.map(({ interpretation }) => interpretation.rationale).join("\n\n"),
         methodology: `${clinicalCase.inputType.toUpperCase()} input; reference ${clinicalCase.referenceBuild}; ${clinicalCase.panelName || "panel not specified"}.`,
-        limitations: "본 결과는 제출된 검체와 사용된 분석 범위에 한정됩니다. 독립적 임상 상관관계 검토가 필요합니다.",
-        recommendations: "임상 맥락, 가족력 또는 종양 특성과 함께 검토하십시오.",
+        limitations: "Results are limited to the submitted specimen and analysis scope used. Independent clinical correlation is required.",
+        recommendations: "Review in the context of clinical history, family history, or tumor characteristics.",
       };
       const result = await db.insert(reports).values({ organizationId: input.organizationId, caseId: input.caseId, version: (existing[0]?.version || 0) + 1, title: `${clinicalCase.caseNumber} ${clinicalCase.purpose === "germline" ? "Germline" : "Somatic"} Variant Interpretation Report`, content, parentReportId: existing[0]?.id || null, createdBy: ctx.user.id });
       const id = Number(result[0].insertId);

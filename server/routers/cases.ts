@@ -310,7 +310,7 @@ export const casesRouter = router({
         organizationId: input.organizationId,
         jobId,
         status: "queued",
-        message: "분석 요청이 안전하게 접수되었습니다.",
+        message: "Analysis request securely queued.",
         progressPercent: 0,
       });
       await db.update(cases).set({ status: "queued" }).where(
@@ -344,7 +344,7 @@ export const casesRouter = router({
               organizationId: input.organizationId,
               jobId,
               status: "review_ready",
-              message: `${parsed.length.toLocaleString()}개 변이를 정규화하여 검토 준비를 완료했습니다.`,
+              message: `Normalized ${parsed.length.toLocaleString()} variant(s) — ready for review.`,
               progressPercent: 100,
             });
             await tx.update(cases).set({ status: "review_ready" }).where(

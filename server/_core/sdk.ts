@@ -289,8 +289,9 @@ class SDKServer {
     const signedInAt = new Date();
     let user = await db.getUserByOpenId(sessionUserId);
 
-    // If user not in DB, sync from OAuth server automatically
-    if (!user) {
+    // If user not in DB, sync from OAuth server automatically.
+    // Skip sync in local dev environment where OAUTH_SERVER_URL is not configured.
+    if (!user && ENV.oAuthServerUrl) {
       try {
         const userInfo = await this.getUserInfoWithJwt(sessionToken ?? "");
         await db.upsertUser({

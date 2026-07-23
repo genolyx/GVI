@@ -93,7 +93,7 @@ export function registerGatewayAuthRoutes(app: Express) {
         organizationId: job.organizationId,
         jobId: job.id,
         status: "running",
-        message: "내부 분석 실행기가 작업을 안전하게 claim했습니다.",
+        message: "Internal analysis executor securely claimed the job.",
         progressPercent: 1,
         metadata: { externalJobId },
       });

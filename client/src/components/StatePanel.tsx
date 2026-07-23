@@ -27,7 +27,7 @@ export function StatePanel({ type, title, description, onRetry, action, compact 
       <p className="mt-4 text-[10px] font-semibold uppercase tracking-[.16em] text-muted-foreground">{style.eyebrow}</p>
       <h2 className="mt-2 font-display text-lg font-semibold">{title}</h2>
       <p className="mt-2 max-w-lg text-xs leading-6 text-muted-foreground">{description}</p>
-      {onRetry || action ? <div className="mt-5 flex flex-wrap justify-center gap-2">{onRetry ? <Button variant="outline" onClick={onRetry}><RefreshCw className="mr-2 size-4" />다시 시도</Button> : null}{action}</div> : null}
+      {onRetry || action ? <div className="mt-5 flex flex-wrap justify-center gap-2">{onRetry ? <Button variant="outline" onClick={onRetry}><RefreshCw className="mr-2 size-4" />Retry</Button> : null}{action}</div> : null}
     </section>
   );
 }

@@ -3,6 +3,7 @@ import { useOrganization } from "@/contexts/OrganizationContext";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { StatePanel } from "@/components/StatePanel";
 import {
   DropdownMenu,
@@ -43,14 +44,79 @@ import { type CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from "./DashboardLayoutSkeleton";
 
+/** Local dev-only login panel */
+function LoginPanel({ isDevAuth }: { isDevAuth: boolean }) {
+  const [name, setName] = useState("Admin");
+  const [email, setEmail] = useState("admin@localhost");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const handleDevLogin = async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const res = await fetch("/api/dev/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ openId: `dev_${email}`, name, email }),
+      });
+      if (!res.ok) throw new Error(await res.text());
+      window.location.reload();
+    } catch (err) {
+      setError(String(err));
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="grid min-h-screen place-items-center bg-[radial-gradient(circle_at_top_right,oklch(0.89_0.07_181),transparent_32rem)] px-5">
+      <div className="clinical-panel w-full max-w-lg overflow-hidden">
+        <div className="border-b border-border/70 bg-slate-950 px-8 py-7 text-white">
+          <div className="mb-8 flex items-center gap-3">
+            <div className="grid size-10 place-items-center rounded-xl bg-teal-500 text-white"><Dna className="size-5" /></div>
+            <div><p className="font-display text-sm font-semibold">Genolyx</p><p className="text-[10px] uppercase tracking-[0.16em] text-slate-400">Variant Interpreter</p></div>
+          </div>
+          <h1 className="font-display text-3xl font-semibold tracking-tight">Clinical evidence,<br />under expert control.</h1>
+          <p className="mt-3 max-w-sm text-sm leading-6 text-slate-400">Tenant isolation, evidence tracing, expert review, and immutable signed reports — all in one workspace.</p>
+        </div>
+        <div className="space-y-5 p-8">
+          {isDevAuth ? (
+            <>
+              <div>
+                <h2 className="font-display text-lg font-semibold">Dev Login</h2>
+                <p className="mt-1 text-sm text-muted-foreground">Local development only — sign in without OAuth.</p>
+              </div>
+              <div className="space-y-3">
+                <Input placeholder="Name" value={name} onChange={e => setName(e.target.value)} />
+                <Input placeholder="Email" type="email" value={email} onChange={e => setEmail(e.target.value)} />
+              </div>
+              {error && <p className="text-xs text-destructive">{error}</p>}
+              <Button onClick={handleDevLogin} size="lg" className="w-full" disabled={loading || !name || !email}>
+                {loading ? "Signing in…" : "Continue"}
+              </Button>
+              <p className="text-center text-[11px] leading-5 text-amber-600">⚠ DEV_AUTH mode — disabled in production.</p>
+            </>
+          ) : (
+            <>
+              <div><h2 className="font-display text-lg font-semibold">Secure Login</h2><p className="mt-1 text-sm text-muted-foreground">Sign in with an approved account to access your organization workspace.</p></div>
+              <Button onClick={() => startLogin()} size="lg" className="w-full">Continue</Button>
+              <p className="text-center text-[11px] leading-5 text-muted-foreground">Login activity and clinical data changes are recorded in the organization audit log.</p>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 const menuItems = [
-  { icon: LayoutDashboard, label: "대시보드", path: "/", permission: "case:read" },
-  { icon: ClipboardList, label: "케이스", path: "/cases", permission: "case:read" },
-  { icon: FlaskConical, label: "변이 워크벤치", path: "/workbench", permission: "variant:read" },
-  { icon: FileSignature, label: "임상 보고서", path: "/reports", permission: "report:read" },
-  { icon: Activity, label: "감사 로그", path: "/audit", permission: "audit:view" },
-  { icon: ShieldCheck, label: "보안 투명성", path: "/security", permission: "security:view" },
-  { icon: Users, label: "조직 관리", path: "/organization", permission: "member:manage" },
+  { icon: LayoutDashboard, label: "Dashboard", path: "/", permission: "case:read" },
+  { icon: ClipboardList, label: "Cases", path: "/cases", permission: "case:read" },
+  { icon: FlaskConical, label: "Variant Workbench", path: "/workbench", permission: "variant:read" },
+  { icon: FileSignature, label: "Clinical Reports", path: "/reports", permission: "report:read" },
+  { icon: Activity, label: "Audit Log", path: "/audit", permission: "audit:view" },
+  { icon: ShieldCheck, label: "Security", path: "/security", permission: "security:view" },
+  { icon: Users, label: "Organization", path: "/organization", permission: "member:manage" },
 ];
 
 const SIDEBAR_WIDTH_KEY = "gvi-sidebar-width";
@@ -68,25 +134,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   if (loading) return <DashboardLayoutSkeleton />;
   if (!user) {
-    return (
-      <div className="grid min-h-screen place-items-center bg-[radial-gradient(circle_at_top_right,oklch(0.89_0.07_181),transparent_32rem)] px-5">
-        <div className="clinical-panel w-full max-w-lg overflow-hidden">
-          <div className="border-b border-border/70 bg-slate-950 px-8 py-7 text-white">
-            <div className="mb-8 flex items-center gap-3">
-              <div className="grid size-10 place-items-center rounded-xl bg-teal-500 text-white"><Dna className="size-5" /></div>
-              <div><p className="font-display text-sm font-semibold">Genolyx</p><p className="text-[10px] uppercase tracking-[0.16em] text-slate-400">Variant Interpreter</p></div>
-            </div>
-            <h1 className="font-display text-3xl font-semibold tracking-tight">Clinical evidence,<br />under expert control.</h1>
-            <p className="mt-3 max-w-sm text-sm leading-6 text-slate-400">조직 격리, 근거 추적, 전문가 검토와 불변 전자서명 보고서를 하나의 워크스페이스에서 운영합니다.</p>
-          </div>
-          <div className="space-y-5 p-8">
-            <div><h2 className="font-display text-lg font-semibold">보안 로그인</h2><p className="mt-1 text-sm text-muted-foreground">승인된 계정으로 조직 워크스페이스에 접근하십시오.</p></div>
-            <Button onClick={() => startLogin()} size="lg" className="w-full">계속하기</Button>
-            <p className="text-center text-[11px] leading-5 text-muted-foreground">로그인 활동과 임상 데이터 변경은 조직 감사 로그에 기록됩니다.</p>
-          </div>
-        </div>
-      </div>
-    );
+    const isDevAuth = import.meta.env.VITE_DEV_AUTH === "true";
+    return <LoginPanel isDevAuth={isDevAuth} />;
   }
   return (
     <SidebarProvider style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}>
@@ -130,8 +179,8 @@ function DashboardLayoutContent({ children, setSidebarWidth }: { children: React
     };
   }, [isResizing, setSidebarWidth]);
 
-  if (organizationsLoading) return <div className="grid min-h-screen place-items-center bg-background px-5"><div className="w-full max-w-xl"><StatePanel type="loading" title="조직 보안 컨텍스트를 확인하고 있습니다" description="멤버십과 역할별 액션 권한을 불러오는 중입니다." /></div></div>;
-  if (organizationError) return <div className="grid min-h-screen place-items-center bg-background px-5"><div className="w-full max-w-xl"><StatePanel type="error" title="조직 컨텍스트를 불러오지 못했습니다" description={organizationError} onRetry={() => { void refetchOrganizations(); }} action={<Button variant="outline" onClick={logout}>로그아웃</Button>} /></div></div>;
+  if (organizationsLoading) return <div className="grid min-h-screen place-items-center bg-background px-5"><div className="w-full max-w-xl"><StatePanel type="loading" title="Verifying organization security context" description="Loading membership and role-based action permissions." /></div></div>;
+  if (organizationError) return <div className="grid min-h-screen place-items-center bg-background px-5"><div className="w-full max-w-xl"><StatePanel type="error" title="Failed to load organization context" description={organizationError} onRetry={() => { void refetchOrganizations(); }} action={<Button variant="outline" onClick={logout}>Sign out</Button>} /></div></div>;
 
   return (
     <>
@@ -174,7 +223,7 @@ function DashboardLayoutContent({ children, setSidebarWidth }: { children: React
                   {!isCollapsed ? <div className="min-w-0 flex-1"><p className="truncate text-xs font-semibold">{user?.name || "-"}</p><div className="mt-1 flex items-center gap-2"><p className="truncate text-[9px] text-sidebar-foreground/50">{user?.email || "-"}</p>{activeOrganization ? <Badge variant="outline" className="h-4 border-sidebar-border px-1 text-[7px] uppercase text-sidebar-foreground/60">{activeOrganization.role}</Badge> : null}</div></div> : null}
                 </button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-52"><DropdownMenuItem onClick={logout} className="text-destructive focus:text-destructive"><LogOut className="mr-2 size-4" />로그아웃</DropdownMenuItem></DropdownMenuContent>
+              <DropdownMenuContent align="end" className="w-52"><DropdownMenuItem onClick={logout} className="text-destructive focus:text-destructive"><LogOut className="mr-2 size-4" />Sign out</DropdownMenuItem></DropdownMenuContent>
             </DropdownMenu>
           </SidebarFooter>
         </Sidebar>
@@ -186,7 +235,7 @@ function DashboardLayoutContent({ children, setSidebarWidth }: { children: React
             {isMobile ? <SidebarTrigger className="size-9" /> : null}
             <div className="flex items-center gap-2 text-xs text-muted-foreground"><Activity className="size-3.5 text-emerald-600" /><span className="hidden sm:inline">Clinical workspace</span><span className="hidden text-border sm:inline">/</span><span className="font-medium text-foreground">{activeMenuItem?.label || "GVI"}</span></div>
           </div>
-          {activeOrganization ? <div className="flex items-center gap-2 rounded-full border border-border/70 bg-card px-3 py-1.5 text-[10px] text-muted-foreground shadow-sm"><ShieldCheck className="size-3.5 text-emerald-600" /><span className="hidden sm:inline">격리 범위</span><span className="font-semibold text-foreground">{activeOrganization.slug}</span></div> : null}
+          {activeOrganization ? <div className="flex items-center gap-2 rounded-full border border-border/70 bg-card px-3 py-1.5 text-[10px] text-muted-foreground shadow-sm"><ShieldCheck className="size-3.5 text-emerald-600" /><span className="hidden sm:inline">Isolated scope</span><span className="font-semibold text-foreground">{activeOrganization.slug}</span></div> : null}
         </div>
         <main className="flex-1 p-4 sm:p-6 lg:p-8">{children}</main>
       </SidebarInset>

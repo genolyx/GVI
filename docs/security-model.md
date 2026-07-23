@@ -1,57 +1,57 @@
-# Genolyx Variant Interpreter 보안 모델
+# Genolyx Variant Interpreter — Security Model
 
-## 보안 목표
+## Security objectives
 
-GVI의 핵심 보안 목표는 **조직 간 임상 데이터 침범 방지**, **역할별 최소 권한**, **변경 추적성**, **보고서 무결성**, **AI 출력의 임상 권한 분리**다. UI는 권한이 없는 메뉴와 액션을 숨기지만 최종 허용 여부는 항상 서버에서 다시 검증한다.
+GVI's core security objectives are: **prevention of cross-organization clinical data access**, **least-privilege by role**, **change traceability**, **report integrity**, and **separation of AI output from clinical authority**. The UI hides menus and actions without permission, but final authorization is always re-validated on the server.
 
-## 역할과 액션
+## Roles and actions
 
-| 역할 | 대표 허용 액션 | 명시적 제한 |
+| Role | Representative permitted actions | Explicit restrictions |
 |---|---|---|
-| Administrator | 조직·멤버·프로젝트·보안·감사 관리 | 임상 보고서 전자서명 불가 |
-| Analyst | 케이스 생성, 변이·근거 검토, 판정 초안 편집 | 판정 승인·전자서명·멤버 관리 불가 |
-| Clinician | 임상 검토, 판정 승인, 보고 검토·전자서명 | 멤버·조직 보안 관리 불가 |
-| Viewer | 허용된 케이스·변이·보고서 열람 | 생성·수정·승인·서명·초대 불가 |
+| Administrator | Manage organization, members, projects, security, audit | Cannot sign clinical reports electronically |
+| Analyst | Create cases, review variants and evidence, edit interpretation drafts | Cannot approve interpretations, sign reports, or manage members |
+| Clinician | Clinical review, interpretation approval, report review and electronic sign-out | Cannot manage members or organization security |
+| Viewer | Read-only access to permitted cases, variants, and reports | Cannot create, modify, approve, sign, or invite |
 
-권한은 `shared/permissions.ts`의 액션 카탈로그로 정의한다. 조직 멤버십 상태가 `active`가 아니면 역할이 있어도 접근을 허용하지 않는다.
+Permissions are defined as an action catalog in `shared/permissions.ts`. Even if a role exists, access is denied unless the organization membership status is `active`.
 
-## 테넌트 격리
+## Tenant isolation
 
-모든 보호 프로시저는 현재 사용자와 요청 `organizationId`의 활성 멤버십을 검증한다. 비멤버 요청은 리소스 존재 여부를 노출하지 않기 위해 `NOT_FOUND`로 수렴한다. 부모·자식 조회와 변경은 항상 동일 조직 조건을 포함한다.
+Every protected procedure verifies active membership for the current user and the requested `organizationId`. Non-member requests converge to `NOT_FOUND` to avoid revealing resource existence. Parent–child queries and mutations always include the same organization condition.
 
-| 통제 | 구현 원칙 |
+| Control | Implementation principle |
 |---|---|
-| Application RBAC | 프로시저 진입 시 액션 권한 검사 |
-| Query scoping | 모든 테넌트 조회·변경에 `organizationId` 조건 포함 |
-| Relational boundary | 조직 식별자를 포함한 부모 관계·고유키 |
-| Storage prefix | `organizations/{organizationId}/...` key 공간 |
-| Concealed lookup | 타 조직 직접 객체 참조를 `NOT_FOUND` 처리 |
-| UI transparency | 활성 조직·역할·허용 액션·프로젝트 범위 표시 |
+| Application RBAC | Action permission check at procedure entry |
+| Query scoping | `organizationId` condition included in every tenant read/write |
+| Relational boundary | Parent relationships and unique keys that include the organization identifier |
+| Storage prefix | `organizations/{organizationId}/...` key namespace |
+| Concealed lookup | Direct object references to other organizations return `NOT_FOUND` |
+| UI transparency | Active organization, role, permitted actions, and project scope displayed to the user |
 
-MySQL 호환 배포는 PostgreSQL식 네이티브 RLS를 제공하지 않으므로 스키마 소유권, 필수 조직 predicate, 프로시저 액션 권한의 세 층에서 격리한다. 데이터베이스와 S3 정책도 최소 권한으로 구성해야 한다.
+MySQL-compatible deployments do not provide native PostgreSQL-style RLS, so isolation is enforced at three layers: schema ownership, mandatory organization predicates, and procedure action permissions. Database and S3 policies should also be configured with least privilege.
 
-## 인증, 감사와 보고 무결성
+## Authentication, audit, and report integrity
 
-사용자 인증은 OAuth 세션 쿠키를 사용하며 클라이언트가 쿠키를 직접 조작하지 않는다. Site Gateway는 선택적 `GVI_GATEWAY_TOKEN` Bearer 인증을 사용하고 timing-safe 비교를 수행한다. 비밀값은 저장소에 커밋하지 않는다.
+User authentication uses an OAuth session cookie; the client never manipulates the cookie directly. The Site Gateway uses optional `GVI_GATEWAY_TOKEN` Bearer authentication with a timing-safe comparison. Secrets are not committed to the repository.
 
-감사 이벤트는 조직, 행위자, 액션, 대상 유형·ID, before/after, request ID, IP, user agent, 시각을 기록한다. 서명 시 보고서 임상 내용과 식별 메타데이터를 정규화해 SHA-256 digest를 생성한다. 서명된 버전은 수정할 수 없고 후속 변경은 새 버전으로 남긴다.
+Audit events record the organization, actor, action, target type and ID, before/after state, request ID, IP, user agent, and timestamp. On signing, the report's clinical content and identifying metadata are normalized to produce a SHA-256 digest. Signed versions cannot be modified; subsequent changes become new versions.
 
-## AI 안전 경계
+## AI safety boundary
 
-Copilot은 서버가 제공한 Evidence Ledger만 컨텍스트로 사용한다. 응답의 모든 인용 ID가 현재 변이의 허용 근거 집합에 포함되는지 검증하고, 근거 없는 인용이나 누락된 인용을 거부한다. 모델은 판정 승인·보고서 서명·환자별 최종 의사결정을 수행하지 않는다.
+The Copilot uses only the server-provided Evidence Ledger as context. All citation IDs in the response are verified to belong to the permitted evidence set for the current variant; responses citing evidence outside the set, or containing uncited claims, are rejected. The model cannot approve interpretations, sign reports, or make final patient-specific decisions.
 
-## 위협과 대응
+## Threats and mitigations
 
-| 위협 | 주요 대응 | 운영 잔여 위험 |
+| Threat | Primary mitigation | Residual operational risk |
 |---|---|---|
-| 다른 조직 ID 주입 | 멤버십 선검증, 조직 조건, 은닉형 오류 | 신규 프로시저 스코프 누락; 코드리뷰·테스트 필요 |
-| 권한 상승 | 서버 액션 권한, 역할 변경 감사 | 관리자 탈취; MFA·접근 검토 필요 |
-| 파일 위변조 | S3 저장, SHA-256 메타데이터 | 악성 콘텐츠; AV·콘텐츠 스캔 권고 |
-| 보고서 사후 수정 | 상태 전이, 불변 스냅샷, digest | 외부 PDF 무결성 검증 절차 필요 |
-| AI 환각 | Ledger-only 컨텍스트, 인용 검증 | 근거 자체 오류·편향; 전문가 검토 필수 |
-| 게이트웨이 토큰 유출 | Bearer 검증, 비밀 주입, 감사 | 기관별 토큰·회전 기능 권고 |
-| 감사 로그 변조 | 앱에서 append-only 사용 | DB 운영자 위협; WORM·SIEM 연계 권고 |
+| Injected foreign organization ID | Membership pre-check, organization condition, concealed errors | Missing scope in new procedures; code review and testing required |
+| Privilege escalation | Server action permissions, role-change audit | Administrator account takeover; MFA and access review required |
+| File tampering | S3 storage, SHA-256 metadata | Malicious content; AV/content scanning recommended |
+| Post-sign report modification | State transitions, immutable snapshot, digest | External PDF integrity verification procedure required |
+| AI hallucination | Ledger-only context, citation verification | Errors or bias in source evidence; expert review mandatory |
+| Gateway token leak | Bearer verification, secret injection, audit | Per-institution token rotation recommended |
+| Audit log tampering | Append-only in application | DB operator threat; WORM/SIEM integration recommended |
 
-## 운영 체크리스트
+## Operations checklist
 
-운영 전 조직별 관리자·전문의 계정을 분리하고 정기 접근 검토와 비밀 회전을 설정한다. 데이터 보존·삭제, 백업 암호화와 복구 훈련, S3 접근 로그, 침해사고 통보, 외부 근거 라이선스, 개인정보 처리와 국외 이전 조건을 기관 정책 및 적용 법규에 맞게 승인해야 한다. 검증 근거는 [`VALIDATION.md`](../VALIDATION.md)를 참조한다.
+Before going live, separate administrator and clinician accounts by organization, and set up regular access reviews and secret rotation. Data retention/deletion, backup encryption and recovery drills, S3 access logs, incident notification, external evidence licensing, privacy policy, and cross-border data transfer conditions must be approved in accordance with institutional policy and applicable regulations. See [`VALIDATION.md`](../VALIDATION.md) for validation evidence.

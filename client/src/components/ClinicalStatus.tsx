@@ -2,21 +2,21 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
 const LABELS: Record<string, string> = {
-  draft: "초안",
-  queued: "대기",
-  running: "분석 중",
-  review_ready: "검토 준비",
-  in_review: "검토 중",
-  reported: "보고 완료",
-  failed: "실패",
-  completed: "완료",
-  signed: "서명 완료",
-  amended: "수정 보고",
-  approved: "승인됨",
-  unreviewed: "미검토",
-  reviewing: "검토 중",
-  reviewed: "검토됨",
-  flagged: "주의 필요",
+  draft: "Draft",
+  queued: "Queued",
+  running: "Running",
+  review_ready: "Review Ready",
+  in_review: "In Review",
+  reported: "Reported",
+  failed: "Failed",
+  completed: "Completed",
+  signed: "Signed",
+  amended: "Amended",
+  approved: "Approved",
+  unreviewed: "Unreviewed",
+  reviewing: "Reviewing",
+  reviewed: "Reviewed",
+  flagged: "Flagged",
 };
 
 const TONES: Record<string, string> = {

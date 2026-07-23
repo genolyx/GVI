@@ -1,8 +1,8 @@
-# GitHub 직접 푸시 안내
+# Push to GitHub — Instructions
 
-이 ZIP은 `.git`, `node_modules`, 빌드 산출물, 로그, 로컬 프로젝트 메타데이터와 비밀값을 제외한 소스 패키지다.
+This ZIP is a source package excluding `.git`, `node_modules`, build artifacts, logs, local project metadata, and secrets.
 
-## 1. 압축 해제와 검증
+## 1. Extract and verify
 
 ```bash
 unzip Genolyx-Variant-Interpreter-source.zip -d Genolyx-Variant-Interpreter
@@ -13,9 +13,9 @@ pnpm vitest run
 pnpm build
 ```
 
-테스트 실행을 위해 `GVI_GATEWAY_TOKEN`을 로컬에 만들 필요는 없다. 테스트는 격리된 전용 토큰을 사용하고 기존 환경을 복원한다. 실제 Gateway 런타임을 사용할 때만 배포 환경의 Secrets에 32자 이상의 강한 토큰을 별도로 설정한다.
+There is no need to create a local `GVI_GATEWAY_TOKEN` to run tests. Tests use an isolated, dedicated token and restore the original environment. Only set a strong token (32+ characters) in the deployment environment's Secrets when using the real Gateway runtime.
 
-## 2. 빈 GitHub 저장소에 최초 푸시
+## 2. Initial push to an empty GitHub repository
 
 ```bash
 git init
@@ -26,12 +26,12 @@ git remote add origin https://github.com/genolyx/GVI.git
 git push -u origin main
 ```
 
-이미 `origin`이 있다면 `git remote add` 대신 다음을 사용한다.
+If `origin` already exists, use the following instead of `git remote add`:
 
 ```bash
 git remote set-url origin https://github.com/genolyx/GVI.git
 ```
 
-## 보안 주의사항
+## Security notes
 
-`.env`나 API 키, 데이터베이스 URL, Gateway 토큰을 커밋하지 않는다. 운영 비밀값은 배포 환경의 Secrets 기능에서 별도로 설정한다. 실제 임상 사용 전에는 `README.md`, `docs/security-model.md`, `VALIDATION.md`의 제한사항과 운영 전 확인 항목을 검토한다.
+Do not commit `.env` files, API keys, database URLs, or Gateway tokens. Set production secrets separately in the deployment environment's Secrets feature. Before real clinical use, review the limitations and pre-production checklist in `README.md`, `docs/security-model.md`, and `VALIDATION.md`.

@@ -115,7 +115,7 @@ export const copilotRouter = router({
       if (!evidence.length) {
         throw new TRPCError({
           code: "PRECONDITION_FAILED",
-          message: "Evidence Ledger가 비어 있습니다. 공개 근거를 먼저 수집하거나 검토된 근거를 추가하십시오.",
+          message: "The Evidence Ledger is empty. Collect public evidence first or add reviewed evidence.",
         });
       }
 
@@ -249,10 +249,10 @@ export const copilotRouter = router({
       }
       const rendered = [
         parsed.answer,
-        parsed.draftInterpretation ? `\n\n**해석 초안**\n${parsed.draftInterpretation}` : "",
-        parsed.limitations.length ? `\n\n**한계**\n${parsed.limitations.map(item => `- ${item}`).join("\n")}` : "",
-        parsed.suggestedNextSteps.length ? `\n\n**검토 제안**\n${parsed.suggestedNextSteps.map(item => `- ${item}`).join("\n")}` : "",
-        parsed.uncitedClaims.length ? `\n\n> **인용 확인 필요:** ${parsed.uncitedClaims.join("; ")}` : "",
+        parsed.draftInterpretation ? `\n\n**Interpretation Draft**\n${parsed.draftInterpretation}` : "",
+        parsed.limitations.length ? `\n\n**Limitations**\n${parsed.limitations.map(item => `- ${item}`).join("\n")}` : "",
+        parsed.suggestedNextSteps.length ? `\n\n**Suggested Next Steps**\n${parsed.suggestedNextSteps.map(item => `- ${item}`).join("\n")}` : "",
+        parsed.uncitedClaims.length ? `\n\n> **Citation verification required:** ${parsed.uncitedClaims.join("; ")}` : "",
       ].join("");
       await db.insert(aiMessages).values({
         organizationId: input.organizationId,

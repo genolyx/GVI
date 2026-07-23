@@ -35,16 +35,16 @@ export function suggestAcmgClassification(metCodes: readonly AcmgCode[]): AcmgSu
   if (hasPathogenicEvidence && hasBenignEvidence) {
     return {
       classification: "VUS",
-      rationale: "병원성 및 양성 근거가 함께 적용되어 전문가의 상충 근거 검토가 필요합니다.",
+      rationale: "Both pathogenic and benign evidence applied — expert review of conflicting evidence required.",
       conflict: true,
       counts,
     };
   }
   if (benignStandalone >= 1 || benignStrong >= 2) {
-    return { classification: "Benign", rationale: "ACMG 2015 양성 조합 기준을 충족합니다.", conflict: false, counts };
+    return { classification: "Benign", rationale: "Meets ACMG 2015 benign combination criteria.", conflict: false, counts };
   }
   if ((benignStrong >= 1 && benignSupporting >= 1) || benignSupporting >= 2) {
-    return { classification: "Likely Benign", rationale: "ACMG 2015 가능성 높은 양성 조합 기준을 충족합니다.", conflict: false, counts };
+    return { classification: "Likely Benign", rationale: "Meets ACMG 2015 likely benign combination criteria.", conflict: false, counts };
   }
   const pathogenic =
     (veryStrong >= 1 && strong >= 1) ||
@@ -56,7 +56,7 @@ export function suggestAcmgClassification(metCodes: readonly AcmgCode[]): AcmgSu
     (strong >= 1 && moderate >= 2 && supporting >= 2) ||
     (strong >= 1 && moderate >= 1 && supporting >= 4);
   if (pathogenic) {
-    return { classification: "Pathogenic", rationale: "ACMG 2015 병원성 조합 기준을 충족합니다.", conflict: false, counts };
+    return { classification: "Pathogenic", rationale: "Meets ACMG 2015 pathogenic combination criteria.", conflict: false, counts };
   }
   const likelyPathogenic =
     (veryStrong >= 1 && moderate >= 1) ||
@@ -66,11 +66,11 @@ export function suggestAcmgClassification(metCodes: readonly AcmgCode[]): AcmgSu
     (moderate >= 2 && supporting >= 2) ||
     (moderate >= 1 && supporting >= 4);
   if (likelyPathogenic) {
-    return { classification: "Likely Pathogenic", rationale: "ACMG 2015 가능성 높은 병원성 조합 기준을 충족합니다.", conflict: false, counts };
+    return { classification: "Likely Pathogenic", rationale: "Meets ACMG 2015 likely pathogenic combination criteria.", conflict: false, counts };
   }
   return {
     classification: "VUS",
-    rationale: "선택된 기준만으로는 병원성 또는 양성 조합 기준을 충족하지 않습니다.",
+    rationale: "Selected criteria alone do not satisfy pathogenic or benign combination requirements.",
     conflict: false,
     counts,
   };

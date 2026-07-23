@@ -104,11 +104,11 @@ export const organizationsRouter = router({
         permissions: membership.permissions,
         accessibleProjects,
         controls: [
-          { key: "tenant-column", label: "모든 임상 레코드 organizationId 강제", state: "enforced" as const },
-          { key: "composite-fk", label: "부모–자식 동일 조직 복합 외래키", state: "enforced" as const },
-          { key: "server-rbac", label: "서버 액션 단위 RBAC", state: "enforced" as const },
-          { key: "s3-prefix", label: "조직·케이스 S3 경로 격리", state: "enforced" as const },
-          { key: "audit", label: "변경 이벤트 append-only 감사", state: "enforced" as const },
+          { key: "tenant-column", label: "organizationId enforced on all clinical records", state: "enforced" as const },
+          { key: "composite-fk", label: "Parent–child composite foreign key for same organization", state: "enforced" as const },
+          { key: "server-rbac", label: "Server-side action-level RBAC", state: "enforced" as const },
+          { key: "s3-prefix", label: "Organization & case S3 path isolation", state: "enforced" as const },
+          { key: "audit", label: "Append-only audit for change events", state: "enforced" as const },
         ],
       };
     }),

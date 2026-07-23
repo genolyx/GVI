@@ -1,0 +1,43 @@
+services:
+  db:
+    image: mysql:8.0
+    platform: linux/arm64/v8   # Mac Studio (Apple Silicon) only
+    container_name: gvi-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: gvi_root_password
+      MYSQL_DATABASE: gvi
+      MYSQL_USER: gvi_user
+      MYSQL_PASSWORD: gvi_password
+    ports:
+      - "3307:3306"   # host 3307 → container 3306 (3306 occupied by ptm-mysql)
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-pgvi_root_password"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    container_name: gvi-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: gvi_minio_user
+      MINIO_ROOT_PASSWORD: gvi_minio_password
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # MinIO web console
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  mysql_data:
+  minio_data:
