@@ -93,7 +93,7 @@ function appendHashSuffix(relKey: string): string {
 
 function getPublicUrl(key: string): string {
   const base = (process.env.AWS_PUBLIC_URL ?? "").replace(/\/+$/, "");
-  return base ? `${base}/${key}` : `/manus-storage/${key}`;
+  return base ? `${base}/${key}` : `/storage/${key}`;
 }
 
 export async function storagePut(

@@ -233,7 +233,11 @@ export const casesRouter = router({
       await requireOrganizationPermission(ctx.user.id, input.organizationId, "file:upload");
       await requireCase(input.organizationId, input.caseId);
       const requiredPrefix = `organizations/${input.organizationId}/cases/${input.caseId}/files/`;
-      if (!input.storageKey.startsWith(requiredPrefix) || input.accessUrl !== `/manus-storage/${input.storageKey}`) {
+      const publicBase = (process.env.AWS_PUBLIC_URL ?? "").replace(/\/+$/, "");
+      const expectedAccessUrl = publicBase
+        ? `${publicBase}/${input.storageKey}`
+        : `/storage/${input.storageKey}`;
+      if (!input.storageKey.startsWith(requiredPrefix) || input.accessUrl !== expectedAccessUrl) {
         throw new TRPCError({ code: "BAD_REQUEST", message: "Storage path is outside the case boundary" });
       }
       const db = await requireDb();
