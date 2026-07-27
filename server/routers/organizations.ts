@@ -11,7 +11,7 @@ import {
   users,
 } from "../../drizzle/schema";
 import { ROLE_PERMISSIONS, ORGANIZATION_ROLES } from "../../shared/permissions";
-import { protectedProcedure, router } from "../_core/trpc";
+import { protectedProcedure, publicProcedure, router } from "../_core/trpc";
 import { writeAuditEvent } from "../domain/audit";
 import { requireDb, requireOrganizationPermission } from "../domain/tenant";
 
@@ -51,22 +51,45 @@ export const organizationsRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       const db = await requireDb();
-      const result = await db.transaction(async tx => {
-        const insertResult = await tx.insert(organizations).values({
-          name: input.name,
-          slug: input.slug,
-          dataRegion: input.dataRegion,
-          createdBy: ctx.user.id,
+      let result: number;
+      try {
+        result = await db.transaction(async tx => {
+          const insertResult = await tx.insert(organizations).values({
+            name: input.name,
+            slug: input.slug,
+            dataRegion: input.dataRegion,
+            createdBy: ctx.user.id,
+          });
+          const organizationId = Number(insertResult[0].insertId);
+          await tx.insert(organizationMembers).values({
+            organizationId,
+            userId: ctx.user.id,
+            role: "administrator",
+            status: "active",
+          });
+          return organizationId;
         });
-        const organizationId = Number(insertResult[0].insertId);
-        await tx.insert(organizationMembers).values({
-          organizationId,
-          userId: ctx.user.id,
-          role: "administrator",
-          status: "active",
-        });
-        return organizationId;
-      });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const causeMessage =
+          error instanceof Error && error.cause instanceof Error ? error.cause.message : "";
+        const combined = `${message}\n${causeMessage}`;
+        // MySQL duplicate key on organizations.slug unique index (ER_DUP_ENTRY)
+        if (
+          combined.includes("organizations_slug_uq") ||
+          combined.includes("Duplicate entry") ||
+          /ER_DUP_ENTRY|errno:\s*1062/i.test(combined)
+        ) {
+          throw new TRPCError({
+            code: "CONFLICT",
+            message:
+              `The organization identifier "${input.slug}" is already taken. ` +
+              "If you belong to an existing organization, ask an administrator to invite your email " +
+              "(Organization → Invite member). Do not create a second workspace with the same name.",
+          });
+        }
+        throw error;
+      }
       await writeAuditEvent({
         organizationId: result,
         actorUserId: ctx.user.id,
@@ -219,6 +242,48 @@ export const organizationsRouter = router({
       return { success: true };
     }),
 
+  getInvite: publicProcedure
+    .input(z.object({ token: z.string().min(20) }))
+    .query(async ({ input }) => {
+      const db = await requireDb();
+      const tokenHash = createHash("sha256").update(input.token).digest("hex");
+      const rows = await db
+        .select({
+          email: organizationInvites.email,
+          role: organizationInvites.role,
+          expiresAt: organizationInvites.expiresAt,
+          acceptedAt: organizationInvites.acceptedAt,
+          revokedAt: organizationInvites.revokedAt,
+          organizationId: organizationInvites.organizationId,
+          organizationName: organizations.name,
+          organizationSlug: organizations.slug,
+        })
+        .from(organizationInvites)
+        .innerJoin(organizations, eq(organizations.id, organizationInvites.organizationId))
+        .where(eq(organizationInvites.tokenHash, tokenHash))
+        .limit(1);
+      const invite = rows[0];
+      if (!invite) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Invitation not found" });
+      }
+      const status = invite.acceptedAt
+        ? ("accepted" as const)
+        : invite.revokedAt
+          ? ("revoked" as const)
+          : invite.expiresAt.getTime() <= Date.now()
+            ? ("expired" as const)
+            : ("pending" as const);
+      return {
+        email: invite.email,
+        role: invite.role,
+        expiresAt: invite.expiresAt,
+        organizationId: invite.organizationId,
+        organizationName: invite.organizationName,
+        organizationSlug: invite.organizationSlug,
+        status,
+      };
+    }),
+
   acceptInvite: protectedProcedure
     .input(z.object({ token: z.string().min(20) }))
     .mutation(async ({ ctx, input }) => {
@@ -230,16 +295,60 @@ export const organizationsRouter = router({
         .where(eq(organizationInvites.tokenHash, tokenHash))
         .limit(1);
       const invite = rows[0];
-      if (
-        !invite ||
-        invite.acceptedAt ||
-        invite.revokedAt ||
-        invite.expiresAt.getTime() <= Date.now() ||
-        !ctx.user.email ||
-        invite.email.toLowerCase() !== ctx.user.email.toLowerCase()
-      ) {
-        throw new TRPCError({ code: "BAD_REQUEST", message: "Invitation is invalid or expired" });
+      if (!invite || invite.revokedAt || invite.expiresAt.getTime() <= Date.now()) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Invitation is invalid or expired. Ask an administrator to send a new invite.",
+        });
       }
+      if (!ctx.user.email) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Your account has no email. Sign in with the Google account that received the invite.",
+        });
+      }
+      if (invite.email.toLowerCase() !== ctx.user.email.toLowerCase()) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message:
+            `This invite was sent to ${invite.email}. You are signed in as ${ctx.user.email}. ` +
+            "Sign out and sign in with the invited Google account.",
+        });
+      }
+
+      const existing = await db
+        .select({ id: organizationMembers.id })
+        .from(organizationMembers)
+        .where(
+          and(
+            eq(organizationMembers.organizationId, invite.organizationId),
+            eq(organizationMembers.userId, ctx.user.id)
+          )
+        )
+        .limit(1);
+
+      if (existing[0]) {
+        if (!invite.acceptedAt) {
+          await db
+            .update(organizationInvites)
+            .set({ acceptedAt: new Date() })
+            .where(
+              and(
+                eq(organizationInvites.id, invite.id),
+                eq(organizationInvites.organizationId, invite.organizationId)
+              )
+            );
+        }
+        return { organizationId: invite.organizationId, alreadyMember: true };
+      }
+
+      if (invite.acceptedAt) {
+        throw new TRPCError({
+          code: "CONFLICT",
+          message: "This invitation has already been accepted.",
+        });
+      }
+
       await db.transaction(async tx => {
         await tx.insert(organizationMembers).values({
           organizationId: invite.organizationId,
@@ -251,7 +360,12 @@ export const organizationsRouter = router({
         await tx
           .update(organizationInvites)
           .set({ acceptedAt: new Date() })
-          .where(and(eq(organizationInvites.id, invite.id), eq(organizationInvites.organizationId, invite.organizationId)));
+          .where(
+            and(
+              eq(organizationInvites.id, invite.id),
+              eq(organizationInvites.organizationId, invite.organizationId)
+            )
+          );
       });
       await writeAuditEvent({
         organizationId: invite.organizationId,
@@ -262,7 +376,7 @@ export const organizationsRouter = router({
         after: { role: invite.role, email: invite.email },
         req: ctx.req,
       });
-      return { organizationId: invite.organizationId };
+      return { organizationId: invite.organizationId, alreadyMember: false };
     }),
 
   updateMemberRole: protectedProcedure

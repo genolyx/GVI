@@ -15,6 +15,7 @@ import WorkbenchLandingPage from "./pages/WorkbenchLanding";
 import ReportsPage from "./pages/Reports";
 import ReportEditorPage from "./pages/ReportEditor";
 import OrganizationPage from "./pages/Organization";
+import InviteAcceptPage from "./pages/InviteAccept";
 import AuditLogPage from "./pages/AuditLog";
 import SecurityConsolePage from "./pages/SecurityConsole";
 
@@ -23,6 +24,7 @@ function Router() {
   return (
     <Switch>
       <Route path={"/"} component={Home} />
+      <Route path={"/invite/:token"} component={InviteAcceptPage} />
       <Route path={"/cases"} component={CasesPage} />
       <Route path={"/cases/new"} component={NewCasePage} />
       <Route path={"/cases/:id"} component={CaseDetailPage} />

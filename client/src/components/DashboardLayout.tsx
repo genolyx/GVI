@@ -44,8 +44,8 @@ import { type CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from "./DashboardLayoutSkeleton";
 
-/** Local dev-only login panel */
-function LoginPanel({ isDevAuth }: { isDevAuth: boolean }) {
+/** Login panel: Google OAuth primary, optional local Dev Login. */
+function LoginPanel({ isDevAuth, isGoogleAuth }: { isDevAuth: boolean; isGoogleAuth: boolean }) {
   const [name, setName] = useState("Admin");
   const [email, setEmail] = useState("admin@localhost");
   const [loading, setLoading] = useState(false);
@@ -80,29 +80,42 @@ function LoginPanel({ isDevAuth }: { isDevAuth: boolean }) {
           <p className="mt-3 max-w-sm text-sm leading-6 text-slate-400">Tenant isolation, evidence tracing, expert review, and immutable signed reports — all in one workspace.</p>
         </div>
         <div className="space-y-5 p-8">
-          {isDevAuth ? (
+          <div>
+            <h2 className="font-display text-lg font-semibold">Secure Login</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {isGoogleAuth
+                ? "Sign in with your Google account to access your organization workspace."
+                : isDevAuth
+                  ? "Google OAuth is not configured. Use Dev Login for local development."
+                  : "Authentication is not configured. Set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET."}
+            </p>
+          </div>
+
+          {isGoogleAuth ? (
             <>
-              <div>
-                <h2 className="font-display text-lg font-semibold">Dev Login</h2>
-                <p className="mt-1 text-sm text-muted-foreground">Local development only — sign in without OAuth.</p>
-              </div>
+              <Button onClick={() => startLogin()} size="lg" className="w-full">
+                Continue with Google
+              </Button>
+              <p className="text-center text-[11px] leading-5 text-muted-foreground">
+                Login activity and clinical data changes are recorded in the organization audit log.
+              </p>
+            </>
+          ) : null}
+
+          {/* Dev Login only when Google OAuth is not configured */}
+          {isDevAuth && !isGoogleAuth ? (
+            <>
               <div className="space-y-3">
                 <Input placeholder="Name" value={name} onChange={e => setName(e.target.value)} />
                 <Input placeholder="Email" type="email" value={email} onChange={e => setEmail(e.target.value)} />
               </div>
               {error && <p className="text-xs text-destructive">{error}</p>}
               <Button onClick={handleDevLogin} size="lg" className="w-full" disabled={loading || !name || !email}>
-                {loading ? "Signing in…" : "Continue"}
+                {loading ? "Signing in…" : "Dev Login"}
               </Button>
               <p className="text-center text-[11px] leading-5 text-amber-600">⚠ DEV_AUTH mode — disabled in production.</p>
             </>
-          ) : (
-            <>
-              <div><h2 className="font-display text-lg font-semibold">Secure Login</h2><p className="mt-1 text-sm text-muted-foreground">Sign in with an approved account to access your organization workspace.</p></div>
-              <Button onClick={() => startLogin()} size="lg" className="w-full">Continue</Button>
-              <p className="text-center text-[11px] leading-5 text-muted-foreground">Login activity and clinical data changes are recorded in the organization audit log.</p>
-            </>
-          )}
+          ) : null}
         </div>
       </div>
     </div>
@@ -130,12 +143,17 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     return saved ? Number(saved) : DEFAULT_WIDTH;
   });
   const { loading, user } = useAuth();
+  const [location] = useLocation();
+  const isInviteRoute = location.startsWith("/invite/");
   useEffect(() => localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sidebarWidth)), [sidebarWidth]);
 
   if (loading) return <DashboardLayoutSkeleton />;
+  // Invite links render their own shell (login CTA / accept) without the app chrome.
+  if (isInviteRoute) return <>{children}</>;
   if (!user) {
     const isDevAuth = import.meta.env.VITE_DEV_AUTH === "true";
-    return <LoginPanel isDevAuth={isDevAuth} />;
+    const isGoogleAuth = import.meta.env.VITE_GOOGLE_AUTH === "true";
+    return <LoginPanel isDevAuth={isDevAuth} isGoogleAuth={isGoogleAuth} />;
   }
   return (
     <SidebarProvider style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}>
