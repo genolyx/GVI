@@ -1,3 +1,5 @@
+import { useAuth } from "@/_core/hooks/useAuth";
+import { CreateOrganizationForm } from "@/components/CreateOrganizationForm";
 import { ClinicalStatus } from "@/components/ClinicalStatus";
 import { MetricCard } from "@/components/MetricCard";
 import { PageHeader } from "@/components/PageHeader";
@@ -10,42 +12,52 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useOrganization } from "@/contexts/OrganizationContext";
 import { trpc } from "@/lib/trpc";
-import { Activity, ArrowRight, Building2, CheckCircle2, ClipboardCheck, Dna, FileSignature, FolderPlus, Plus, ShieldCheck } from "lucide-react";
+import { Activity, ArrowRight, Building2, CheckCircle2, ClipboardCheck, Dna, FileSignature, FolderPlus, Mail, Plus, ShieldCheck } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
 
 function OrganizationOnboarding() {
+  const { user } = useAuth();
   const { refetchOrganizations } = useOrganization();
-  const [name, setName] = useState("");
-  const [slug, setSlug] = useState("");
-  const create = trpc.organizations.create.useMutation({
-    onSuccess: async () => {
-      await refetchOrganizations();
-      toast.success("Organization workspace created.");
-    },
-    onError: error => toast.error(error.message),
-  });
+  const isPlatformAdmin = user?.role === "admin";
+
   return (
     <div className="mx-auto grid min-h-[72vh] max-w-5xl items-center gap-10 lg:grid-cols-[1.15fr_.85fr]">
       <div>
         <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/5 px-3 py-1.5 text-xs font-medium text-primary"><ShieldCheck className="size-3.5" />Isolated clinical workspace</div>
         <h1 className="font-display text-4xl font-semibold leading-tight tracking-[-0.04em] sm:text-5xl">From evidence to verdict,<br /><span className="text-primary">under expert control.</span></h1>
-        <p className="mt-5 max-w-xl text-base leading-7 text-muted-foreground">Once you create your first organization, all cases, variants, evidence, and reports are managed within that organization boundary.</p>
+        <p className="mt-5 max-w-xl text-base leading-7 text-muted-foreground">
+          {isPlatformAdmin
+            ? "As a platform admin, you can provision a new organization workspace. Cases, variants, evidence, and reports stay inside that organization boundary."
+            : "Access is invite-only. Ask your organization administrator to invite your email, then open the invite link while signed in with the same address."}
+        </p>
         <div className="mt-8 grid gap-3 sm:grid-cols-3">{["Composite tenant keys", "Action-level RBAC", "Immutable sign-out"].map(item => <div key={item} className="flex items-center gap-2 text-xs text-muted-foreground"><CheckCircle2 className="size-4 text-emerald-600" />{item}</div>)}</div>
       </div>
       <div className="clinical-panel p-7">
-        <div className="mb-6 grid size-11 place-items-center rounded-xl bg-primary/10 text-primary"><Building2 className="size-5" /></div>
-        <h2 className="font-display text-xl font-semibold">Create organization workspace</h2>
-        <p className="mt-1 text-sm leading-6 text-muted-foreground">
-          Only create a workspace if your organization is new here. If Genolyx (or another lab) already exists, ask an admin to invite your email instead.
-        </p>
-        <div className="mt-6 space-y-4">
-          <div className="space-y-2"><Label htmlFor="org-name">Organization name</Label><Input id="org-name" value={name} onChange={event => { const value = event.target.value; setName(value); setSlug(value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")); }} placeholder="Genolyx Clinical Lab" /></div>
-          <div className="space-y-2"><Label htmlFor="org-slug">Organization identifier</Label><Input id="org-slug" value={slug} onChange={event => setSlug(event.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))} placeholder="genolyx-lab" /></div>
-          {create.error ? <p className="rounded-lg border border-destructive/25 bg-destructive/5 px-3 py-2 text-xs leading-5 text-destructive">{create.error.message}</p> : null}
-          <Button className="w-full" size="lg" disabled={create.isPending || name.length < 2 || slug.length < 2} onClick={() => create.mutate({ name, slug, dataRegion: "KR" })}>{create.isPending ? "Creating…" : "Start secure workspace"}<ArrowRight className="ml-2 size-4" /></Button>
-        </div>
+        {isPlatformAdmin ? (
+          <>
+            <div className="mb-6 grid size-11 place-items-center rounded-xl bg-primary/10 text-primary"><Building2 className="size-5" /></div>
+            <h2 className="font-display text-xl font-semibold">Create organization workspace</h2>
+            <p className="mt-1 text-sm leading-6 text-muted-foreground">
+              Platform admin only. After creation you become the first organization administrator and can invite members.
+            </p>
+            <div className="mt-6">
+              <CreateOrganizationForm onCreated={refetchOrganizations} />
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="mb-6 grid size-11 place-items-center rounded-xl bg-primary/10 text-primary"><Mail className="size-5" /></div>
+            <h2 className="font-display text-xl font-semibold">Waiting for an invite</h2>
+            <p className="mt-1 text-sm leading-6 text-muted-foreground">
+              Organization workspaces can only be created by platform admins. If Genolyx (or your lab) already exists, ask an administrator to invite <span className="font-medium text-foreground">{user?.email || "your email"}</span>.
+            </p>
+            <p className="mt-4 rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs leading-5 text-muted-foreground">
+              Invite links look like <span className="font-mono text-foreground">/invite/…</span> and must be opened while signed in with the invited email.
+            </p>
+          </>
+        )}
       </div>
     </div>
   );

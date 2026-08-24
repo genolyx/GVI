@@ -1,5 +1,5 @@
 import { TRPCError } from "@trpc/server";
-import { and, asc, desc, eq, gte, like, lte, or } from "drizzle-orm";
+import { and, asc, desc, eq, like, lte, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import {
   aiConversations,
@@ -34,6 +34,11 @@ async function requireVariant(organizationId: number, variantId: number) {
     .limit(1);
   if (!rows[0]) throw new TRPCError({ code: "NOT_FOUND", message: "Variant not found" });
   return rows[0];
+}
+
+function evidenceDedupeKey(source: string, sourceRecordId: string | null | undefined, title: string) {
+  if (sourceRecordId) return `${source}::${sourceRecordId}`;
+  return `${source}::title::${title}`;
 }
 
 export const variantsRouter = router({
@@ -107,7 +112,18 @@ export const variantsRouter = router({
         .from(variants)
         .leftJoin(
           interpretations,
-          and(eq(interpretations.variantId, variants.id), eq(interpretations.organizationId, variants.organizationId))
+          and(
+            eq(interpretations.variantId, variants.id),
+            eq(interpretations.organizationId, variants.organizationId),
+            // Join only the latest interpretation version per variant to avoid duplicate rows.
+            sql`${interpretations.id} = (
+              select i.id from interpretations i
+              where i.variantId = ${variants.id}
+                and i.organizationId = ${variants.organizationId}
+              order by i.version desc, i.id desc
+              limit 1
+            )`
+          )
         )
         .where(and(...conditions))
         .orderBy(input.sortDirection === "desc" ? desc(sortColumn) : asc(sortColumn))
@@ -174,8 +190,22 @@ export const variantsRouter = router({
       const record = await requireVariant(input.organizationId, input.variantId);
       const drafts = await collectPublicEvidence(record.variant);
       const db = await requireDb();
-      if (drafts.length) {
-        await db.insert(evidenceItems).values(drafts.map(draft => ({
+      const existing = await db
+        .select({
+          source: evidenceItems.source,
+          sourceRecordId: evidenceItems.sourceRecordId,
+          title: evidenceItems.title,
+        })
+        .from(evidenceItems)
+        .where(and(eq(evidenceItems.organizationId, input.organizationId), eq(evidenceItems.variantId, input.variantId)));
+      const existingKeys = new Set(
+        existing.map(item => evidenceDedupeKey(item.source, item.sourceRecordId, item.title))
+      );
+      const novel = drafts.filter(
+        draft => !existingKeys.has(evidenceDedupeKey(draft.source, draft.sourceRecordId, draft.title))
+      );
+      if (novel.length) {
+        await db.insert(evidenceItems).values(novel.map(draft => ({
           organizationId: input.organizationId,
           variantId: input.variantId,
           source: draft.source,
@@ -196,10 +226,10 @@ export const variantsRouter = router({
         action: "evidence.refreshed",
         entityType: "variant",
         entityId: input.variantId,
-        after: { evidenceCount: drafts.length, sources: Array.from(new Set(drafts.map(item => item.source))) },
+        after: { evidenceCount: novel.length, sources: Array.from(new Set(novel.map(item => item.source))) },
         req: ctx.req,
       });
-      return { count: drafts.length };
+      return { count: novel.length };
     }),
 
   addEvidence: protectedProcedure

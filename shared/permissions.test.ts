@@ -2,8 +2,9 @@ import { describe, expect, it } from "vitest";
 import { PERMISSIONS, ROLE_PERMISSIONS, roleHasPermission } from "./permissions";
 
 describe("clinical action permission matrix", () => {
-  it("keeps report signing separated from tenant administration", () => {
-    expect(roleHasPermission("administrator", "report:sign")).toBe(false);
+  it("gives administrators full permissions including report signing", () => {
+    expect(roleHasPermission("administrator", "report:sign")).toBe(true);
+    expect(roleHasPermission("administrator", "member:manage")).toBe(true);
     expect(roleHasPermission("clinician", "report:sign")).toBe(true);
     expect(roleHasPermission("clinician", "member:manage")).toBe(false);
   });

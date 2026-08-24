@@ -1,11 +1,14 @@
 import type { Express, NextFunction, Request, Response } from "express";
 import { timingSafeEqual } from "node:crypto";
-import { and, asc, eq, or } from "drizzle-orm";
+import { and, asc, eq, inArray, or } from "drizzle-orm";
 import { z } from "zod";
 import { analysisEvents, analysisJobs, caseFiles, cases } from "../drizzle/schema";
 import { writeAuditEvent } from "./domain/audit";
 import { requireDb } from "./domain/tenant";
 import { storageGetSignedUrl } from "./storage";
+
+/** Case statuses the gateway may advance; never overwrite a reported case. */
+const GATEWAY_UPDATABLE_CASE_STATUSES = ["queued", "running", "review_ready", "failed"] as const;
 
 function tokensMatch(received: string, expected: string): boolean {
   const receivedBuffer = Buffer.from(received);
@@ -48,7 +51,11 @@ export function registerGatewayAuthRoutes(app: Express) {
         .where(
           and(
             eq(analysisJobs.status, "queued"),
-            or(eq(analysisJobs.pipeline, "gx_exome"), eq(analysisJobs.pipeline, "gx_somatic"))
+            or(
+              eq(analysisJobs.pipeline, "gx_exome"),
+              eq(analysisJobs.pipeline, "gx_somatic"),
+              eq(analysisJobs.pipeline, "vcf_ingest")
+            )
           )
         )
         .orderBy(asc(analysisJobs.createdAt))
@@ -100,7 +107,13 @@ export function registerGatewayAuthRoutes(app: Express) {
       await db
         .update(cases)
         .set({ status: "running" })
-        .where(and(eq(cases.id, job.caseId), eq(cases.organizationId, job.organizationId)));
+        .where(
+          and(
+            eq(cases.id, job.caseId),
+            eq(cases.organizationId, job.organizationId),
+            inArray(cases.status, [...GATEWAY_UPDATABLE_CASE_STATUSES])
+          )
+        );
       await writeAuditEvent({
         organizationId: job.organizationId,
         actorUserId: null,
@@ -189,7 +202,13 @@ export function registerGatewayAuthRoutes(app: Express) {
         await tx
           .update(cases)
           .set({ status: caseStatus })
-          .where(and(eq(cases.id, job.caseId), eq(cases.organizationId, job.organizationId)));
+          .where(
+            and(
+              eq(cases.id, job.caseId),
+              eq(cases.organizationId, job.organizationId),
+              inArray(cases.status, [...GATEWAY_UPDATABLE_CASE_STATUSES])
+            )
+          );
       });
       await writeAuditEvent({
         organizationId: job.organizationId,

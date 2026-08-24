@@ -31,12 +31,8 @@ export const PERMISSIONS = [
 
 export type Permission = (typeof PERMISSIONS)[number];
 
-const ALL_EXCEPT_SIGN: Permission[] = PERMISSIONS.filter(
-  permission => permission !== "report:sign"
-);
-
 export const ROLE_PERMISSIONS: Record<OrganizationRole, readonly Permission[]> = {
-  administrator: ALL_EXCEPT_SIGN,
+  administrator: PERMISSIONS,
   analyst: [
     "project:create",
     "case:create",

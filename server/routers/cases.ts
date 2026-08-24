@@ -35,6 +35,9 @@ const sampleSchema = z.object({
   tumorContentPercent: z.number().min(0).max(100).optional(),
 });
 
+/** Files at or under this size are ingested synchronously in the submit request. */
+const VCF_SYNC_MAX_BYTES = 15 * 1024 * 1024;
+
 function safeFileName(fileName: string) {
   return fileName.normalize("NFKC").replace(/[^a-zA-Z0-9._-]+/g, "_").slice(-180);
 }
@@ -48,6 +51,71 @@ async function requireCase(organizationId: number, caseId: number) {
     .limit(1);
   if (!rows[0]) throw new TRPCError({ code: "NOT_FOUND", message: "Case not found" });
   return rows[0];
+}
+
+type CaseFileRow = typeof caseFiles.$inferSelect;
+
+/**
+ * Download, verify, parse, and normalize a VCF into variants, then mark the job/case
+ * review_ready (or failed). Used after submit for both sync and background paths.
+ */
+async function ingestVcfForJob(params: {
+  organizationId: number;
+  caseId: number;
+  jobId: number;
+  vcfFile: CaseFileRow;
+  referenceBuild: "GRCh37" | "GRCh38";
+}) {
+  const { organizationId, caseId, jobId, vcfFile, referenceBuild } = params;
+  const db = await requireDb();
+  try {
+    const signedUrl = await storageGetSignedUrl(vcfFile.storageKey);
+    const response = await fetch(signedUrl);
+    if (!response.ok) throw new Error(`VCF download failed (${response.status})`);
+    const raw = Buffer.from(await response.arrayBuffer());
+    const digest = createHash("sha256").update(raw).digest("hex");
+    if (digest !== vcfFile.sha256) throw new Error("VCF checksum mismatch");
+    const text = vcfFile.fileName.endsWith(".gz") ? gunzipSync(raw).toString("utf8") : raw.toString("utf8");
+    const parsed = parseVcf(text, referenceBuild);
+    if (!parsed.length) throw new Error("VCF contains no readable variant records");
+    await db.transaction(async tx => {
+      for (let offset = 0; offset < parsed.length; offset += 500) {
+        await tx.insert(variants).values(parsed.slice(offset, offset + 500).map(variant => ({
+          ...variant,
+          organizationId,
+          caseId,
+        })));
+      }
+      await tx.update(analysisJobs).set({ status: "review_ready", progressPercent: 100, completedAt: new Date() }).where(
+        and(eq(analysisJobs.id, jobId), eq(analysisJobs.organizationId, organizationId))
+      );
+      await tx.insert(analysisEvents).values({
+        organizationId,
+        jobId,
+        status: "review_ready",
+        message: `Normalized ${parsed.length.toLocaleString()} variant(s) — ready for review.`,
+        progressPercent: 100,
+      });
+      await tx.update(cases).set({ status: "review_ready" }).where(
+        and(eq(cases.id, caseId), eq(cases.organizationId, organizationId))
+      );
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "VCF ingestion failed";
+    await db.update(analysisJobs).set({ status: "failed", errorMessage: message, completedAt: new Date() }).where(
+      and(eq(analysisJobs.id, jobId), eq(analysisJobs.organizationId, organizationId))
+    );
+    await db.insert(analysisEvents).values({
+      organizationId,
+      jobId,
+      status: "failed",
+      message,
+      progressPercent: 0,
+    });
+    await db.update(cases).set({ status: "failed" }).where(
+      and(eq(cases.id, caseId), eq(cases.organizationId, organizationId))
+    );
+  }
 }
 
 export const casesRouter = router({
@@ -144,7 +212,7 @@ export const casesRouter = router({
         .where(and(eq(projects.id, input.projectId), eq(projects.organizationId, input.organizationId), eq(projects.status, "active")))
         .limit(1);
       if (!project[0]) throw new TRPCError({ code: "NOT_FOUND", message: "Project not found" });
-      const caseId = await db.transaction(async tx => {
+      const { caseId, sampleIds } = await db.transaction(async tx => {
         const result = await tx.insert(cases).values({
           organizationId: input.organizationId,
           projectId: input.projectId,
@@ -162,7 +230,7 @@ export const casesRouter = router({
           createdBy: ctx.user.id,
         });
         const id = Number(result[0].insertId);
-        await tx.insert(samples).values(
+        const sampleResult = await tx.insert(samples).values(
           input.samples.map(sample => ({
             organizationId: input.organizationId,
             caseId: id,
@@ -173,7 +241,9 @@ export const casesRouter = router({
               sample.tumorContentPercent === undefined ? null : String(sample.tumorContentPercent),
           }))
         );
-        return id;
+        const firstSampleId = Number(sampleResult[0].insertId);
+        const ids = input.samples.map((_, index) => firstSampleId + index);
+        return { caseId: id, sampleIds: ids };
       });
       await writeAuditEvent({
         organizationId: input.organizationId,
@@ -184,7 +254,7 @@ export const casesRouter = router({
         after: { caseNumber: input.caseNumber, purpose: input.purpose, inputType: input.inputType },
         req: ctx.req,
       });
-      return { id: caseId };
+      return { id: caseId, sampleIds };
     }),
 
   requestUpload: protectedProcedure
@@ -225,13 +295,17 @@ export const casesRouter = router({
         storageKey: z.string().min(20).max(512),
         accessUrl: z.string().min(10).max(768),
         mimeType: z.string().min(1).max(160),
-        byteSize: z.number().int().nonnegative(),
+        // Client-attested size/digest; VCF ingest re-verifies sha256 on download.
+        byteSize: z.number().int().positive(),
         sha256: z.string().regex(/^[a-f0-9]{64}$/i),
       })
     )
     .mutation(async ({ ctx, input }) => {
       await requireOrganizationPermission(ctx.user.id, input.organizationId, "file:upload");
-      await requireCase(input.organizationId, input.caseId);
+      const clinicalCase = await requireCase(input.organizationId, input.caseId);
+      if (clinicalCase.status !== "draft") {
+        throw new TRPCError({ code: "CONFLICT", message: "Files can only be added to a draft case" });
+      }
       const requiredPrefix = `organizations/${input.organizationId}/cases/${input.caseId}/files/`;
       const publicBase = (process.env.AWS_PUBLIC_URL ?? "").replace(/\/+$/, "");
       const expectedAccessUrl = publicBase
@@ -285,6 +359,9 @@ export const casesRouter = router({
         throw new TRPCError({ code: "BAD_REQUEST", message: "Paired FASTQ R1 and R2 files are required" });
       }
       const idempotencyKey = randomUUID();
+      const pipeline = clinicalCase.inputType === "vcf"
+        ? "vcf_ingest"
+        : clinicalCase.purpose === "germline" ? "gx_exome" : "gx_somatic";
       const manifest = {
         schemaVersion: "1.0",
         serviceCode: clinicalCase.inputType === "vcf"
@@ -297,79 +374,49 @@ export const casesRouter = router({
         panelName: clinicalCase.panelName,
         files: files.map(file => ({ id: file.id, kind: file.kind, storageKey: file.storageKey, sha256: file.sha256 })),
       };
-      const result = await db.insert(analysisJobs).values({
-        organizationId: input.organizationId,
-        caseId: input.caseId,
-        pipeline: clinicalCase.inputType === "vcf"
-          ? "vcf_ingest"
-          : clinicalCase.purpose === "germline" ? "gx_exome" : "gx_somatic",
-        status: "queued",
-        progressPercent: 0,
-        idempotencyKey,
-        manifest,
-        createdBy: ctx.user.id,
+      const jobId = await db.transaction(async tx => {
+        const result = await tx.insert(analysisJobs).values({
+          organizationId: input.organizationId,
+          caseId: input.caseId,
+          pipeline,
+          status: "queued",
+          progressPercent: 0,
+          idempotencyKey,
+          manifest,
+          createdBy: ctx.user.id,
+        });
+        const id = Number(result[0].insertId);
+        await tx.insert(analysisEvents).values({
+          organizationId: input.organizationId,
+          jobId: id,
+          status: "queued",
+          message: "Analysis request securely queued.",
+          progressPercent: 0,
+        });
+        const cas = await tx.update(cases).set({ status: "queued" }).where(
+          and(eq(cases.id, input.caseId), eq(cases.organizationId, input.organizationId), eq(cases.status, "draft"))
+        );
+        if (Number(cas[0].affectedRows) !== 1) {
+          throw new TRPCError({ code: "CONFLICT", message: "Case is already submitted" });
+        }
+        return id;
       });
-      const jobId = Number(result[0].insertId);
-      await db.insert(analysisEvents).values({
-        organizationId: input.organizationId,
-        jobId,
-        status: "queued",
-        message: "Analysis request securely queued.",
-        progressPercent: 0,
-      });
-      await db.update(cases).set({ status: "queued" }).where(
-        and(eq(cases.id, input.caseId), eq(cases.organizationId, input.organizationId), eq(cases.status, "draft"))
-      );
 
       const vcfFile = files.find(file => file.kind === "vcf");
-      if (clinicalCase.inputType === "vcf" && vcfFile && vcfFile.byteSize <= 15 * 1024 * 1024) {
-        try {
-          const signedUrl = await storageGetSignedUrl(vcfFile.storageKey);
-          const response = await fetch(signedUrl);
-          if (!response.ok) throw new Error(`VCF download failed (${response.status})`);
-          const raw = Buffer.from(await response.arrayBuffer());
-          const digest = createHash("sha256").update(raw).digest("hex");
-          if (digest !== vcfFile.sha256) throw new Error("VCF checksum mismatch");
-          const text = vcfFile.fileName.endsWith(".gz") ? gunzipSync(raw).toString("utf8") : raw.toString("utf8");
-          const parsed = parseVcf(text, clinicalCase.referenceBuild);
-          if (!parsed.length) throw new Error("VCF contains no readable variant records");
-          await db.transaction(async tx => {
-            for (let offset = 0; offset < parsed.length; offset += 500) {
-              await tx.insert(variants).values(parsed.slice(offset, offset + 500).map(variant => ({
-                ...variant,
-                organizationId: input.organizationId,
-                caseId: input.caseId,
-              })));
-            }
-            await tx.update(analysisJobs).set({ status: "review_ready", progressPercent: 100, completedAt: new Date() }).where(
-              and(eq(analysisJobs.id, jobId), eq(analysisJobs.organizationId, input.organizationId))
-            );
-            await tx.insert(analysisEvents).values({
-              organizationId: input.organizationId,
-              jobId,
-              status: "review_ready",
-              message: `Normalized ${parsed.length.toLocaleString()} variant(s) — ready for review.`,
-              progressPercent: 100,
-            });
-            await tx.update(cases).set({ status: "review_ready" }).where(
-              and(eq(cases.id, input.caseId), eq(cases.organizationId, input.organizationId))
-            );
+      if (clinicalCase.inputType === "vcf" && vcfFile) {
+        const ingestArgs = {
+          organizationId: input.organizationId,
+          caseId: input.caseId,
+          jobId,
+          vcfFile,
+          referenceBuild: clinicalCase.referenceBuild,
+        };
+        if (vcfFile.byteSize <= VCF_SYNC_MAX_BYTES) {
+          await ingestVcfForJob(ingestArgs);
+        } else {
+          void ingestVcfForJob(ingestArgs).catch(error => {
+            console.error("[vcf_ingest] background ingest failed", { caseId: input.caseId, jobId, error });
           });
-        } catch (error) {
-          const message = error instanceof Error ? error.message : "VCF ingestion failed";
-          await db.update(analysisJobs).set({ status: "failed", errorMessage: message, completedAt: new Date() }).where(
-            and(eq(analysisJobs.id, jobId), eq(analysisJobs.organizationId, input.organizationId))
-          );
-          await db.insert(analysisEvents).values({
-            organizationId: input.organizationId,
-            jobId,
-            status: "failed",
-            message,
-            progressPercent: 0,
-          });
-          await db.update(cases).set({ status: "failed" }).where(
-            and(eq(cases.id, input.caseId), eq(cases.organizationId, input.organizationId))
-          );
         }
       }
 

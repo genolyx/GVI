@@ -1,5 +1,5 @@
 import { TRPCError } from "@trpc/server";
-import { and, desc, eq } from "drizzle-orm";
+import { and, count, desc, eq } from "drizzle-orm";
 import { createHash, randomBytes } from "node:crypto";
 import { z } from "zod";
 import {
@@ -11,7 +11,7 @@ import {
   users,
 } from "../../drizzle/schema";
 import { ROLE_PERMISSIONS, ORGANIZATION_ROLES } from "../../shared/permissions";
-import { protectedProcedure, publicProcedure, router } from "../_core/trpc";
+import { adminProcedure, protectedProcedure, publicProcedure, router } from "../_core/trpc";
 import { writeAuditEvent } from "../domain/audit";
 import { requireDb, requireOrganizationPermission } from "../domain/tenant";
 
@@ -41,7 +41,12 @@ export const organizationsRouter = router({
       );
   }),
 
-  create: protectedProcedure
+  /**
+   * Provision a new organization workspace.
+   * Restricted to platform admins (users.role = admin), not org-scoped administrators.
+   * The creator becomes the first organization administrator.
+   */
+  create: adminProcedure
     .input(
       z.object({
         name: z.string().trim().min(2).max(160),
@@ -401,6 +406,24 @@ export const organizationsRouter = router({
         )
         .limit(1);
       if (!existing[0]) throw new TRPCError({ code: "NOT_FOUND" });
+      if (existing[0].role === "administrator" && input.role !== "administrator") {
+        const adminCount = await db
+          .select({ count: count() })
+          .from(organizationMembers)
+          .where(
+            and(
+              eq(organizationMembers.organizationId, input.organizationId),
+              eq(organizationMembers.role, "administrator"),
+              eq(organizationMembers.status, "active")
+            )
+          );
+        if ((adminCount[0]?.count || 0) <= 1) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Cannot remove the last administrator",
+          });
+        }
+      }
       await db
         .update(organizationMembers)
         .set({ role: input.role })

@@ -12,3 +12,19 @@ export const startLogin = (returnTo?: string) => {
   }
   window.location.href = url.toString();
 };
+
+/** True when local Dev Auth is on and Google OAuth is not configured. */
+export const isDevAuthWithoutGoogle = () =>
+  import.meta.env.VITE_DEV_AUTH === "true" && import.meta.env.VITE_GOOGLE_AUTH !== "true";
+
+/**
+ * Handle an unauthenticated API error: show Dev Login panel, or start Google OAuth.
+ */
+export const redirectForUnauth = () => {
+  if (typeof window === "undefined") return;
+  if (isDevAuthWithoutGoogle()) {
+    window.location.href = "/";
+    return;
+  }
+  startLogin();
+};

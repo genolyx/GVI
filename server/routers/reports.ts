@@ -120,7 +120,41 @@ export const reportsRouter = router({
       if (!canTransitionReport(report.status, "in_review")) throw new TRPCError({ code: "CONFLICT", message: "Invalid report state transition" });
       const db = await requireDb();
       await db.update(reports).set({ status: "in_review" }).where(and(eq(reports.id, input.reportId), eq(reports.organizationId, input.organizationId), eq(reports.status, "draft")));
+      await db.update(cases).set({ status: "in_review" }).where(
+        and(
+          eq(cases.id, report.caseId),
+          eq(cases.organizationId, input.organizationId),
+          inArray(cases.status, ["review_ready", "in_review"])
+        )
+      );
       await writeAuditEvent({ organizationId: input.organizationId, actorUserId: ctx.user.id, action: "report.review_requested", entityType: "report", entityId: input.reportId, before: { status: "draft" }, after: { status: "in_review" }, req: ctx.req });
+      return { success: true };
+    }),
+
+  returnToDraft: protectedProcedure
+    .input(z.object({ organizationId: z.number().int().positive(), reportId: z.number().int().positive() }))
+    .mutation(async ({ ctx, input }) => {
+      await requireOrganizationPermission(ctx.user.id, input.organizationId, "report:review");
+      const report = await requireReport(input.organizationId, input.reportId);
+      if (!canTransitionReport(report.status, "draft")) throw new TRPCError({ code: "CONFLICT", message: "Invalid report state transition" });
+      const db = await requireDb();
+      const result = await db.update(reports).set({ status: "draft" }).where(
+        and(eq(reports.id, input.reportId), eq(reports.organizationId, input.organizationId), eq(reports.status, "in_review"))
+      );
+      if (Number(result[0].affectedRows) !== 1) throw new TRPCError({ code: "CONFLICT", message: "Report state changed before return to draft" });
+      await db.update(cases).set({ status: "review_ready" }).where(
+        and(eq(cases.id, report.caseId), eq(cases.organizationId, input.organizationId), eq(cases.status, "in_review"))
+      );
+      await writeAuditEvent({
+        organizationId: input.organizationId,
+        actorUserId: ctx.user.id,
+        action: "report.returned_to_draft",
+        entityType: "report",
+        entityId: input.reportId,
+        before: { status: "in_review" },
+        after: { status: "draft" },
+        req: ctx.req,
+      });
       return { success: true };
     }),
 

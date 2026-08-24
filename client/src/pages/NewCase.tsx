@@ -10,7 +10,7 @@ import { Progress } from "@/components/ui/progress";
 import { Textarea } from "@/components/ui/textarea";
 import { useOrganization } from "@/contexts/OrganizationContext";
 import { trpc } from "@/lib/trpc";
-import { ArrowLeft, CheckCircle2, Dna, FileUp, Info, Loader2, ShieldCheck } from "lucide-react";
+import { ArrowLeft, CheckCircle2, FileUp, Info, Loader2, ShieldCheck } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
@@ -25,18 +25,71 @@ export default function NewCasePage() {
   const projects = trpc.projects.list.useQuery({ organizationId: activeOrganizationId || 0 }, { enabled: Boolean(activeOrganizationId) });
   const [form, setForm] = useState<FormState>({ projectId: "", caseNumber: `GVI-${new Date().getFullYear()}-`, patientAlias: "", purpose: "germline", inputType: "vcf", referenceBuild: "GRCh38", panelName: "", indication: "", phenotypeText: "", sampleCode: "", specimenType: "Blood", tumorContentPercent: "", consentClinicalAnalysis: false, consentSecondaryFindings: false, consentDataUse: false });
   const [vcf, setVcf] = useState<File | null>(null); const [r1, setR1] = useState<File | null>(null); const [r2, setR2] = useState<File | null>(null); const [progress, setProgress] = useState(0); const [submissionError, setSubmissionError] = useState("");
+  const [createdCaseId, setCreatedCaseId] = useState<number | null>(null);
   const createCase = trpc.cases.create.useMutation(); const requestUpload = trpc.cases.requestUpload.useMutation(); const completeUpload = trpc.cases.completeUpload.useMutation(); const submit = trpc.cases.submit.useMutation();
   const busy = createCase.isPending || requestUpload.isPending || completeUpload.isPending || submit.isPending;
   const update = <K extends keyof FormState>(key: K, value: FormState[K]) => setForm(current => ({ ...current, [key]: value }));
-  const upload = async (caseId: number, file: File, kind: "vcf" | "fastq_r1" | "fastq_r2") => { const ticket = await requestUpload.mutateAsync({ organizationId: activeOrganizationId!, caseId, kind, fileName: file.name }); const digest = await sha256(file); const response = await fetch(ticket.uploadUrl, { method: "PUT", headers: { "Content-Type": file.type || "application/octet-stream" }, body: file }); if (!response.ok) throw new Error(`Upload failed for ${file.name}`); await completeUpload.mutateAsync({ organizationId: activeOrganizationId!, caseId, kind, fileName: file.name, storageKey: ticket.key, accessUrl: ticket.accessUrl, mimeType: file.type || "application/octet-stream", byteSize: file.size, sha256: digest }); };
-  const handleSubmit = async () => { if (!activeOrganizationId || !form.projectId || !form.consentClinicalAnalysis) return; try { setSubmissionError(""); setProgress(8); const created = await createCase.mutateAsync({ organizationId: activeOrganizationId, projectId: Number(form.projectId), caseNumber: form.caseNumber, patientAlias: form.patientAlias, purpose: form.purpose, inputType: form.inputType, referenceBuild: form.referenceBuild, panelName: form.panelName || undefined, indication: form.indication || undefined, phenotypeText: form.phenotypeText || undefined, consentClinicalAnalysis: true, consentSecondaryFindings: form.consentSecondaryFindings, consentDataUse: form.consentDataUse, samples: [{ sampleCode: form.sampleCode, role: form.purpose === "somatic" ? "tumor" : "proband", specimenType: form.specimenType, tumorContentPercent: form.purpose === "somatic" && form.tumorContentPercent ? Number(form.tumorContentPercent) : undefined }] }); setProgress(25); if (form.inputType === "vcf" && vcf) await upload(created.id, vcf, "vcf"); if (form.inputType === "fastq" && r1 && r2) { await upload(created.id, r1, "fastq_r1"); setProgress(58); await upload(created.id, r2, "fastq_r2"); } setProgress(82); await submit.mutateAsync({ organizationId: activeOrganizationId, caseId: created.id }); setProgress(100); toast.success("Analysis request submitted."); navigate(`/cases/${created.id}`); } catch (error) { const message = error instanceof Error ? error.message : "An error occurred while submitting the analysis request."; setSubmissionError(message); setProgress(0); toast.error(message); } };
+  const upload = async (caseId: number, file: File, kind: "vcf" | "fastq_r1" | "fastq_r2", sampleId?: number) => {
+    const ticket = await requestUpload.mutateAsync({ organizationId: activeOrganizationId!, caseId, sampleId, kind, fileName: file.name });
+    const digest = await sha256(file);
+    const response = await fetch(ticket.uploadUrl, { method: "PUT", headers: { "Content-Type": file.type || "application/octet-stream" }, body: file });
+    if (!response.ok) throw new Error(`Upload failed for ${file.name}`);
+    await completeUpload.mutateAsync({ organizationId: activeOrganizationId!, caseId, sampleId, kind, fileName: file.name, storageKey: ticket.key, accessUrl: ticket.accessUrl, mimeType: file.type || "application/octet-stream", byteSize: file.size, sha256: digest });
+  };
+  const handleSubmit = async () => {
+    if (!activeOrganizationId || !form.projectId || !form.consentClinicalAnalysis) return;
+    try {
+      setSubmissionError("");
+      setProgress(8);
+      const created = await createCase.mutateAsync({
+        organizationId: activeOrganizationId,
+        projectId: Number(form.projectId),
+        caseNumber: form.caseNumber,
+        patientAlias: form.patientAlias,
+        purpose: form.purpose,
+        inputType: form.inputType,
+        referenceBuild: form.referenceBuild,
+        panelName: form.panelName || undefined,
+        indication: form.indication || undefined,
+        phenotypeText: form.phenotypeText || undefined,
+        consentClinicalAnalysis: true,
+        consentSecondaryFindings: form.consentSecondaryFindings,
+        consentDataUse: form.consentDataUse,
+        samples: [{
+          sampleCode: form.sampleCode,
+          role: form.purpose === "somatic" ? "tumor" : "proband",
+          specimenType: form.specimenType,
+          tumorContentPercent: form.purpose === "somatic" && form.tumorContentPercent ? Number(form.tumorContentPercent) : undefined,
+        }],
+      });
+      setCreatedCaseId(created.id);
+      const sampleId = created.sampleIds[0];
+      setProgress(25);
+      if (form.inputType === "vcf" && vcf) await upload(created.id, vcf, "vcf", sampleId);
+      if (form.inputType === "fastq" && r1 && r2) {
+        await upload(created.id, r1, "fastq_r1", sampleId);
+        setProgress(58);
+        await upload(created.id, r2, "fastq_r2", sampleId);
+      }
+      setProgress(82);
+      await submit.mutateAsync({ organizationId: activeOrganizationId, caseId: created.id });
+      setProgress(100);
+      toast.success("Analysis request submitted.");
+      navigate(`/cases/${created.id}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "An error occurred while submitting the analysis request.";
+      setSubmissionError(message);
+      setProgress(0);
+      toast.error(message);
+    }
+  };
   const fileReady = form.inputType === "vcf" ? Boolean(vcf) : Boolean(r1 && r2); const valid = Boolean(form.projectId && form.caseNumber.length >= 2 && form.patientAlias && form.sampleCode && fileReady && form.consentClinicalAnalysis);
   if (!hasPermission("case:create")) return <div className="space-y-7"><PageHeader eyebrow="New analysis request" title="New case" description="Submit a new case with structured test purpose and consent scope." /><StatePanel type="forbidden" title="You do not have permission to create cases" description="Ask your organization administrator for a role that includes the case:create action." action={<Button variant="outline" onClick={() => navigate("/cases")}><ArrowLeft className="mr-2 size-4" />Cases</Button>} /></div>;
   if (projects.isError) return <div className="space-y-7"><PageHeader eyebrow="New analysis request" title="New case" description="Unable to verify the organization project scope." /><StatePanel type="error" title="Failed to load projects" description={projects.error.message} onRetry={() => { void projects.refetch(); }} action={<Button variant="outline" onClick={() => navigate("/cases")}><ArrowLeft className="mr-2 size-4" />Cases</Button>} /></div>;
   return <div className="mx-auto max-w-5xl space-y-7"><PageHeader eyebrow="New analysis request" title="New case" description="Structure the test purpose and consent scope, then upload original files directly to the organization- and case-scoped storage path." actions={<Button variant="ghost" onClick={() => navigate("/cases")}><ArrowLeft className="mr-2 size-4" />Cases</Button>} />
     <Alert className="border-teal-200 bg-teal-50/60 text-teal-950"><ShieldCheck className="size-4 text-teal-700" /><AlertTitle>Tenant-isolated upload</AlertTitle><AlertDescription className="text-teal-800/80">Files are uploaded directly to the S3 path scoped to the current organization and case — bypassing the web server — and a SHA-256 checksum is recorded.</AlertDescription></Alert>
     {!projects.isLoading && !projects.data?.length ? <StatePanel compact type="empty" title="Create a project first" description="Cases must belong to an internal project boundary. Create a project on the Dashboard, then come back to submit." action={<Button variant="outline" onClick={() => navigate("/")}>Go to Dashboard</Button>} /> : null}
-    {submissionError ? <StatePanel compact type="error" title="Failed to complete analysis request" description={submissionError} onRetry={() => { void handleSubmit(); }} /> : null}
+    {submissionError ? <StatePanel compact type="error" title="Failed to complete analysis request" description={submissionError} onRetry={() => { void handleSubmit(); }} action={createdCaseId ? <Button variant="outline" onClick={() => navigate(`/cases/${createdCaseId}`)}>Open draft case</Button> : undefined} /> : null}
     <div className="grid gap-5 lg:grid-cols-[1fr_1fr]"><Card className="clinical-card shadow-none"><CardHeader><CardTitle className="font-display text-base">1. Test &amp; case</CardTitle></CardHeader><CardContent className="space-y-4"><div className="space-y-2"><Label>Project</Label><select value={form.projectId} onChange={e => update("projectId", e.target.value)} className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm"><option value="">Select project</option>{projects.data?.map(project => <option key={project.id} value={project.id}>{project.code} · {project.name}</option>)}</select></div><div className="grid gap-4 sm:grid-cols-2"><Field label="Case number"><Input value={form.caseNumber} onChange={e => update("caseNumber", e.target.value)} /></Field><Field label="Patient alias"><Input value={form.patientAlias} onChange={e => update("patientAlias", e.target.value)} placeholder="De-identified alias" /></Field></div><div className="grid gap-4 sm:grid-cols-2"><Field label="Test purpose"><select value={form.purpose} onChange={e => update("purpose", e.target.value as FormState["purpose"])} className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm"><option value="germline">Germline</option><option value="somatic">Somatic</option></select></Field><Field label="Input type"><select value={form.inputType} onChange={e => update("inputType", e.target.value as FormState["inputType"])} className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm"><option value="vcf">VCF</option><option value="fastq">FASTQ paired-end</option></select></Field></div><div className="grid gap-4 sm:grid-cols-2"><Field label="Reference build"><select value={form.referenceBuild} onChange={e => update("referenceBuild", e.target.value as FormState["referenceBuild"])} className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm"><option value="GRCh38">GRCh38</option><option value="GRCh37">GRCh37</option></select></Field><Field label="Panel"><Input value={form.panelName} onChange={e => update("panelName", e.target.value)} placeholder="Panel or WES" /></Field></div><Field label="Clinical indication"><Textarea value={form.indication} onChange={e => update("indication", e.target.value)} placeholder="Clinical indication and key question" /></Field><Field label="Phenotype / disease context"><Textarea value={form.phenotypeText} onChange={e => update("phenotypeText", e.target.value)} placeholder="HPO terms or free text" /></Field></CardContent></Card>
       <div className="space-y-5"><Card className="clinical-card shadow-none"><CardHeader><CardTitle className="font-display text-base">2. Sample</CardTitle></CardHeader><CardContent className="space-y-4"><div className="grid gap-4 sm:grid-cols-2"><Field label="Sample code"><Input value={form.sampleCode} onChange={e => update("sampleCode", e.target.value)} /></Field><Field label="Specimen type"><Input value={form.specimenType} onChange={e => update("specimenType", e.target.value)} /></Field></div>{form.purpose === "somatic" ? <Field label="Tumor content (%)"><Input type="number" min="0" max="100" value={form.tumorContentPercent} onChange={e => update("tumorContentPercent", e.target.value)} /></Field> : null}</CardContent></Card>
         <Card className="clinical-card shadow-none"><CardHeader><CardTitle className="font-display text-base">3. Input files</CardTitle></CardHeader><CardContent>{form.inputType === "vcf" ? <FileInput label="VCF or VCF.GZ" accept=".vcf,.vcf.gz" file={vcf} onChange={setVcf} /> : <div className="grid gap-3"><FileInput label="FASTQ R1" accept=".fastq,.fq,.fastq.gz,.fq.gz" file={r1} onChange={setR1} /><FileInput label="FASTQ R2" accept=".fastq,.fq,.fastq.gz,.fq.gz" file={r2} onChange={setR2} /></div>}</CardContent></Card></div>

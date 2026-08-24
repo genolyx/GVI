@@ -122,22 +122,66 @@ export default function InviteAcceptPage() {
       ) : !user ? (
         <div className="mt-6 space-y-3">
           <p className="text-sm text-muted-foreground">
-            Sign in with the Google account for <span className="font-medium text-foreground">{data.email}</span> to accept.
+            Sign in with the account for <span className="font-medium text-foreground">{data.email}</span> to accept.
           </p>
-          <Button className="w-full" size="lg" onClick={() => startLogin(`/invite/${token}`)}>
-            <LogIn className="mr-2 size-4" />
-            Continue with Google
-          </Button>
+          {import.meta.env.VITE_GOOGLE_AUTH === "true" ? (
+            <Button className="w-full" size="lg" onClick={() => startLogin(`/invite/${token}`)}>
+              <LogIn className="mr-2 size-4" />
+              Continue with Google
+            </Button>
+          ) : null}
+          {import.meta.env.VITE_DEV_AUTH === "true" ? (
+            <Button
+              className="w-full"
+              size="lg"
+              variant={import.meta.env.VITE_GOOGLE_AUTH === "true" ? "outline" : "default"}
+              onClick={async () => {
+                const nameFromEmail = data.email.split("@")[0] || "Dev User";
+                const res = await fetch("/api/dev/login", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    openId: `dev_${data.email}`,
+                    name: nameFromEmail,
+                    email: data.email,
+                  }),
+                });
+                if (!res.ok) {
+                  toast.error(await res.text());
+                  return;
+                }
+                window.location.reload();
+              }}
+            >
+              <LogIn className="mr-2 size-4" />
+              Dev Login as invitee
+            </Button>
+          ) : null}
+          {import.meta.env.VITE_DEV_AUTH === "true" && import.meta.env.VITE_GOOGLE_AUTH !== "true" ? (
+            <p className="text-center text-[11px] text-amber-600">DEV_AUTH mode — disabled in production.</p>
+          ) : null}
         </div>
       ) : user.email?.toLowerCase() !== data.email.toLowerCase() ? (
         <div className="mt-6 space-y-3">
           <StateBlock
             icon={<ShieldAlert className="size-5" />}
-            title="Wrong Google account"
+            title="Wrong account"
             description={`This invite is for ${data.email}. You are signed in as ${user.email || "an account without email"}.`}
           />
-          <Button className="w-full" variant="outline" onClick={() => void logout().then(() => startLogin(`/invite/${token}`))}>
-            Sign out and continue with Google
+          <Button
+            className="w-full"
+            variant="outline"
+            onClick={() =>
+              void logout().then(() => {
+                if (import.meta.env.VITE_GOOGLE_AUTH === "true") {
+                  startLogin(`/invite/${token}`);
+                } else {
+                  window.location.reload();
+                }
+              })
+            }
+          >
+            Sign out and try again
           </Button>
         </div>
       ) : (
