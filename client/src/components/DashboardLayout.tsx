@@ -208,17 +208,17 @@ function DashboardLayoutContent({ children, setSidebarWidth }: { children: React
     <>
       <div className="relative" ref={sidebarRef}>
         <Sidebar collapsible="icon" className="border-r border-sidebar-border/70" disableTransition={isResizing}>
-          <SidebarHeader className="border-b border-sidebar-border/60 px-3 py-4">
-            <div className="flex w-full items-center gap-3">
+          <SidebarHeader className={isCollapsed ? "border-b border-sidebar-border/60 px-1 py-3" : "border-b border-sidebar-border/60 px-3 py-4"}>
+            <div className={isCollapsed ? "flex w-full flex-col items-center gap-2" : "relative flex w-full items-center justify-center"}>
               {isCollapsed ? (
-                <GenolyxMark className="size-9 shrink-0" />
+                <GenolyxMark className="size-7" />
               ) : (
-                <div className="min-w-0 flex-1">
-                  <GenolyxWordmark />
-                  <p className="mt-1 truncate text-[9px] font-medium uppercase tracking-[0.16em] text-sidebar-foreground/50">Variant Curation</p>
+                <div className="flex min-w-0 flex-col items-center px-8 text-center">
+                  <GenolyxWordmark className="object-center" />
+                  <p className="mt-1 text-[9px] font-medium uppercase tracking-[0.16em] text-sidebar-foreground/50">Variant Curation</p>
                 </div>
               )}
-              <button onClick={toggleSidebar} aria-label="Toggle navigation" className="grid size-8 shrink-0 place-items-center rounded-lg text-sidebar-foreground/60 hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-sidebar-ring"><PanelLeft className="size-4" /></button>
+              <button onClick={toggleSidebar} aria-label={isCollapsed ? "Expand navigation" : "Collapse navigation"} className={isCollapsed ? "grid size-7 shrink-0 place-items-center rounded-lg text-sidebar-foreground/60 hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-sidebar-ring" : "absolute right-0 top-0 grid size-8 shrink-0 place-items-center rounded-lg text-sidebar-foreground/60 hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-sidebar-ring"}><PanelLeft className="size-4" /></button>
             </div>
             {!isCollapsed && activeOrganization ? (
               <DropdownMenu>
