@@ -1,6 +1,7 @@
 import { readFileSync, readdirSync } from "fs";
 import path from "path";
 import { describe, expect, it } from "vitest";
+import { moduleDir } from "../moduleDir";
 import { ENGINE_HTML_KEYS, buildCurationSummary, curationDocumentSchema } from "./document";
 
 /**
@@ -16,7 +17,7 @@ import { ENGINE_HTML_KEYS, buildCurationSummary, curationDocumentSchema } from "
  *   engine/.venv/bin/python -m pytest engine/tests/test_contract_adapter.py
  */
 
-const repoRoot = path.resolve(import.meta.dirname, "..", "..");
+const repoRoot = path.resolve(moduleDir(import.meta.url), "..", "..");
 const fixtureDir = path.join(repoRoot, "engine", "tests", "contract_fixtures");
 const schemaPath = path.join(repoRoot, "contracts", "curation-document.v1.json");
 
