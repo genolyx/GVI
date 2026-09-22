@@ -75,8 +75,9 @@ export function registerGatewayAuthRoutes(app: Express) {
             eq(analysisJobs.organizationId, job.organizationId),
             eq(analysisJobs.status, "queued")
           )
-        );
-      if (Number(updateResult[0].affectedRows) !== 1) {
+        )
+        .returning({ id: analysisJobs.id });
+      if (updateResult.length !== 1) {
         res.status(409).json({ error: "job_already_claimed" });
         return;
       }

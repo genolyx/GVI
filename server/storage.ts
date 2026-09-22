@@ -137,6 +137,22 @@ export async function storageGet(
   return { key, url: getPublicUrl(key) };
 }
 
+/**
+ * Read an object's body as text.
+ *
+ * Used for curation documents, which are served through tRPC rather than a signed
+ * URL so tenant checks and contract validation happen before anything reaches the
+ * browser.
+ */
+export async function storageGetText(relKey: string): Promise<string> {
+  const { client, bucket } = getClient();
+  const key = assertSafeKey(relKey);
+
+  const result = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+  if (!result.Body) throw new Error(`Storage object has no body: ${key}`);
+  return result.Body.transformToString("utf-8");
+}
+
 export async function storageGetSignedUrl(relKey: string): Promise<string> {
   const { client, bucket } = getClient();
   const key = assertSafeKey(relKey);

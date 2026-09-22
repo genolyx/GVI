@@ -26,16 +26,18 @@ import {
 } from "@/components/ui/sidebar";
 import { startLogin } from "@/const";
 import { useIsMobile } from "@/hooks/useMobile";
+import { AppearanceControls } from "@/components/AppearanceControls";
+import { GenolyxMark, GenolyxWordmark } from "@/components/BrandMark";
 import {
   Activity,
   Building2,
   ChevronDown,
   ClipboardList,
-  Dna,
   FileSignature,
   FlaskConical,
   LayoutDashboard,
   LogOut,
+  Microscope,
   PanelLeft,
   ShieldCheck,
   Users,
@@ -69,12 +71,12 @@ function LoginPanel({ isDevAuth, isGoogleAuth }: { isDevAuth: boolean; isGoogleA
   };
 
   return (
-    <div className="grid min-h-screen place-items-center bg-[radial-gradient(circle_at_top_right,oklch(0.89_0.07_181),transparent_32rem)] px-5">
+    <div className="grid min-h-screen place-items-center bg-[radial-gradient(circle_at_top_right,rgb(61_176_199_/_35%),transparent_32rem)] px-5">
       <div className="clinical-panel w-full max-w-lg overflow-hidden">
-        <div className="border-b border-border/70 bg-slate-950 px-8 py-7 text-white">
-          <div className="mb-8 flex items-center gap-3">
-            <div className="grid size-10 place-items-center rounded-xl bg-teal-500 text-white"><Dna className="size-5" /></div>
-            <div><p className="font-display text-sm font-semibold">Genolyx</p><p className="text-[10px] uppercase tracking-[0.16em] text-slate-400">Variant Interpreter</p></div>
+        <div className="border-b border-border/70 bg-[#050b14] px-8 py-7 text-foreground">
+          <div className="mb-8">
+            <GenolyxWordmark onDark className="h-8 max-w-[180px]" />
+            <p className="mt-2 text-[10px] uppercase tracking-[0.16em] text-slate-400">Variant Curation</p>
           </div>
           <h1 className="font-display text-3xl font-semibold tracking-tight">Clinical evidence,<br />under expert control.</h1>
           <p className="mt-3 max-w-sm text-sm leading-6 text-slate-400">Tenant isolation, evidence tracing, expert review, and immutable signed reports — all in one workspace.</p>
@@ -126,6 +128,7 @@ const menuItems = [
   { icon: LayoutDashboard, label: "Dashboard", path: "/", permission: "case:read" },
   { icon: ClipboardList, label: "Cases", path: "/cases", permission: "case:read" },
   { icon: FlaskConical, label: "Variant Workbench", path: "/workbench", permission: "variant:read" },
+  { icon: Microscope, label: "Curate Variant", path: "/curate", permission: "curation:run" },
   { icon: FileSignature, label: "Clinical Reports", path: "/reports", permission: "report:read" },
   { icon: Activity, label: "Audit Log", path: "/audit", permission: "audit:view" },
   { icon: ShieldCheck, label: "Security", path: "/security", permission: "security:view" },
@@ -173,6 +176,7 @@ function DashboardLayoutContent({ children, setSidebarWidth }: { children: React
   const { organizations, activeOrganization, setActiveOrganizationId, hasPermission, isLoading: organizationsLoading, organizationError, refetchOrganizations } = useOrganization();
   const visibleMenuItems = menuItems.filter(item => hasPermission(item.permission));
   const activeMenuItem = menuItems.find(item => item.path === "/" ? location === "/" : location.startsWith(item.path));
+  const ActiveIcon = activeMenuItem?.icon;
 
   useEffect(() => { if (isCollapsed) setIsResizing(false); }, [isCollapsed]);
   useEffect(() => {
@@ -206,8 +210,14 @@ function DashboardLayoutContent({ children, setSidebarWidth }: { children: React
         <Sidebar collapsible="icon" className="border-r border-sidebar-border/70" disableTransition={isResizing}>
           <SidebarHeader className="border-b border-sidebar-border/60 px-3 py-4">
             <div className="flex w-full items-center gap-3">
-              <div className="grid size-9 shrink-0 place-items-center rounded-xl bg-sidebar-primary text-sidebar-primary-foreground shadow-lg"><Dna className="size-4" /></div>
-              {!isCollapsed ? <div className="min-w-0 flex-1"><p className="truncate font-display text-sm font-semibold">Genolyx</p><p className="truncate text-[9px] font-medium uppercase tracking-[0.16em] text-sidebar-foreground/50">Variant Interpreter</p></div> : null}
+              {isCollapsed ? (
+                <GenolyxMark className="size-9 shrink-0" />
+              ) : (
+                <div className="min-w-0 flex-1">
+                  <GenolyxWordmark />
+                  <p className="mt-1 truncate text-[9px] font-medium uppercase tracking-[0.16em] text-sidebar-foreground/50">Variant Curation</p>
+                </div>
+              )}
               <button onClick={toggleSidebar} aria-label="Toggle navigation" className="grid size-8 shrink-0 place-items-center rounded-lg text-sidebar-foreground/60 hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-sidebar-ring"><PanelLeft className="size-4" /></button>
             </div>
             {!isCollapsed && activeOrganization ? (
@@ -234,6 +244,7 @@ function DashboardLayoutContent({ children, setSidebarWidth }: { children: React
             </SidebarMenu>
           </SidebarContent>
           <SidebarFooter className="border-t border-sidebar-border/60 p-3">
+            <AppearanceControls collapsed={isCollapsed} />
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button className="flex w-full items-center gap-3 rounded-lg p-1 text-left hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-sidebar-ring">
@@ -251,7 +262,7 @@ function DashboardLayoutContent({ children, setSidebarWidth }: { children: React
         <div className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-border/70 bg-background/85 px-3 backdrop-blur-xl sm:px-6">
           <div className="flex items-center gap-2">
             {isMobile ? <SidebarTrigger className="size-9" /> : null}
-            <div className="flex items-center gap-2 text-xs text-muted-foreground"><Activity className="size-3.5 text-emerald-600" /><span className="hidden sm:inline">Clinical workspace</span><span className="hidden text-border sm:inline">/</span><span className="font-medium text-foreground">{activeMenuItem?.label || "GVI"}</span></div>
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">{ActiveIcon ? <ActiveIcon className="size-3.5 text-primary" /> : null}<span className="font-medium text-foreground">{activeMenuItem?.label || "GVI"}</span></div>
           </div>
           {activeOrganization ? <div className="flex items-center gap-2 rounded-full border border-border/70 bg-card px-3 py-1.5 text-[10px] text-muted-foreground shadow-sm"><ShieldCheck className="size-3.5 text-emerald-600" /><span className="hidden sm:inline">Isolated scope</span><span className="font-semibold text-foreground">{activeOrganization.slug}</span></div> : null}
         </div>

@@ -1,26 +1,54 @@
 {
   "version": "7",
-  "dialect": "mysql",
+  "dialect": "postgresql",
   "entries": [
     {
       "idx": 0,
-      "version": "5",
-      "when": 1784699398994,
-      "tag": "0000_romantic_steve_rogers",
+      "version": "7",
+      "when": 1790003388519,
+      "tag": "0000_nifty_sprite",
       "breakpoints": true
     },
     {
       "idx": 1,
-      "version": "5",
-      "when": 1784699567483,
-      "tag": "0001_silent_magdalene",
+      "version": "7",
+      "when": 1790003405706,
+      "tag": "0001_updated_at_triggers",
       "breakpoints": true
     },
     {
       "idx": 2,
-      "version": "5",
-      "when": 1784700388737,
-      "tag": "0002_lively_bullseye",
+      "version": "7",
+      "when": 1790004476731,
+      "tag": "0002_curation_runs",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1790004490049,
+      "tag": "0003_curation_runs_updated_at_trigger",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1790007089949,
+      "tag": "0004_m3_engine_origin",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1790012227556,
+      "tag": "0005_m4_triage",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1790032871488,
+      "tag": "0006_curation_run_set_null_column",
       "breakpoints": true
     }
   ]

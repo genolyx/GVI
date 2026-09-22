@@ -4,6 +4,7 @@ import { z } from "zod";
 import {
   cases,
   criteriaAssessments,
+  curationRuns,
   evidenceItems,
   interpretations,
   reports,
@@ -12,8 +13,15 @@ import {
 } from "../../drizzle/schema";
 import { protectedProcedure, router } from "../_core/trpc";
 import { writeAuditEvent } from "../domain/audit";
+import {
+  curationSnapshotEntry,
+  engineFromSummary,
+  findingsFromApproved,
+  type ReportVariantFinding,
+} from "../domain/reportFindings";
 import { canTransitionReport, createReportDigest, isReportMutable } from "../domain/reportSnapshot";
 import { requireDb, requireOrganizationPermission } from "../domain/tenant";
+import type { CurationSummary } from "../../shared/curation/document";
 
 const reportContentSchema = z.object({
   summary: z.string().max(12000),
@@ -82,20 +90,18 @@ export const reportsRouter = router({
       const approved = await db.select({ interpretation: interpretations, variant: variants }).from(interpretations)
         .innerJoin(variants, and(eq(variants.id, interpretations.variantId), eq(variants.organizationId, interpretations.organizationId)))
         .where(and(eq(interpretations.organizationId, input.organizationId), eq(variants.caseId, input.caseId), eq(interpretations.status, "approved")));
-      const findingLines = approved.map(({ variant, interpretation }) =>
-        `${variant.gene || "Intergenic"} ${variant.hgvsC || variant.normalizedId}: ${interpretation.germlineClassification || interpretation.somaticTier || "Reviewed"}${interpretation.oncogenicity ? ` / ${interpretation.oncogenicity}` : ""}`
-      );
+      const findingRows = await attachEngineFindings(input.organizationId, approved);
       const content = {
         summary: approved.length ? `${approved.length} approved variant(s) included in this report draft.` : "No approved variants yet. Describe findings after expert review.",
         indication: clinicalCase.indication || "",
-        findings: findingLines.join("\n"),
+        findings: findingsFromApproved(findingRows),
         interpretation: approved.map(({ interpretation }) => interpretation.rationale).join("\n\n"),
         methodology: `${clinicalCase.inputType.toUpperCase()} input; reference ${clinicalCase.referenceBuild}; ${clinicalCase.panelName || "panel not specified"}.`,
         limitations: "Results are limited to the submitted specimen and analysis scope used. Independent clinical correlation is required.",
         recommendations: "Review in the context of clinical history, family history, or tumor characteristics.",
       };
-      const result = await db.insert(reports).values({ organizationId: input.organizationId, caseId: input.caseId, version: (existing[0]?.version || 0) + 1, title: `${clinicalCase.caseNumber} ${clinicalCase.purpose === "germline" ? "Germline" : "Somatic"} Variant Interpretation Report`, content, parentReportId: existing[0]?.id || null, createdBy: ctx.user.id });
-      const id = Number(result[0].insertId);
+      const result = await db.insert(reports).values({ organizationId: input.organizationId, caseId: input.caseId, version: (existing[0]?.version || 0) + 1, title: `${clinicalCase.caseNumber} ${clinicalCase.purpose === "germline" ? "Germline" : "Somatic"} Variant Interpretation Report`, content, parentReportId: existing[0]?.id || null, createdBy: ctx.user.id }).returning({ id: reports.id });
+      const id = result[0].id;
       await writeAuditEvent({ organizationId: input.organizationId, actorUserId: ctx.user.id, action: "report.draft_created", entityType: "report", entityId: id, after: { caseId: input.caseId, version: (existing[0]?.version || 0) + 1 }, req: ctx.req });
       return { id };
     }),
@@ -140,8 +146,8 @@ export const reportsRouter = router({
       const db = await requireDb();
       const result = await db.update(reports).set({ status: "draft" }).where(
         and(eq(reports.id, input.reportId), eq(reports.organizationId, input.organizationId), eq(reports.status, "in_review"))
-      );
-      if (Number(result[0].affectedRows) !== 1) throw new TRPCError({ code: "CONFLICT", message: "Report state changed before return to draft" });
+      ).returning({ id: reports.id });
+      if (result.length !== 1) throw new TRPCError({ code: "CONFLICT", message: "Report state changed before return to draft" });
       await db.update(cases).set({ status: "review_ready" }).where(
         and(eq(cases.id, report.caseId), eq(cases.organizationId, input.organizationId), eq(cases.status, "in_review"))
       );
@@ -172,19 +178,24 @@ export const reportsRouter = router({
       const criteria = interpretationIds.length ? await db.select().from(criteriaAssessments).where(and(eq(criteriaAssessments.organizationId, input.organizationId), inArray(criteriaAssessments.interpretationId, interpretationIds))) : [];
       const variantIds = included.map(item => item.variant.id);
       const evidence = variantIds.length ? await db.select().from(evidenceItems).where(and(eq(evidenceItems.organizationId, input.organizationId), inArray(evidenceItems.variantId, variantIds))) : [];
+      const findingRows = await attachEngineFindings(input.organizationId, included);
       const signedAt = new Date();
       const snapshot = {
-        schemaVersion: "1.0",
+        schemaVersion: "1.1",
         report: { id: report.id, version: report.version, title: report.title, content: report.content },
         case: clinicalCase[0],
         interpretations: included,
         criteria,
         evidence: evidence.map(item => ({ id: item.id, source: item.source, sourceRecordId: item.sourceRecordId, clinicalDomain: item.clinicalDomain, title: item.title, url: item.url, excerpt: item.excerpt, accessedAt: item.accessedAt })),
+        // Named hashes, not the documents themselves. Changing a curation document
+        // after sign-off produces a different digest, which is the whole point of
+        // putting the hash in the chain.
+        curation: findingRows.map(curationSnapshotEntry).filter(Boolean),
         signature: { userId: ctx.user.id, name: ctx.user.name, email: ctx.user.email, role: signerMembership.role, signedAt: signedAt.toISOString(), attestation: "I reviewed this report and electronically sign this immutable version." },
       } as Record<string, unknown>;
       const digest = createReportDigest(snapshot);
-      const result = await db.update(reports).set({ status: "signed", snapshot, snapshotHash: digest.sha256, signedBy: ctx.user.id, signedAt }).where(and(eq(reports.id, report.id), eq(reports.organizationId, input.organizationId), eq(reports.status, "in_review")));
-      if (Number(result[0].affectedRows) !== 1) throw new TRPCError({ code: "CONFLICT", message: "Report state changed before signing" });
+      const result = await db.update(reports).set({ status: "signed", snapshot, snapshotHash: digest.sha256, signedBy: ctx.user.id, signedAt }).where(and(eq(reports.id, report.id), eq(reports.organizationId, input.organizationId), eq(reports.status, "in_review"))).returning({ id: reports.id });
+      if (result.length !== 1) throw new TRPCError({ code: "CONFLICT", message: "Report state changed before signing" });
       await db.update(cases).set({ status: "reported" }).where(and(eq(cases.id, report.caseId), eq(cases.organizationId, input.organizationId)));
       await writeAuditEvent({ organizationId: input.organizationId, actorUserId: ctx.user.id, action: "report.signed", entityType: "report", entityId: report.id, before: { status: report.status }, after: { status: "signed", snapshotHash: digest.sha256, signedAt: signedAt.toISOString() }, req: ctx.req });
       return { snapshotHash: digest.sha256, signedAt };
@@ -199,10 +210,65 @@ export const reportsRouter = router({
       const db = await requireDb();
       const newId = await db.transaction(async tx => {
         await tx.update(reports).set({ status: "amended" }).where(and(eq(reports.id, report.id), eq(reports.organizationId, input.organizationId), eq(reports.status, "signed")));
-        const result = await tx.insert(reports).values({ organizationId: input.organizationId, caseId: report.caseId, version: report.version + 1, status: "draft", title: `${report.title} — Amendment`, content: { ...(report.content as Record<string, unknown>), amendmentReason: input.reason }, parentReportId: report.id, createdBy: ctx.user.id });
-        return Number(result[0].insertId);
+        const result = await tx.insert(reports).values({ organizationId: input.organizationId, caseId: report.caseId, version: report.version + 1, status: "draft", title: `${report.title} — Amendment`, content: { ...(report.content as Record<string, unknown>), amendmentReason: input.reason }, parentReportId: report.id, createdBy: ctx.user.id }).returning({ id: reports.id });
+        return result[0].id;
       });
       await writeAuditEvent({ organizationId: input.organizationId, actorUserId: ctx.user.id, action: "report.amendment_created", entityType: "report", entityId: newId, before: { parentReportId: report.id, parentHash: report.snapshotHash }, after: { reason: input.reason, version: report.version + 1 }, req: ctx.req });
       return { id: newId };
     }),
 });
+
+/**
+ * Latest succeeded curation run per approved variant, used both to seed draft
+ * findings and to name the document hash on the signed snapshot.
+ */
+async function attachEngineFindings(
+  organizationId: number,
+  approved: { interpretation: typeof interpretations.$inferSelect; variant: typeof variants.$inferSelect }[]
+): Promise<ReportVariantFinding[]> {
+  const variantIds = approved.map(row => row.variant.id);
+  const runs = variantIds.length
+    ? await (await requireDb())
+        .select({
+          variantId: curationRuns.variantId,
+          id: curationRuns.id,
+          documentHash: curationRuns.documentHash,
+          engineVersion: curationRuns.engineVersion,
+          summary: curationRuns.summary,
+          completedAt: curationRuns.completedAt,
+        })
+        .from(curationRuns)
+        .where(
+          and(
+            eq(curationRuns.organizationId, organizationId),
+            eq(curationRuns.status, "succeeded"),
+            inArray(curationRuns.variantId, variantIds)
+          )
+        )
+        .orderBy(desc(curationRuns.completedAt))
+    : [];
+
+  const latest = new Map<number, (typeof runs)[number]>();
+  for (const run of runs) {
+    if (run.variantId !== null && !latest.has(run.variantId)) latest.set(run.variantId, run);
+  }
+
+  return approved.map(({ variant, interpretation }) => {
+    const run = latest.get(variant.id);
+    return {
+      gene: variant.gene,
+      hgvsC: variant.hgvsC,
+      normalizedId: variant.normalizedId,
+      reviewerLabel: interpretation.germlineClassification || interpretation.somaticTier || "Reviewed",
+      oncogenicity: interpretation.oncogenicity,
+      rationale: interpretation.rationale,
+      engine: run
+        ? engineFromSummary(run.summary as CurationSummary | null, {
+            documentHash: run.documentHash,
+            runId: run.id,
+            engineVersion: run.engineVersion,
+          })
+        : null,
+    };
+  });
+}

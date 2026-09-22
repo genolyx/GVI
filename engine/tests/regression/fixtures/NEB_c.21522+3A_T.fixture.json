@@ -1,0 +1,61 @@
+{
+  "inputs": {
+    "c_dot": "c.21522+3A>T",
+    "case_id": "SPLICEAI-TEST",
+    "emg_parsed_json": {
+      "export_row": {
+        "Chr": "2",
+        "Coordinate": "152389953",
+        "Exon": 144,
+        "Gene": "NEB",
+        "GenomeBuild": "GRCh37",
+        "Mut": "A",
+        "Nomenclature": "c.21522+3A>T",
+        "Ref": "T",
+        "SpliceAI": "0.740",
+        "TotalExon": 183,
+        "Transcript": "NM_001271208.2",
+        "VCF": "chr2:152389953 T>A",
+        "VariantType": "intronic"
+      },
+      "source": "wes_curation_tool",
+      "spliceai": {
+        "ds_ag": 0.01,
+        "ds_al": 0.0,
+        "ds_count": 4,
+        "ds_dg": 0.0,
+        "ds_dl": 0.74,
+        "max_delta": 0.74,
+        "source": "emg_paste"
+      },
+      "variant_interpretation": "Gene: NEB Transcript: NM_001271208.2 HGVS: c.21522+3A>T (p.?) Exon: 144 Total exons: 183",
+      "wes_parsed": {
+        "cNom": "c.21522+3A>T",
+        "chr": "2",
+        "clinvarLP": [],
+        "coordinate": "152389953",
+        "exon": 144,
+        "gene": "NEB",
+        "genomeBuild": "GRCh37",
+        "mut": "A",
+        "ref": "T",
+        "spliceAI": "0.740",
+        "totalExon": 183,
+        "transcript": "NM_001271208.2",
+        "variantType": "intronic"
+      }
+    },
+    "emg_raw": "EMG ID: SPLICEAI-TEST\nLab ID: SPLICEAI-2-152389953-T-A\nTest code: 1801\nPhenotypes: SpliceAI validation fixture (Illumina examples)\nGene: NEB\nTranscript: NM_001271208.2\nHGVS: c.21522+3A>T (p.?)\nExon: 144\nTotal exons: 183\nVariant Information\nchr2:152389953 T > A\nZygosity: heterozygous\nInheritance: AD\nVariant type: intronic\nClinVar: 0\ngnomAD total: 0\nSpliceAI DS AG 0.01\nSpliceAI DS AL 0.00\nSpliceAI DS DG 0.00\nSpliceAI DS DL 0.74",
+    "gene": "NEB",
+    "lab_id": "SPLICEAI-2-152389953-T-A",
+    "transcript": "NM_001271208.2"
+  },
+  "name": "NEB_c.21522+3A_T",
+  "source": {
+    "batch_id": 21,
+    "captured_at": "2026-06-06T22:50:10+00:00",
+    "captured_run_id": 120,
+    "engine_version": "v11",
+    "entry_id": 67
+  }
+}

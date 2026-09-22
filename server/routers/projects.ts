@@ -36,8 +36,8 @@ export const projectsRouter = router({
         code: input.code,
         description: input.description || null,
         createdBy: ctx.user.id,
-      });
-      const id = Number(result[0].insertId);
+      }).returning({ id: projects.id });
+      const id = result[0].id;
       await writeAuditEvent({
         organizationId: input.organizationId,
         actorUserId: ctx.user.id,

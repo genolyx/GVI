@@ -1,0 +1,17 @@
+# Curation engine (app_v11.py) + GVI worker (engine/service/).
+flask>=3.0.0
+flask-cors>=4.0.0
+requests>=2.31.0
+pandas>=2.0.0
+openpyxl>=3.1.0
+pysam>=0.22.0
+google-genai>=1.0.0
+pymupdf>=1.24.0
+beautifulsoup4>=4.12.0
+python-dotenv>=1.0.0
+
+# Shared outbound-HTTP cache + source rate limits
+redis>=5.0.0
+
+# GVI worker service: contract validation + control-plane client
+pydantic>=2.9.0

@@ -103,22 +103,22 @@ status_app() {
 }
 
 docker_up() {
-  echo "→ Starting Docker services (db, minio)..."
+  echo "→ Starting Docker services (db, redis, minio)..."
   if docker compose version >/dev/null 2>&1; then
     docker compose up -d
   else
     docker-compose up -d
   fi
-  echo "  Waiting for MySQL health..."
+  echo "  Waiting for Postgres health..."
   local i
   for i in $(seq 1 30); do
-    if docker exec gvi-db mysqladmin ping -h localhost -u root -pgvi_root_password --silent 2>/dev/null; then
-      echo "  MySQL ready"
+    if docker exec gvi-db pg_isready -U gvi_user -d gvi >/dev/null 2>&1; then
+      echo "  Postgres ready"
       break
     fi
     sleep 1
     if [[ "$i" -eq 30 ]]; then
-      echo "  warning: MySQL health check timed out (continuing anyway)"
+      echo "  warning: Postgres health check timed out (continuing anyway)"
     fi
   done
 }

@@ -12,6 +12,7 @@ import NewCasePage from "./pages/NewCase";
 import CaseDetailPage from "./pages/CaseDetail";
 import WorkbenchPage from "./pages/Workbench";
 import WorkbenchLandingPage from "./pages/WorkbenchLanding";
+import CuratePage from "./pages/Curate";
 import ReportsPage from "./pages/Reports";
 import ReportEditorPage from "./pages/ReportEditor";
 import OrganizationPage from "./pages/Organization";
@@ -30,6 +31,7 @@ function Router() {
       <Route path={"/cases/:id"} component={CaseDetailPage} />
       <Route path={"/workbench"} component={WorkbenchLandingPage} />
       <Route path={"/workbench/:caseId"} component={WorkbenchPage} />
+      <Route path={"/curate"} component={CuratePage} />
       <Route path={"/reports"} component={ReportsPage} />
       <Route path={"/reports/:id"} component={ReportEditorPage} />
       <Route path={"/organization"} component={OrganizationPage} />
@@ -50,10 +52,7 @@ function Router() {
 function App() {
   return (
     <ErrorBoundary>
-      <ThemeProvider
-        defaultTheme="light"
-        // switchable
-      >
+      <ThemeProvider defaultTheme="dark" switchable>
         <TooltipProvider>
           <Toaster />
           <OrganizationProvider>

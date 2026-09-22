@@ -1,0 +1,807 @@
+{
+  "$defs": {
+    "CurationAcmg": {
+      "additionalProperties": false,
+      "properties": {
+        "classification": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CurationClassification"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "criteria": {
+          "items": {
+            "$ref": "#/$defs/CurationCriterion"
+          },
+          "title": "Criteria",
+          "type": "array"
+        }
+      },
+      "required": [
+        "criteria",
+        "classification"
+      ],
+      "title": "CurationAcmg",
+      "type": "object"
+    },
+    "CurationClassification": {
+      "additionalProperties": false,
+      "properties": {
+        "class": {
+          "enum": [
+            "pathogenic",
+            "benign",
+            "vus"
+          ],
+          "title": "Class",
+          "type": "string"
+        },
+        "label": {
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Label",
+          "type": "string"
+        }
+      },
+      "required": [
+        "label",
+        "class"
+      ],
+      "title": "CurationClassification",
+      "type": "object"
+    },
+    "CurationCriterion": {
+      "additionalProperties": false,
+      "properties": {
+        "baseCode": {
+          "maxLength": 8,
+          "minLength": 2,
+          "title": "Basecode",
+          "type": "string"
+        },
+        "code": {
+          "maxLength": 24,
+          "minLength": 2,
+          "title": "Code",
+          "type": "string"
+        },
+        "direction": {
+          "enum": [
+            "pathogenic",
+            "benign"
+          ],
+          "title": "Direction",
+          "type": "string"
+        },
+        "rationale": {
+          "title": "Rationale",
+          "type": "string"
+        },
+        "strength": {
+          "enum": [
+            "stand_alone",
+            "very_strong",
+            "strong",
+            "moderate",
+            "supporting"
+          ],
+          "title": "Strength",
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "baseCode",
+        "strength",
+        "direction",
+        "rationale"
+      ],
+      "title": "CurationCriterion",
+      "type": "object"
+    },
+    "CurationEngineOutput": {
+      "additionalProperties": false,
+      "description": "The engine's response, unmodified.\n\nValidated for container shape only, so a new or renamed engine fact can never\nfail a run.",
+      "properties": {
+        "geneSummary": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Genesummary"
+        },
+        "literature": {
+          "title": "Literature"
+        },
+        "parsedData": {
+          "additionalProperties": true,
+          "title": "Parseddata",
+          "type": "object"
+        },
+        "resultsAcmg": {
+          "title": "Resultsacmg"
+        },
+        "resultsCustom": {
+          "title": "Resultscustom"
+        }
+      },
+      "required": [
+        "parsedData",
+        "resultsAcmg",
+        "resultsCustom",
+        "literature",
+        "geneSummary"
+      ],
+      "title": "CurationEngineOutput",
+      "type": "object"
+    },
+    "CurationExon": {
+      "additionalProperties": false,
+      "properties": {
+        "codingRank": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Codingrank"
+        },
+        "codingTotal": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Codingtotal"
+        },
+        "mrnaTotal": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Mrnatotal"
+        },
+        "rank": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Rank"
+        },
+        "total": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Total"
+        }
+      },
+      "required": [
+        "rank",
+        "total",
+        "codingRank",
+        "codingTotal",
+        "mrnaTotal"
+      ],
+      "title": "CurationExon",
+      "type": "object"
+    },
+    "CurationHighlights": {
+      "additionalProperties": false,
+      "description": "Non-numeric engine facts that control-plane logic branches on.\n\nAnything the server merely forwards to the UI stays in the pass-through layer.",
+      "properties": {
+        "clinvarIdenticalPathogenic": {
+          "title": "Clinvaridenticalpathogenic",
+          "type": "boolean"
+        },
+        "clinvarSignificance": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Clinvarsignificance"
+        },
+        "hgmdEnabled": {
+          "title": "Hgmdenabled",
+          "type": "boolean"
+        },
+        "hgmdMatch": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Hgmdmatch"
+        },
+        "literatureStatus": {
+          "maxLength": 40,
+          "title": "Literaturestatus",
+          "type": "string"
+        },
+        "spliceApplicable": {
+          "title": "Spliceapplicable",
+          "type": "boolean"
+        },
+        "spliceIsInFrame": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Spliceisinframe"
+        },
+        "spliceNmdEscape": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Splicenmdescape"
+        }
+      },
+      "required": [
+        "clinvarSignificance",
+        "clinvarIdenticalPathogenic",
+        "hgmdEnabled",
+        "hgmdMatch",
+        "spliceApplicable",
+        "spliceIsInFrame",
+        "spliceNmdEscape",
+        "literatureStatus"
+      ],
+      "title": "CurationHighlights",
+      "type": "object"
+    },
+    "CurationMeta": {
+      "additionalProperties": false,
+      "properties": {
+        "durationMs": {
+          "minimum": 0,
+          "title": "Durationms",
+          "type": "integer"
+        },
+        "engineVersion": {
+          "maxLength": 40,
+          "minLength": 1,
+          "title": "Engineversion",
+          "type": "string"
+        },
+        "generatedAt": {
+          "minLength": 1,
+          "title": "Generatedat",
+          "type": "string"
+        },
+        "referenceBuild": {
+          "const": "GRCh38",
+          "title": "Referencebuild",
+          "type": "string"
+        },
+        "sourcesConsulted": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Sourcesconsulted",
+          "type": "array"
+        },
+        "sourcesDisabled": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Sourcesdisabled",
+          "type": "array"
+        },
+        "warnings": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Warnings",
+          "type": "array"
+        }
+      },
+      "required": [
+        "engineVersion",
+        "generatedAt",
+        "durationMs",
+        "referenceBuild",
+        "sourcesConsulted",
+        "sourcesDisabled",
+        "warnings"
+      ],
+      "title": "CurationMeta",
+      "type": "object"
+    },
+    "CurationScores": {
+      "additionalProperties": false,
+      "description": "Numeric evidence the triage pass thresholds on.",
+      "properties": {
+        "caddPhred": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Caddphred"
+        },
+        "gnomadAf": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Gnomadaf"
+        },
+        "pangolin": {
+          "$ref": "#/$defs/PangolinScores"
+        },
+        "revelScore": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Revelscore"
+        },
+        "spliceAi": {
+          "$ref": "#/$defs/SpliceAiScores"
+        }
+      },
+      "required": [
+        "gnomadAf",
+        "caddPhred",
+        "revelScore",
+        "spliceAi",
+        "pangolin"
+      ],
+      "title": "CurationScores",
+      "type": "object"
+    },
+    "CurationVariant": {
+      "additionalProperties": false,
+      "properties": {
+        "alternateAllele": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Alternateallele"
+        },
+        "chromosome": {
+          "anyOf": [
+            {
+              "maxLength": 16,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Chromosome"
+        },
+        "consequence": {
+          "anyOf": [
+            {
+              "maxLength": 160,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Consequence"
+        },
+        "effectiveGene": {
+          "anyOf": [
+            {
+              "maxLength": 80,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Effectivegene"
+        },
+        "end": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "End"
+        },
+        "ensemblTranscriptId": {
+          "anyOf": [
+            {
+              "maxLength": 60,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Ensembltranscriptid"
+        },
+        "exon": {
+          "$ref": "#/$defs/CurationExon"
+        },
+        "gene": {
+          "maxLength": 80,
+          "minLength": 1,
+          "title": "Gene",
+          "type": "string"
+        },
+        "hgvsC": {
+          "maxLength": 255,
+          "minLength": 1,
+          "title": "Hgvsc",
+          "type": "string"
+        },
+        "hgvsP": {
+          "anyOf": [
+            {
+              "maxLength": 255,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Hgvsp"
+        },
+        "proteinLength": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Proteinlength"
+        },
+        "referenceAllele": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Referenceallele"
+        },
+        "start": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Start"
+        },
+        "strand": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Strand"
+        },
+        "transcript": {
+          "anyOf": [
+            {
+              "maxLength": 120,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Transcript"
+        }
+      },
+      "required": [
+        "gene",
+        "effectiveGene",
+        "transcript",
+        "ensemblTranscriptId",
+        "hgvsC",
+        "hgvsP",
+        "consequence",
+        "chromosome",
+        "start",
+        "end",
+        "referenceAllele",
+        "alternateAllele",
+        "strand",
+        "proteinLength",
+        "exon"
+      ],
+      "title": "CurationVariant",
+      "type": "object"
+    },
+    "PangolinScores": {
+      "additionalProperties": false,
+      "properties": {
+        "dpSg": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Dpsg"
+        },
+        "dpSl": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Dpsl"
+        },
+        "dsSg": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Dssg"
+        },
+        "dsSl": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Dssl"
+        },
+        "fetched": {
+          "title": "Fetched",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "dsSg",
+        "dsSl",
+        "dpSg",
+        "dpSl",
+        "fetched"
+      ],
+      "title": "PangolinScores",
+      "type": "object"
+    },
+    "SpliceAiScores": {
+      "additionalProperties": false,
+      "properties": {
+        "dpAg": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Dpag"
+        },
+        "dpAl": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Dpal"
+        },
+        "dpDg": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Dpdg"
+        },
+        "dpDl": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Dpdl"
+        },
+        "dsAg": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Dsag"
+        },
+        "dsAl": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Dsal"
+        },
+        "dsDg": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Dsdg"
+        },
+        "dsDl": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Dsdl"
+        },
+        "fetched": {
+          "title": "Fetched",
+          "type": "boolean"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "maxLength": 60,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Source"
+        }
+      },
+      "required": [
+        "dsAg",
+        "dsAl",
+        "dsDg",
+        "dsDl",
+        "dpAg",
+        "dpAl",
+        "dpDg",
+        "dpDl",
+        "fetched",
+        "source"
+      ],
+      "title": "SpliceAiScores",
+      "type": "object"
+    }
+  },
+  "$id": "https://genolyx.com/contracts/curation-document.v1.json",
+  "additionalProperties": false,
+  "properties": {
+    "acmg": {
+      "$ref": "#/$defs/CurationAcmg"
+    },
+    "contractVersion": {
+      "const": "1.0",
+      "title": "Contractversion",
+      "type": "string"
+    },
+    "engine": {
+      "$ref": "#/$defs/CurationEngineOutput"
+    },
+    "highlights": {
+      "$ref": "#/$defs/CurationHighlights"
+    },
+    "meta": {
+      "$ref": "#/$defs/CurationMeta"
+    },
+    "scores": {
+      "$ref": "#/$defs/CurationScores"
+    },
+    "variant": {
+      "$ref": "#/$defs/CurationVariant"
+    }
+  },
+  "required": [
+    "contractVersion",
+    "meta",
+    "variant",
+    "scores",
+    "acmg",
+    "highlights",
+    "engine"
+  ],
+  "title": "CurationDocument v1",
+  "type": "object"
+}

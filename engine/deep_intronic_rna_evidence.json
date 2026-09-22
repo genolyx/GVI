@@ -1,0 +1,12 @@
+{
+  "FGFR3": {
+    "1075+95": {
+      "coding_body_nt": 90,
+      "body_start_offset": 4,
+      "cryptic_donor_hgvs_offset": 95,
+      "pseudo_exon_nt": 96,
+      "pmids": ["34162030"],
+      "summary": "Xu et al. minigene assay: 90-nt intron 8 retention in mRNA, in-frame +30 aa in the extracellular domain (PMID 34162030)."
+    }
+  }
+}

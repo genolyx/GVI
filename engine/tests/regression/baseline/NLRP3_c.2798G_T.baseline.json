@@ -1,0 +1,1483 @@
+{
+  "effective_gene": "NLRP3",
+  "gene_summary": "<html>\n<head>\n  <title>NLRP3 Clinical Profile</title>\n</head>\n<body>\n  <b>Disease Association(s):</b>\n  <ul>\n    <li>Cryopyrin-associated periodic syndromes (CAPS)</li>\n    <ul>\n      <li>Familial cold autoinflammatory syndrome 1</li>\n      <li>Muckle-Wells syndrome</li>\n      <li>Chronic infantile neurological cutaneous and articular syndrome (CINCA syndrome) / Neonatal-onset multisystem inflammatory disease (NOMID)</li>\n    </ul>\n    <li>Deafness, autosomal dominant 34 (DFNA34)</li>\n    <li>Keratoendotheliitis fugax hereditaria (KFH)</li>\n  </ul>\n  <b>Inheritance Pattern(s):</b>\n  <ul>\n    <li>Autosomal Dominant (AD)</li>\n  </ul>\n</body>\n</html><br><b>Disease Mechanism:</b> GOF <span style='font-size: 0.85em; color: #9ca3af; font-style: italic;'>(Source: MedlinePlus Genetics, Current Opinion in Rheumatology)</span>",
+  "parsed_data": {
+    "ai_logic": {},
+    "alt": "T",
+    "alternate_alleles": [],
+    "alternate_transcript_literature": [
+      {
+        "hgvs_c": "g.32934G>T",
+        "hgvs_full": "LRG_197:g.32934G>T",
+        "hgvs_kind": "genomic",
+        "hgvs_p": "",
+        "significance": "Uncertain significance",
+        "transcript": "LRG_197",
+        "vid": "3583456"
+      },
+      {
+        "hgvs_c": "c.2804G>T",
+        "hgvs_full": "LRG_197t1:c.2804G>T",
+        "hgvs_kind": "coding",
+        "hgvs_p": "",
+        "significance": "Uncertain significance",
+        "transcript": "LRG_197",
+        "vid": "3583456"
+      },
+      {
+        "hgvs_c": "g.247607408G>T",
+        "hgvs_full": "NC_000001.10:g.247607408G>T",
+        "hgvs_kind": "genomic",
+        "hgvs_p": "",
+        "significance": "Uncertain significance",
+        "transcript": "NC_000001.10",
+        "vid": "3583456"
+      },
+      {
+        "hgvs_c": "g.247444106G>T",
+        "hgvs_full": "NC_000001.11:g.247444106G>T",
+        "hgvs_kind": "genomic",
+        "hgvs_p": "",
+        "significance": "Uncertain significance",
+        "transcript": "NC_000001.11",
+        "vid": "3583456"
+      },
+      {
+        "hgvs_c": "g.32934G>T",
+        "hgvs_full": "NG_007509.2:g.32934G>T",
+        "hgvs_kind": "genomic",
+        "hgvs_p": "",
+        "significance": "Uncertain significance",
+        "transcript": "NG_007509.2",
+        "vid": "3583456"
+      },
+      {
+        "hgvs_c": "c.2798G>T",
+        "hgvs_full": "NM_001079821.3:c.2798G>T",
+        "hgvs_kind": "missense",
+        "hgvs_p": "p.Gly935Val",
+        "significance": "Uncertain significance",
+        "transcript": "NM_001079821",
+        "vid": "3583456"
+      },
+      {
+        "hgvs_c": "c.2627G>T",
+        "hgvs_full": "NM_001127461.3:c.2627G>T",
+        "hgvs_kind": "missense",
+        "hgvs_p": "p.Gly878Val",
+        "significance": "Uncertain significance",
+        "transcript": "NM_001127461",
+        "vid": "3583456"
+      },
+      {
+        "hgvs_c": "c.2627G>T",
+        "hgvs_full": "NM_001127462.3:c.2627G>T",
+        "hgvs_kind": "missense",
+        "hgvs_p": "p.Gly878Val",
+        "significance": "Uncertain significance",
+        "transcript": "NM_001127462",
+        "vid": "3583456"
+      },
+      {
+        "hgvs_c": "c.2804G>T",
+        "hgvs_full": "NM_004895.5:c.2804G>T",
+        "hgvs_kind": "missense",
+        "hgvs_p": "p.Gly935Val",
+        "significance": "Uncertain significance",
+        "transcript": "NM_004895",
+        "vid": "3583456"
+      },
+      {
+        "hgvs_c": "c.2456G>T",
+        "hgvs_full": "NM_183395.3:c.2456G>T",
+        "hgvs_kind": "missense",
+        "hgvs_p": "p.Gly821Val",
+        "significance": "Uncertain significance",
+        "transcript": "NM_183395",
+        "vid": "3583456"
+      }
+    ],
+    "c_allele_search_link": "https://www.ncbi.nlm.nih.gov/clinvar/?term=NLRP3%5Bgene%5D%20AND%20c.2798%20NOT%203583456%5BVariationID%5D",
+    "c_dot": "c.2798G>T",
+    "cadd_phred": 24.6,
+    "cds_seq": "ATGGCAAGCACCCGCTGCAAGCTGGCCAGGTACCTGGAGGACCTGGAGGATGTGGACTTGAAGAAATTTAAGATGCACTTAGAGGACTATCCTCCCCAGAAGGGCTGCATCCCCCTCCCGAGGGGTCAGACAGAGAAGGCAGACCATGTGGATCTAGCCACGCTAATGATCGACTTCAATGGGGAGGAGAAGGCGTGGGCCATGGCCGTGTGGATCTTCGCTGCGATCAACAGGAGAGACCTTTATGAGAAAGCAAAAAGAGATGAGCCGAAGTGGGGTTCAGATAATGCACGTGTTTCGAATCCCACTGTGATATGCCAGGAAGACAGCATTGAAGAGGAGTGGATGGGTTTACTGGAGTACCTTTCGAGAATCTCTATTTGTAAAATGAAGAAAGATTACCGTAAGAAGTACAGAAAGTACGTGAGAAGCAGATTCCAGTGCATTGAAGACAGGAATGCCCGTCTGGGTGAGAGTGTGAGCCTCAACAAACGCTACACACGACTGCGTCTCATCAAGGAGCACCGGAGCCAGCAGGAGAGGGAGCAGGAGCTTCTGGCCATCGGCAAGACCAAGACGTGTGAGAGCCCCGTGAGTCCCATTAAGATGGAGTTGCTGTTTGACCCCGATGATGAGCATTCTGAGCCTGTGCACACCGTGGTGTTCCAGGGGGCGGCAGGGATTGGGAAAACAATCCTGGCCAGGAAGATGATGTTGGACTGGGCGTCGGGGACACTCTACCAAGACAGGTTTGACTATCTGTTCTATATCCACTGTCGAGAGGTGAGCCTTGTGACACAGAGGAGCCTGGGGGACCTGATCATGAGCTGCTGCCCCGACCCAAACCCACCCATCCACAAGATCGTGAGAAAACCCTCCAGAATCCTCTTCCTCATGGACGGCTTCGATGAGCTGCAAGGTGCCTTTGACGAGCACATAGGACCGCTCTGCACTGACTGGCAGAAGGCCGAGCGGGGAGACATTCTCCTGAGCAGCCTCATCAGAAAGAAGCTGCTTCCCGAGGCCTCTCTGCTCATCACCACGAGACCTGTGGCCCTGGAGAAACTGCAGCACTTGCTGGACCATCCTCGGCATGTGGAGATCCTGGGTTTCTCCGAGGCCAAAAGGAAAGAGTACTTCTTCAAGTACTTCTCTGATGAGGCCCAAGCCAGGGCAGCCTTCAGTCTGATTCAGGAGAACGAGGTCCTCTTCACCATGTGCTTCATCCCCCTGGTCTGCTGGATCGTGTGCACTGGACTGAAACAGCAGATGGAGAGTGGCAAGAGCCTTGCCCAGACATCCAAGACCACCACCGCGGTGTACGTCTTCTTCCTTTCCAGTTTGCTGCAGCCCCGGGGAGGGAGCCAGGAGCACGGCCTCTGCGCCCACCTCTGGGGGCTCTGCTCTTTGGCTGCAGATGGAATCTGGAACCAGAAAATCCTGTTTGAGGAGTCCGACCTCAGGAATCATGGACTGCAGAAGGCGGATGTGTCTGCTTTCCTGAGGATGAACCTGTTCCAAAAGGAAGTGGACTGCGAGAAGTTCTACAGCTTCATCCACATGACTTTCCAGGAGTTCTTTGCCGCCATGTACTACCTGCTGGAAGAGGAAAAGGAAGGAAGGACGAACGTTCCAGGGAGTCGTTTGAAGCTTCCCAGCCGAGACGTGACAGTCCTTCTGGAAAACTATGGCAAATTCGAAAAGGGGTATTTGATTTTTGTTGTACGTTTCCTCTTTGGCCTGGTAAACCAGGAGAGGACCTCCTACTTGGAGAAGAAATTAAGTTGCAAGATCTCTCAGCAAATCAGGCTGGAGCTGCTGAAATGGATTGAAGTGAAAGCCAAAGCTAAAAAGCTGCAGATCCAGCCCAGCCAGCTGGAATTGTTCTACTGTTTGTACGAGATGCAGGAGGAGGACTTCGTGCAAAGGGCCATGGACTATTTCCCCAAGATTGAGATCAATCTCTCCACCAGAATGGACCACATGGTTTCTTCCTTTTGCATTGAGAACTGTCATCGGGTGGAGTCACTGTCCCTGGGGTTTCTCCATAACATGCCCAAGGAGGAAGAGGAGGAGGAAAAGGAAGGCCGACACCTTGATATGGTGCAGTGTGTCCTCCCAAGCTCCTCTCATGCTGCCTGTTCTCATGGATTGGTGAACAGCCACCTCACTTCCAGTTTTTGCCGGGGCCTCTTTTCAGTTCTGAGCACCAGCCAGAGTCTAACTGAATTGGACCTCAGTGACAATTCTCTGGGGGACCCAGGGATGAGAGTGTTGTGTGAAACGCTCCAGCATCCTGGCTGTAACATTCGGAGATTGTGGTTGGGGCGCTGTGGCCTCTCGCATGAGTGCTGCTTCGACATCTCCTTGGTCCTCAGCAGCAACCAGAAGCTGGTGGAGCTGGACCTGAGTGACAACGCCCTCGGTGACTTCGGAATCAGACTTCTGTGTGTGGGACTGAAGCACCTGTTGTGCAATCTGAAGAAGCTCTGGTTGGTCAGCTGCTGCCTCACATCAGCATGTTGTCAGGATCTTGCATCAGTATTGAGCACCAGCCATTCCCTGACCAGACTCTATGTGGGGGAGAATGCCTTGGGAGACTCAGGAGTCGCAATTTTATGTGAAAAAGCCAAGAATCCACAGTGTAACCTGCAGAAACTGGGGTTGGTGAATTCTGGCCTTACGTCAGTCTGTTGTTCAGCTTTGTCCTCGGTACTCAGCACTAATCAGAATCTCACGCACCTTTACCTGCGAGGCAACACTCTCGGAGACAAGGGGATCAAACTACTCTGTGAGGGACTCTTGCACCCCGACTGCAAGCTTCAGGTGTTGGAATTAGACAACTGCAACCTCACGTCACACTGCTGCTGGGATCTTTCCACACTTCTGACCTCCAGCCAGAGCCTGCGAAAGCTGAGCCTGGGCAACAATGACCTGGGCGACCTGGGGGTCATGATGTTCTGTGAAGTGCTGAAACAGCAGAGCTGCCTCCTGCAGAACCTGGGGTTGTCTGAAATGTATTTCAATTATGAGACAAAAAGTGCGTTAGAAACACTTCAAGAAGAAAAGCCTGAGCTGACCGTCGTCTTTGAGCCTTCTTGGTAG",
+    "clingen_haplo_score": "N/A",
+    "clingen_link": "https://search.clinicalgenome.org/kb/genes?page=1&size=50&search=NLRP3",
+    "clinical_notes_provided": false,
+    "clinical_publication_summary_html": "<ul style=\"margin:8px 0 0 0;padding-left:18px;line-height:1.45;font-size:0.92em;color:#e2e8f0;\"><li style=\"margin-bottom:6px;\"><strong>Variant:</strong> NLRP3 c.2798G&gt;T (p.G933V)</li><li style=\"margin-bottom:6px;\"><strong>Transcript:</strong> ENST00000336119</li><li style=\"margin-bottom:6px;\"><span style=\"color:#94a3b8;\">No clinical notes submitted.</span></li></ul>",
+    "clinical_publication_summary_plaintext": "Variant: NLRP3 c.2798G>T (p.G933V).\nTranscript: ENST00000336119.\nNo clinical chart notes were submitted; pedigree / inheritance summary not extracted.",
+    "clinvar_lab": "Fulgent Genetics, Fulgent Genetics (Uncertain significance, 2024)",
+    "clinvar_rcv": "3583456",
+    "clinvar_search_link": "https://www.ncbi.nlm.nih.gov/clinvar/?term=NLRP3%5Bgene%5D%20AND%20c.2798G%3ET",
+    "clinvar_sig": "Uncertain significance",
+    "coding_exon_rank": 7,
+    "coding_exon_total": 9,
+    "coding_exons": [
+      {
+        "anatomical_rank": 2,
+        "chr": "1",
+        "end": 247419077,
+        "end_cds": 277,
+        "length_bp": 277,
+        "start": 247418053,
+        "start_cds": 1
+      },
+      {
+        "anatomical_rank": 3,
+        "chr": "1",
+        "end": 247423349,
+        "end_cds": 397,
+        "length_bp": 120,
+        "start": 247423230,
+        "start_cds": 278
+      },
+      {
+        "anatomical_rank": 4,
+        "chr": "1",
+        "end": 247425599,
+        "end_cds": 2150,
+        "length_bp": 1753,
+        "start": 247423847,
+        "start_cds": 398
+      },
+      {
+        "anatomical_rank": 5,
+        "chr": "1",
+        "end": 247429755,
+        "end_cds": 2321,
+        "length_bp": 171,
+        "start": 247429585,
+        "start_cds": 2151
+      },
+      {
+        "anatomical_rank": 6,
+        "chr": "1",
+        "end": 247434273,
+        "end_cds": 2492,
+        "length_bp": 171,
+        "start": 247434103,
+        "start_cds": 2322
+      },
+      {
+        "anatomical_rank": 7,
+        "chr": "1",
+        "end": 247436140,
+        "end_cds": 2663,
+        "length_bp": 171,
+        "start": 247435970,
+        "start_cds": 2493
+      },
+      {
+        "anatomical_rank": 8,
+        "chr": "1",
+        "end": 247444142,
+        "end_cds": 2834,
+        "length_bp": 171,
+        "start": 247443972,
+        "start_cds": 2664
+      },
+      {
+        "anatomical_rank": 9,
+        "chr": "1",
+        "end": 247444821,
+        "end_cds": 3005,
+        "length_bp": 171,
+        "start": 247444651,
+        "start_cds": 2835
+      },
+      {
+        "anatomical_rank": 10,
+        "chr": "1",
+        "end": 247448817,
+        "end_cds": 3105,
+        "length_bp": 100,
+        "start": 247448405,
+        "start_cds": 3006
+      }
+    ],
+    "collagen_disrupted": false,
+    "collagen_math": "",
+    "consequence": "missense",
+    "critical_domain_at_ptc": [],
+    "critical_domain_lost_downstream": [],
+    "critical_domain_names": "",
+    "cryptic_gain_outcome": {
+      "aa_lost": null,
+      "cryptic_type": "Donor Gain",
+      "deleted_nt": 38,
+      "dp_offset": -2,
+      "exon_rank": 8,
+      "first_changed_codon_pos": 933,
+      "fs_ter_count": 33,
+      "fs_ter_str": "p.Ile933fsTer33",
+      "gain_score": 0.28,
+      "hgvs_p": "p.Ile933fsTer33",
+      "in_frame": false,
+      "in_frame_internal_only": false,
+      "junction_align_ctx": {
+        "anchor_c": 2664,
+        "exon_rank": 8,
+        "layout": "exon_internal",
+        "mut_bases": [
+          {
+            "hgvs": "c.2784",
+            "kind": "exon",
+            "nt": "A"
+          },
+          {
+            "hgvs": "c.2785",
+            "kind": "exon",
+            "nt": "C"
+          },
+          {
+            "hgvs": "c.2786",
+            "kind": "exon",
+            "nt": "T"
+          },
+          {
+            "hgvs": "c.2787",
+            "kind": "exon",
+            "nt": "A"
+          },
+          {
+            "hgvs": "c.2788",
+            "kind": "exon",
+            "nt": "C"
+          },
+          {
+            "hgvs": "c.2789",
+            "kind": "exon",
+            "nt": "T"
+          },
+          {
+            "hgvs": "c.2790",
+            "kind": "exon",
+            "nt": "C"
+          },
+          {
+            "hgvs": "c.2791",
+            "kind": "exon",
+            "nt": "T"
+          },
+          {
+            "hgvs": "c.2792",
+            "kind": "exon",
+            "nt": "G"
+          },
+          {
+            "hgvs": "c.2793",
+            "kind": "exon",
+            "nt": "T"
+          },
+          {
+            "hgvs": "c.2794",
+            "kind": "exon",
+            "nt": "G"
+          },
+          {
+            "hgvs": "c.2795",
+            "kind": "exon",
+            "nt": "A"
+          },
+          {
+            "hgvs": "c.2796",
+            "kind": "exon",
+            "nt": "G"
+          },
+          {
+            "hgvs": "c.2797",
+            "kind": "exon_deleted",
+            "nt": "G"
+          },
+          {
+            "hgvs": "c.2798",
+            "kind": "exon_deleted",
+            "nt": "T"
+          },
+          {
+            "hgvs": "c.2799",
+            "kind": "exon_deleted",
+            "nt": "A"
+          },
+          {
+            "hgvs": "c.2800",
+            "kind": "exon_deleted",
+            "nt": "C"
+          },
+          {
+            "hgvs": "c.2801",
+            "kind": "exon_deleted",
+            "nt": "T"
+          },
+          {
+            "hgvs": "c.2802",
+            "kind": "exon_deleted",
+            "nt": "C"
+          },
+          {
+            "hgvs": "c.2803",
+            "kind": "exon_deleted",
+            "nt": "T"
+          },
+          {
+            "hgvs": "c.2804",
+            "kind": "exon_deleted",
+            "nt": "T"
+          },
+          {
+            "hgvs": "c.2805",
+            "kind": "exon_deleted",
+            "nt": "G"
+          },
+          {
+            "hgvs": "c.2806",
+            "kind": "exon_deleted",
+            "nt": "C"
+          },
+          {
+            "hgvs": "c.2807",
+            "kind": "exon_deleted",
+            "nt": "A"
+          },
+          {
+            "hgvs": "c.2808",
+            "kind": "exon_deleted",
+            "nt": "C"
+          },
+          {
+            "hgvs": "c.2809",
+            "kind": "exon_deleted",
+            "nt": "C"
+          },
+          {
+            "hgvs": "c.2810",
+            "kind": "exon_deleted",
+            "nt": "C"
+          }
+        ],
+        "mut_markers": [
+          {
+            "index": 12,
+            "kind": "splice_gt",
+            "label": "cryptic GT"
+          }
+        ],
+        "mut_spans": [
+          {
+            "end": 51,
+            "kind": "exon_skip",
+            "label": "38 nt excised",
+            "start": 13
+          },
+          {
+            "end": 15,
+            "kind": "variant",
+            "label": "variant T",
+            "start": 14
+          }
+        ],
+        "mut_title": "Mutant exon (cryptic splice site)",
+        "product_bases": [
+          {
+            "hgvs": "c.2784",
+            "kind": "exon",
+            "nt": "A"
+          },
+          {
+            "hgvs": "c.2785",
+            "kind": "exon",
+            "nt": "C"
+          },
+          {
+            "hgvs": "c.2786",
+            "kind": "exon",
+            "nt": "T"
+          },
+          {
+            "hgvs": "c.2787",
+            "kind": "exon",
+            "nt": "A"
+          },
+          {
+            "hgvs": "c.2788",
+            "kind": "exon",
+            "nt": "C"
+          },
+          {
+            "hgvs": "c.2789",
+            "kind": "exon",
+            "nt": "T"
+          },
+          {
+            "hgvs": "c.2790",
+            "kind": "exon",
+            "nt": "C"
+          },
+          {
+            "hgvs": "c.2791",
+            "kind": "exon",
+            "nt": "T"
+          },
+          {
+            "hgvs": "c.2792",
+            "kind": "exon",
+            "nt": "G"
+          },
+          {
+            "hgvs": "c.2793",
+            "kind": "exon",
+            "nt": "T"
+          },
+          {
+            "hgvs": "c.2794",
+            "kind": "exon",
+            "nt": "G"
+          },
+          {
+            "hgvs": "c.2795",
+            "kind": "exon",
+            "nt": "A"
+          },
+          {
+            "hgvs": "c.2796",
+            "kind": "exon",
+            "nt": "G"
+          }
+        ],
+        "product_title": "Exon-internal cryptic donor gain — mature mRNA",
+        "ref_bases": [
+          {
+            "hgvs": "c.2784",
+            "kind": "exon",
+            "nt": "A"
+          },
+          {
+            "hgvs": "c.2785",
+            "kind": "exon",
+            "nt": "C"
+          },
+          {
+            "hgvs": "c.2786",
+            "kind": "exon",
+            "nt": "T"
+          },
+          {
+            "hgvs": "c.2787",
+            "kind": "exon",
+            "nt": "A"
+          },
+          {
+            "hgvs": "c.2788",
+            "kind": "exon",
+            "nt": "C"
+          },
+          {
+            "hgvs": "c.2789",
+            "kind": "exon",
+            "nt": "T"
+          },
+          {
+            "hgvs": "c.2790",
+            "kind": "exon",
+            "nt": "C"
+          },
+          {
+            "hgvs": "c.2791",
+            "kind": "exon",
+            "nt": "T"
+          },
+          {
+            "hgvs": "c.2792",
+            "kind": "exon",
+            "nt": "G"
+          },
+          {
+            "hgvs": "c.2793",
+            "kind": "exon",
+            "nt": "T"
+          },
+          {
+            "hgvs": "c.2794",
+            "kind": "exon",
+            "nt": "G"
+          },
+          {
+            "hgvs": "c.2795",
+            "kind": "exon",
+            "nt": "A"
+          },
+          {
+            "hgvs": "c.2796",
+            "kind": "exon",
+            "nt": "G"
+          },
+          {
+            "hgvs": "c.2797",
+            "kind": "exon",
+            "nt": "G"
+          },
+          {
+            "hgvs": "c.2798",
+            "kind": "exon",
+            "nt": "G"
+          },
+          {
+            "hgvs": "c.2799",
+            "kind": "exon",
+            "nt": "A"
+          },
+          {
+            "hgvs": "c.2800",
+            "kind": "exon",
+            "nt": "C"
+          },
+          {
+            "hgvs": "c.2801",
+            "kind": "exon",
+            "nt": "T"
+          },
+          {
+            "hgvs": "c.2802",
+            "kind": "exon",
+            "nt": "C"
+          },
+          {
+            "hgvs": "c.2803",
+            "kind": "exon",
+            "nt": "T"
+          },
+          {
+            "hgvs": "c.2804",
+            "kind": "exon",
+            "nt": "T"
+          },
+          {
+            "hgvs": "c.2805",
+            "kind": "exon",
+            "nt": "G"
+          },
+          {
+            "hgvs": "c.2806",
+            "kind": "exon",
+            "nt": "C"
+          },
+          {
+            "hgvs": "c.2807",
+            "kind": "exon",
+            "nt": "A"
+          },
+          {
+            "hgvs": "c.2808",
+            "kind": "exon",
+            "nt": "C"
+          },
+          {
+            "hgvs": "c.2809",
+            "kind": "exon",
+            "nt": "C"
+          },
+          {
+            "hgvs": "c.2810",
+            "kind": "exon",
+            "nt": "C"
+          }
+        ],
+        "ref_markers": [],
+        "ref_spans": [
+          {
+            "end": 15,
+            "kind": "variant",
+            "label": "WT G",
+            "start": 14
+          }
+        ],
+        "upstream_exon": 8
+      },
+      "narrative": "If used: cryptic donor gain (0.28 at Δ−2 bp) shortens exon 8 by 38 nt (out-of-frame) → p.Ile933fsTer33. PTC in exon 9/10 at native c.2931-c.2933 (TGA) — frame-shifted stop. Truncated ≈ 964/1034 aa (6.8% C-term lost). NMD-predicted (penultimate exon, 72 nt to last junction; ≥50 nt rule). Computational only — not RNA evidence.",
+      "native_aa3": "Gly",
+      "new_aa3": "Ile",
+      "new_site_cdna": 2796,
+      "new_stop_aa": 965,
+      "nmd_likely": true,
+      "nmd_short": "NMD: predicted (PTC in penultimate exon 9/10, 72 nt from last exon-exon junction; ≥50 nt rule).",
+      "ptc_aa_position": 965,
+      "ptc_cds_in_mutant": 2895,
+      "ptc_cds_in_native": 2933,
+      "ptc_codon_native_bases": "TGA",
+      "ptc_exon_rank": 9,
+      "ptc_exon_total": 10,
+      "ptc_native_pos_range": "c.2931-c.2933",
+      "truncated_protein_length": 964,
+      "truncation_fraction": 0.06769825918762085
+    },
+    "deep_intronic_splice": {
+      "details": {},
+      "eligible": false,
+      "reason": "Not an intron HGVS / intron_variant consequence.",
+      "summary_html": ""
+    },
+    "deep_intronic_splice_html": "",
+    "different_pathogenic": false,
+    "disease_mechanism": "GOF",
+    "disease_mechanism_citation": "MedlinePlus Genetics, Current Opinion in Rheumatology",
+    "effective_gene": "NLRP3",
+    "ensembl_transcript_id": "ENST00000336119",
+    "first_mrna_exon_is_non_coding": true,
+    "gene": "NLRP3",
+    "genereviews_link": "https://www.ncbi.nlm.nih.gov/books/NBK1116/?term=NLRP3",
+    "gnomad_af": 0,
+    "google_scholar_link": "https://scholar.google.com/scholar?q=%22NLRP3%22%20%22c.2798G%3ET%22",
+    "grch38_chrom": "chr1",
+    "grch38_end": 247444106,
+    "grch38_start": 247444106,
+    "has_clingen": false,
+    "has_critical_domain": false,
+    "has_downstream_pathogenic": false,
+    "hgmd_excel_pmids": [],
+    "hgmd_link": "https://www.hgmd.cf.ac.uk/ac/gene.php?gene=NLRP3&mutation=c.2798G%3ET",
+    "hgmd_local": "HGMD: Not Found",
+    "hgmd_preferred_c_dot": "c.2798G>T",
+    "hgvs_p": "p.G933V",
+    "identical_pathogenic": false,
+    "inframe_coding_outcome": null,
+    "inframe_overlap_pathogenic": false,
+    "internal_hotspot": false,
+    "junction_align_viz": {
+      "anchor_hgvs": "c.2664",
+      "downstream_exon": 8,
+      "eligible": true,
+      "legend": [
+        {
+          "kind": "intron",
+          "label": "Intron (pre-mRNA only)"
+        },
+        {
+          "kind": "splice_ag",
+          "label": "AG acceptor / GT donor"
+        },
+        {
+          "kind": "exon",
+          "label": "Exon (coding in mature mRNA)"
+        },
+        {
+          "kind": "exon_extension",
+          "label": "Spliced-in / retained extension"
+        },
+        {
+          "kind": "exon_extension_intronic",
+          "label": "Was intronic → now coding"
+        },
+        {
+          "kind": "dup",
+          "label": "Duplication span (red underline)"
+        },
+        {
+          "kind": "ptc",
+          "label": "Predicted PTC (Ter)"
+        },
+        {
+          "kind": "exon_skip",
+          "label": "Exon skipped / excised"
+        }
+      ],
+      "ruler": [
+        {
+          "index": 0,
+          "label": "2784"
+        },
+        {
+          "index": 10,
+          "label": "2794"
+        },
+        {
+          "index": 20,
+          "label": "2804"
+        },
+        {
+          "index": 26,
+          "label": "2810"
+        }
+      ],
+      "title": "NLRP3 c.2798G>T",
+      "tracks": [
+        {
+          "bases": [
+            {
+              "hgvs": "c.2784",
+              "kind": "exon",
+              "nt": "A"
+            },
+            {
+              "hgvs": "c.2785",
+              "kind": "exon",
+              "nt": "C"
+            },
+            {
+              "hgvs": "c.2786",
+              "kind": "exon",
+              "nt": "T"
+            },
+            {
+              "hgvs": "c.2787",
+              "kind": "exon",
+              "nt": "A"
+            },
+            {
+              "hgvs": "c.2788",
+              "kind": "exon",
+              "nt": "C"
+            },
+            {
+              "hgvs": "c.2789",
+              "kind": "exon",
+              "nt": "T"
+            },
+            {
+              "hgvs": "c.2790",
+              "kind": "exon",
+              "nt": "C"
+            },
+            {
+              "hgvs": "c.2791",
+              "kind": "exon",
+              "nt": "T"
+            },
+            {
+              "hgvs": "c.2792",
+              "kind": "exon",
+              "nt": "G"
+            },
+            {
+              "hgvs": "c.2793",
+              "kind": "exon",
+              "nt": "T"
+            },
+            {
+              "hgvs": "c.2794",
+              "kind": "exon",
+              "nt": "G"
+            },
+            {
+              "hgvs": "c.2795",
+              "kind": "exon",
+              "nt": "A"
+            },
+            {
+              "hgvs": "c.2796",
+              "kind": "exon",
+              "nt": "G"
+            },
+            {
+              "hgvs": "c.2797",
+              "kind": "exon",
+              "nt": "G"
+            },
+            {
+              "hgvs": "c.2798",
+              "kind": "exon",
+              "nt": "G"
+            },
+            {
+              "hgvs": "c.2799",
+              "kind": "exon",
+              "nt": "A"
+            },
+            {
+              "hgvs": "c.2800",
+              "kind": "exon",
+              "nt": "C"
+            },
+            {
+              "hgvs": "c.2801",
+              "kind": "exon",
+              "nt": "T"
+            },
+            {
+              "hgvs": "c.2802",
+              "kind": "exon",
+              "nt": "C"
+            },
+            {
+              "hgvs": "c.2803",
+              "kind": "exon",
+              "nt": "T"
+            },
+            {
+              "hgvs": "c.2804",
+              "kind": "exon",
+              "nt": "T"
+            },
+            {
+              "hgvs": "c.2805",
+              "kind": "exon",
+              "nt": "G"
+            },
+            {
+              "hgvs": "c.2806",
+              "kind": "exon",
+              "nt": "C"
+            },
+            {
+              "hgvs": "c.2807",
+              "kind": "exon",
+              "nt": "A"
+            },
+            {
+              "hgvs": "c.2808",
+              "kind": "exon",
+              "nt": "C"
+            },
+            {
+              "hgvs": "c.2809",
+              "kind": "exon",
+              "nt": "C"
+            },
+            {
+              "hgvs": "c.2810",
+              "kind": "exon",
+              "nt": "C"
+            }
+          ],
+          "id": "reference",
+          "kind": "exon",
+          "markers": [],
+          "spans": [
+            {
+              "end": 15,
+              "kind": "variant",
+              "label": "WT G",
+              "start": 14
+            }
+          ],
+          "title": "Reference"
+        },
+        {
+          "bases": [
+            {
+              "hgvs": "c.2784",
+              "kind": "exon",
+              "nt": "A"
+            },
+            {
+              "hgvs": "c.2785",
+              "kind": "exon",
+              "nt": "C"
+            },
+            {
+              "hgvs": "c.2786",
+              "kind": "exon",
+              "nt": "T"
+            },
+            {
+              "hgvs": "c.2787",
+              "kind": "exon",
+              "nt": "A"
+            },
+            {
+              "hgvs": "c.2788",
+              "kind": "exon",
+              "nt": "C"
+            },
+            {
+              "hgvs": "c.2789",
+              "kind": "exon",
+              "nt": "T"
+            },
+            {
+              "hgvs": "c.2790",
+              "kind": "exon",
+              "nt": "C"
+            },
+            {
+              "hgvs": "c.2791",
+              "kind": "exon",
+              "nt": "T"
+            },
+            {
+              "hgvs": "c.2792",
+              "kind": "exon",
+              "nt": "G"
+            },
+            {
+              "hgvs": "c.2793",
+              "kind": "exon",
+              "nt": "T"
+            },
+            {
+              "hgvs": "c.2794",
+              "kind": "exon",
+              "nt": "G"
+            },
+            {
+              "hgvs": "c.2795",
+              "kind": "exon",
+              "nt": "A"
+            },
+            {
+              "hgvs": "c.2796",
+              "kind": "exon",
+              "nt": "G"
+            },
+            {
+              "hgvs": "c.2797",
+              "kind": "exon_deleted",
+              "nt": "G"
+            },
+            {
+              "hgvs": "c.2798",
+              "kind": "exon_deleted",
+              "nt": "T"
+            },
+            {
+              "hgvs": "c.2799",
+              "kind": "exon_deleted",
+              "nt": "A"
+            },
+            {
+              "hgvs": "c.2800",
+              "kind": "exon_deleted",
+              "nt": "C"
+            },
+            {
+              "hgvs": "c.2801",
+              "kind": "exon_deleted",
+              "nt": "T"
+            },
+            {
+              "hgvs": "c.2802",
+              "kind": "exon_deleted",
+              "nt": "C"
+            },
+            {
+              "hgvs": "c.2803",
+              "kind": "exon_deleted",
+              "nt": "T"
+            },
+            {
+              "hgvs": "c.2804",
+              "kind": "exon_deleted",
+              "nt": "T"
+            },
+            {
+              "hgvs": "c.2805",
+              "kind": "exon_deleted",
+              "nt": "G"
+            },
+            {
+              "hgvs": "c.2806",
+              "kind": "exon_deleted",
+              "nt": "C"
+            },
+            {
+              "hgvs": "c.2807",
+              "kind": "exon_deleted",
+              "nt": "A"
+            },
+            {
+              "hgvs": "c.2808",
+              "kind": "exon_deleted",
+              "nt": "C"
+            },
+            {
+              "hgvs": "c.2809",
+              "kind": "exon_deleted",
+              "nt": "C"
+            },
+            {
+              "hgvs": "c.2810",
+              "kind": "exon_deleted",
+              "nt": "C"
+            }
+          ],
+          "dup_seq": null,
+          "id": "mutant",
+          "kind": "exon",
+          "markers": [
+            {
+              "index": 12,
+              "kind": "splice_gt",
+              "label": "cryptic GT"
+            }
+          ],
+          "spans": [
+            {
+              "end": 51,
+              "kind": "exon_skip",
+              "label": "38 nt excised",
+              "start": 13
+            },
+            {
+              "end": 15,
+              "kind": "variant",
+              "label": "variant T",
+              "start": 14
+            }
+          ],
+          "title": "Mutant exon (cryptic splice site)"
+        },
+        {
+          "bases": [
+            {
+              "hgvs": "c.2784",
+              "kind": "exon",
+              "nt": "A"
+            },
+            {
+              "hgvs": "c.2785",
+              "kind": "exon",
+              "nt": "C"
+            },
+            {
+              "hgvs": "c.2786",
+              "kind": "exon",
+              "nt": "T"
+            },
+            {
+              "hgvs": "c.2787",
+              "kind": "exon",
+              "nt": "A"
+            },
+            {
+              "hgvs": "c.2788",
+              "kind": "exon",
+              "nt": "C"
+            },
+            {
+              "hgvs": "c.2789",
+              "kind": "exon",
+              "nt": "T"
+            },
+            {
+              "hgvs": "c.2790",
+              "kind": "exon",
+              "nt": "C"
+            },
+            {
+              "hgvs": "c.2791",
+              "kind": "exon",
+              "nt": "T"
+            },
+            {
+              "hgvs": "c.2792",
+              "kind": "exon",
+              "nt": "G"
+            },
+            {
+              "hgvs": "c.2793",
+              "kind": "exon",
+              "nt": "T"
+            },
+            {
+              "hgvs": "c.2794",
+              "kind": "exon",
+              "nt": "G"
+            },
+            {
+              "hgvs": "c.2795",
+              "kind": "exon",
+              "nt": "A"
+            },
+            {
+              "hgvs": "c.2796",
+              "kind": "exon",
+              "nt": "G"
+            }
+          ],
+          "id": "cryptic_product",
+          "kind": "mature",
+          "markers": [],
+          "note": "If used: cryptic donor gain (0.28 at Δ−2 bp) shortens exon 8 by 38 nt (out-of-frame) → p.Ile933fsTer33. PTC in exon 9/10 at native c.2931-c.2933 (TGA) — frame-shifted stop. Truncated ≈ 964/1034 aa (6. PTC at aa 965 (beyond junction window).",
+          "spans": [],
+          "summary": "p.Ile933fsTer33",
+          "title": "Exon-internal cryptic donor gain — mature mRNA"
+        }
+      ],
+      "upstream_exon": 8
+    },
+    "junction_model_hgvs_p": "p.Ile933fsTer33",
+    "junction_model_ptc_exon_rank": 9,
+    "junction_model_ptc_position": 965,
+    "legacy_exon_label": "VEP/SnpEff coding-only exon 7/9 (5′-UTR exons excluded from count)",
+    "logic_explanation": "<ul style='margin-top: 5px; padding-left: 20px;'><li style='margin-bottom: 6px;'><strong>The Variant:</strong> NLRP3 c.2798G>T → a missense at exon 8 (p.G933V). SpliceAI predicts exon-internal <b>donor gain</b> (DS 0.28, Δ-2 bp); splice product below.</li><li style='margin-bottom: 6px;'><strong>Exon-numbering note:</strong> Also referenced under legacy nomenclature as <b>VEP/SnpEff coding-only exon 7/9 (5′-UTR exons excluded from count)</b>. The exon number above follows the modern MANE/RefSeq transcript model (which counts every exon, including 5′-UTR-only exons); legacy clinical literature may number exons differently.</li><li style='margin-bottom: 6px;'><a href='https://www.uniprot.org/uniprotkb/Q96P20/entry#family_and_domains' target='_blank' style='text-decoration: underline; color: #4338ca;'>UniProt</a>: No domain of interest.</li><li style='margin-bottom: 6px;'><strong>Allelic & locus context:</strong> Alternate isoform HGVS (same ClinVar VID 3583456): 10 other transcript/genomic name(s) from your ClinVar record were included in literature search (not your curated NM numbering).</li><li style='margin-bottom: 6px;'><strong>Splice products:</strong> <b>Product 1 (primary) — exon-internal donor gain:</b><br><b>SpliceAI signal:</b> <b>exon-internal donor gain</b> — DS_DG 0.28 at Δ−2 bp from variant.<br><b>Geometry:</b> cryptic site at cDNA position <code>2796</code> inside coding exon 8 — new 5&prime; splice donor truncates the 3&prime; end of the exon (<b>38 nt</b> removed from the mature mRNA ORF) net ORF change: 38 nt deleted.<br><b>Frame:</b> <b>out-of-frame</b>.<br><b>Junction codon:</b> reading frame shifts at codon 933 (p.Gly933 → p.Ile933… in mutant ORF).<br><b>Predicted protein:</b> <code>p.Ile933fsTer33</code> (33 aa before stop in shifted frame).<br><b>Premature termination:</b> PTC in exon 9/10 at native c.2931-c.2933 (<code>TGA</code>) — frame-shifted stop codon.<br><b>Protein length:</b> truncated ≈ 964/1034 aa (6.8% C-terminus lost if this product is translated).<br><b>NMD:</b> predicted (PTC in penultimate exon 9/10, 72 nt from last exon-exon junction; ≥50 nt rule).<br><span style='color:#94a3b8;font-size:0.88em'>Exon-internal model — GT/AG dinucleotides at splice sites are excluded from ORF body counts on deep-intronic maps.</span></li></ul>",
+    "logic_explanation_plaintext": "The Variant: NLRP3 c.2798G>T → a missense at exon 8 (p.G933V). SpliceAI predicts exon-internal donor gain (DS 0.28, Δ-2 bp); splice product below.\n\nExon-numbering note: Also referenced under legacy nomenclature as VEP/SnpEff coding-only exon 7/9 (5′-UTR exons excluded from count). The exon number above follows the modern MANE/RefSeq transcript model (which counts every exon, including 5′-UTR-only exons); legacy clinical literature may number exons differently.\n\nUniProt: No domain of interest.\n\nAllelic & locus context: Alternate isoform HGVS (same ClinVar VID 3583456): 10 other transcript/genomic name(s) from your ClinVar record were included in literature search (not your curated NM numbering).\n\nSplice products:\nProduct 1 (primary) — exon-internal donor gain:\nSpliceAI signal: exon-internal donor gain — DS_DG 0.28 at Δ−2 bp from variant.\nGeometry: cryptic site at cDNA position 2796 inside coding exon 8 — new 5′ splice donor truncates the 3′ end of the exon (38 nt removed from the mature mRNA ORF) net ORF change: 38 nt deleted.\nFrame: out-of-frame.\nJunction codon: reading frame shifts at codon 933 (p.Gly933 → p.Ile933… in mutant ORF).\nPredicted protein: p.Ile933fsTer33 (33 aa before stop in shifted frame).\nPremature termination: PTC in exon 9/10 at native c.2931-c.2933 (TGA) — frame-shifted stop codon.\nProtein length: truncated ≈ 964/1034 aa (6.8% C-terminus lost if this product is translated).\nNMD: predicted (PTC in penultimate exon 9/10, 72 nt from last exon-exon junction; ≥50 nt rule).\nExon-internal model — GT/AG dinucleotides at splice sites are excluded from ORF body counts on deep-intronic maps.",
+    "mrna_exon_total": 10,
+    "nmd_escape": false,
+    "nmd_escape_truncation_fraction": 0.0,
+    "nmd_exon_total": 10,
+    "nmd_last_coding_exon_rank": 10,
+    "nmd_points": null,
+    "p_allele_search_link": "https://www.ncbi.nlm.nih.gov/clinvar/?term=NLRP3%5Bgene%5D%20AND%20p.Gly933Val%20NOT%203583456%5BVariationID%5D",
+    "pangolin_dp_sg": -2,
+    "pangolin_dp_sl": 36,
+    "pangolin_ds_sg": 0.45,
+    "pangolin_ds_sl": 0.07,
+    "pangolin_fetched": true,
+    "pm5_local_alleles": [],
+    "protein_length": 1034,
+    "protein_start": 933,
+    "ref": "G",
+    "refseq_nm_synonym_c_tails": [
+      "c.2798G>T",
+      "c.2627G>T",
+      "c.2804G>T",
+      "c.2456G>T"
+    ],
+    "refseq_nm_synonyms": [
+      {
+        "canonical": false,
+        "from_clinvar": true,
+        "full": "NM_001079821.3:c.2798G>T",
+        "hgvs_c": "c.2798G>T",
+        "mane_select": "",
+        "refseq": "NM_001079821.3",
+        "user_input": false
+      },
+      {
+        "canonical": false,
+        "from_clinvar": true,
+        "full": "NM_001127461.3:c.2627G>T",
+        "hgvs_c": "c.2627G>T",
+        "mane_select": "",
+        "refseq": "NM_001127461.3",
+        "user_input": false
+      },
+      {
+        "canonical": false,
+        "from_clinvar": true,
+        "full": "NM_001127462.3:c.2627G>T",
+        "hgvs_c": "c.2627G>T",
+        "mane_select": "",
+        "refseq": "NM_001127462.3",
+        "user_input": false
+      },
+      {
+        "canonical": false,
+        "from_clinvar": true,
+        "full": "NM_001243133.2:c.2798G>T",
+        "hgvs_c": "c.2798G>T",
+        "mane_select": "",
+        "refseq": "NM_001243133.2",
+        "user_input": false
+      },
+      {
+        "canonical": false,
+        "from_clinvar": true,
+        "full": "NM_004895.5:c.2804G>T",
+        "hgvs_c": "c.2804G>T",
+        "mane_select": "",
+        "refseq": "NM_004895.5",
+        "user_input": false
+      },
+      {
+        "canonical": false,
+        "from_clinvar": true,
+        "full": "NM_183395.3:c.2456G>T",
+        "hgvs_c": "c.2456G>T",
+        "mane_select": "",
+        "refseq": "NM_183395.3",
+        "user_input": false
+      },
+      {
+        "canonical": false,
+        "full": "NM_001243133:c.2798G>T",
+        "hgvs_c": "c.2798G>T",
+        "mane_select": "",
+        "refseq": "NM_001243133",
+        "user_input": true
+      }
+    ],
+    "regional_hotspot": [],
+    "revel_score": 0,
+    "same_protein_position_alleles": [],
+    "snpeff_cdna_pos": 3550,
+    "snpeff_cds_pos": 2798,
+    "snpeff_exon_rank": 7,
+    "snpeff_exon_total": 9,
+    "splice_col": "",
+    "splice_frame_math": "<b>Product 1 (primary) — exon-internal donor gain:</b><br><b>SpliceAI signal:</b> <b>exon-internal donor gain</b> — DS_DG 0.28 at Δ−2 bp from variant.<br><b>Geometry:</b> cryptic site at cDNA position <code>2796</code> inside coding exon 8 — new 5&prime; splice donor truncates the 3&prime; end of the exon (<b>38 nt</b> removed from the mature mRNA ORF) net ORF change: 38 nt deleted.<br><b>Frame:</b> <b>out-of-frame</b>.<br><b>Junction codon:</b> reading frame shifts at codon 933 (p.Gly933 → p.Ile933… in mutant ORF).<br><b>Predicted protein:</b> <code>p.Ile933fsTer33</code> (33 aa before stop in shifted frame).<br><b>Premature termination:</b> PTC in exon 9/10 at native c.2931-c.2933 (<code>TGA</code>) — frame-shifted stop codon.<br><b>Protein length:</b> truncated ≈ 964/1034 aa (6.8% C-terminus lost if this product is translated).<br><b>NMD:</b> predicted (PTC in penultimate exon 9/10, 72 nt from last exon-exon junction; ≥50 nt rule).<br><span style='color:#94a3b8;font-size:0.88em'>Exon-internal model — GT/AG dinucleotides at splice sites are excluded from ORF body counts on deep-intronic maps.</span><br><br>",
+    "splice_is_in_frame": false,
+    "splice_points": null,
+    "splice_products_panel_html": "<b>Product 1 (primary) — exon-internal donor gain:</b><br><b>SpliceAI signal:</b> <b>exon-internal donor gain</b> — DS_DG 0.28 at Δ−2 bp from variant.<br><b>Geometry:</b> cryptic site at cDNA position <code>2796</code> inside coding exon 8 — new 5&prime; splice donor truncates the 3&prime; end of the exon (<b>38 nt</b> removed from the mature mRNA ORF) net ORF change: 38 nt deleted.<br><b>Frame:</b> <b>out-of-frame</b>.<br><b>Junction codon:</b> reading frame shifts at codon 933 (p.Gly933 → p.Ile933… in mutant ORF).<br><b>Predicted protein:</b> <code>p.Ile933fsTer33</code> (33 aa before stop in shifted frame).<br><b>Premature termination:</b> PTC in exon 9/10 at native c.2931-c.2933 (<code>TGA</code>) — frame-shifted stop codon.<br><b>Protein length:</b> truncated ≈ 964/1034 aa (6.8% C-terminus lost if this product is translated).<br><b>NMD:</b> predicted (PTC in penultimate exon 9/10, 72 nt from last exon-exon junction; ≥50 nt rule).<br><span style='color:#94a3b8;font-size:0.88em'>Exon-internal model — GT/AG dinucleotides at splice sites are excluded from ORF body counts on deep-intronic maps.</span><br><br>",
+    "splice_row": "",
+    "splice_viz": {
+      "acceptor_offset_1based": null,
+      "anatomical_last_rank": 10,
+      "anchor_exon_rank": null,
+      "canonical_acceptor_offset_1based": null,
+      "canonical_gt_offset_1based": 1,
+      "caption": "",
+      "competing": false,
+      "deep_intronic_products": false,
+      "deep_intronic_viz_alternate": null,
+      "deep_intronic_viz_alternate2": null,
+      "donor_offset_1based": null,
+      "eligible": true,
+      "exon_internal_cut_fraction": 0.7777777777777778,
+      "exon_internal_cut_rank": 8,
+      "exon_internal_cut_side": "donor",
+      "exon_skip_spliceai_primary": false,
+      "exons": [
+        {
+          "len_bp": 171,
+          "rank": 6,
+          "w": 0.2181
+        },
+        {
+          "len_bp": 171,
+          "rank": 7,
+          "w": 0.2181
+        },
+        {
+          "len_bp": 171,
+          "rank": 8,
+          "w": 0.2181
+        },
+        {
+          "len_bp": 171,
+          "rank": 9,
+          "w": 0.2181
+        },
+        {
+          "len_bp": 100,
+          "rank": 10,
+          "w": 0.1276
+        }
+      ],
+      "exons_full": [
+        {
+          "len_bp": 277,
+          "rank": 2,
+          "w": 0.089211
+        },
+        {
+          "len_bp": 120,
+          "rank": 3,
+          "w": 0.038647
+        },
+        {
+          "len_bp": 1753,
+          "rank": 4,
+          "w": 0.564573
+        },
+        {
+          "len_bp": 171,
+          "rank": 5,
+          "w": 0.055072
+        },
+        {
+          "len_bp": 171,
+          "rank": 6,
+          "w": 0.055072
+        },
+        {
+          "len_bp": 171,
+          "rank": 7,
+          "w": 0.055072
+        },
+        {
+          "len_bp": 171,
+          "rank": 8,
+          "w": 0.055072
+        },
+        {
+          "len_bp": 171,
+          "rank": 9,
+          "w": 0.055072
+        },
+        {
+          "len_bp": 100,
+          "rank": 10,
+          "w": 0.032206
+        }
+      ],
+      "first_insert_aa_pos": null,
+      "first_mrna_utr": true,
+      "focus_junction": {
+        "exons": [
+          {
+            "len_bp": 171,
+            "rank": 6,
+            "w": 0.2181
+          },
+          {
+            "len_bp": 171,
+            "rank": 7,
+            "w": 0.2181
+          },
+          {
+            "len_bp": 171,
+            "rank": 8,
+            "w": 0.2181
+          },
+          {
+            "len_bp": 171,
+            "rank": 9,
+            "w": 0.2181
+          },
+          {
+            "len_bp": 100,
+            "rank": 10,
+            "w": 0.1276
+          }
+        ],
+        "trunc_after": 0,
+        "trunc_before": 4,
+        "window_hi": 10,
+        "window_lo": 6
+      },
+      "focus_neighbor": 2,
+      "focus_primary": {
+        "exons": [
+          {
+            "len_bp": 171,
+            "rank": 6,
+            "w": 0.2181
+          },
+          {
+            "len_bp": 171,
+            "rank": 7,
+            "w": 0.2181
+          },
+          {
+            "len_bp": 171,
+            "rank": 8,
+            "w": 0.2181
+          },
+          {
+            "len_bp": 171,
+            "rank": 9,
+            "w": 0.2181
+          },
+          {
+            "len_bp": 100,
+            "rank": 10,
+            "w": 0.1276
+          }
+        ],
+        "trunc_after": 0,
+        "trunc_before": 4,
+        "window_hi": 10,
+        "window_lo": 6
+      },
+      "focus_secondary": null,
+      "gene": "NLRP3",
+      "gt_offset_1based": null,
+      "has_deep_intronic_alternate": false,
+      "has_deep_intronic_alternate2": false,
+      "has_secondary_skip": false,
+      "hgvs_c_for_viz": "c.2798G>T",
+      "in_frame_exonization": false,
+      "in_frame_skip": false,
+      "insert_codons": null,
+      "intron_length_nt": null,
+      "intronic_skipped_nt": null,
+      "is_acceptor": false,
+      "is_donor": true,
+      "junction_is_primary": false,
+      "junction_ptc_location_detail": "~36% along exon 9 box",
+      "junction_ptc_location_kind": "coding_exon",
+      "junction_ptc_location_label": "native coding exon 9",
+      "junction_row": true,
+      "next_exon_rank": null,
+      "primary_mechanism": null,
+      "pseudo_after_rank": null,
+      "pseudoexon_insert_nt": null,
+      "pseudoexon_ptc_aa": null,
+      "pseudoexon_ptc_frac_in_insert": null,
+      "pseudoexon_ptc_hgvs": null,
+      "pseudoexon_ptc_within_insert": false,
+      "pseudoexon_retained_nt": null,
+      "ptc_location_detail": null,
+      "ptc_location_kind": null,
+      "ptc_location_label": null,
+      "ptc_markers": {
+        "junction": {
+          "exon_rank": 9,
+          "fraction_in_exon": 0.3596,
+          "hgvs_p": "p.Ile933fsTer33",
+          "ptc_aa_position": 965
+        },
+        "reference": null,
+        "secondary_skip": null,
+        "skip": null
+      },
+      "reference_only": false,
+      "row_order": "ref_junction_skip",
+      "secondary_in_frame_skip": null,
+      "secondary_mechanism": null,
+      "secondary_target_rank": null,
+      "shift_nt": 38,
+      "site": "splice",
+      "skip_ptc_location_detail": null,
+      "skip_ptc_location_kind": null,
+      "skip_ptc_location_label": null,
+      "spliceai_dg_delta": null,
+      "spliceai_gain_delta_exceeds_loss": false,
+      "spliceai_loss_delta_exceeds_gain": false,
+      "suppress_whole_exon_skip_row": true,
+      "target_rank": 8,
+      "total_exons_full": 9,
+      "truncated_after": 0,
+      "truncated_before": 4,
+      "use_exonization_schematic": false,
+      "variant_marker": {
+        "cds_pos": 2798,
+        "exon_rank": 8,
+        "fraction_in_exon": 0.7865,
+        "mode": "exon"
+      },
+      "window_hi_rank": 10,
+      "window_lo_rank": 6
+    },
+    "splice_viz_exon_internal_cryptic": true,
+    "spliceai_dp_ag": -2,
+    "spliceai_dp_al": -134,
+    "spliceai_dp_dg": -2,
+    "spliceai_dp_dl": 28,
+    "spliceai_ds_ag": 0.0,
+    "spliceai_ds_al": 0.02,
+    "spliceai_ds_dg": 0.28,
+    "spliceai_ds_dl": 0.05,
+    "spliceai_fetched": true,
+    "spliceai_in_silico_source": "broad",
+    "spliceai_narrative": "If used: cryptic donor gain (0.28 at Δ−2 bp) shortens exon 8 by 38 nt (out-of-frame) → p.Ile933fsTer33. PTC in exon 9/10 at native c.2931-c.2933 (TGA) — frame-shifted stop. Truncated ≈ 964/1034 aa (6.8% C-term lost). NMD-predicted (penultimate exon, 72 nt to last junction; ≥50 nt rule). Computational only — not RNA evidence.",
+    "transcript": "NM_001243133",
+    "transcript_chrom": "1",
+    "transcript_strand": 1,
+    "uniprot_domain_checked": true,
+    "uniprot_domain_mode": "point",
+    "uniprot_link": "https://www.uniprot.org/uniprotkb/Q96P20-5",
+    "uniprot_primary_accession": "Q96P20",
+    "variant_exon": 8,
+    "vep_vcf_string": "1-247444106-G-T",
+    "vus_alternate_alleles": []
+  },
+  "results_acmg": {
+    "classification": {
+      "class": "vus",
+      "label": "VUS"
+    },
+    "criteria": [
+      {
+        "code": "PM2",
+        "desc": "Absent or extremely rare (0.0000) in population databases",
+        "type": "pathogenic",
+        "weight": "moderate"
+      }
+    ]
+  },
+  "results_custom": {
+    "breakdown": [
+      {
+        "points": 0.0,
+        "reason": "<b>Product 1 (primary) — exon-internal donor gain:</b><br><b>SpliceAI signal:</b> <b>exon-internal donor gain</b> — DS_DG 0.28 at Δ−2 bp from variant.<br><b>Geometry:</b> cryptic site at cDNA position <code>2796</code> inside coding exon 8 — new 5&prime; splice donor truncates the 3&prime; end of the exon (<b>38 nt</b> removed from the mature mRNA ORF) net ORF change: 38 nt deleted.<br><b>Frame:</b> <b>out-of-frame</b>.<br><b>Junction codon:</b> reading frame shifts at codon 933 (p.Gly933 → p.Ile933… in mutant ORF).<br><b>Predicted protein:</b> <code>p.Ile933fsTer33</code> (33 aa before stop in shifted frame).<br><b>Premature termination:</b> PTC in exon 9/10 at native c.2931-c.2933 (<code>TGA</code>) — frame-shifted stop codon.<br><b>Protein length:</b> truncated ≈ 964/1034 aa (6.8% C-terminus lost if this product is translated).<br><b>NMD:</b> predicted (PTC in penultimate exon 9/10, 72 nt from last exon-exon junction; ≥50 nt rule).<br><span style='color:#94a3b8;font-size:0.88em'>Exon-internal model — GT/AG dinucleotides at splice sites are excluded from ORF body counts on deep-intronic maps.</span><br><br>"
+      }
+    ],
+    "classification": {
+      "class": "vus",
+      "label": "VUS"
+    },
+    "total": 0.0
+  },
+  "success": true
+}

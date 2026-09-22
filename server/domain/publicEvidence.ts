@@ -1,7 +1,7 @@
 import type { Variant } from "../../drizzle/schema";
 
 export type PublicEvidenceDraft = {
-  source: "ClinVar" | "PubMed" | "gnomAD" | "OMIM";
+  source: "ClinVar" | "PubMed" | "gnomAD" | "OMIM" | "CIViC" | "OncoKB";
   sourceRecordId: string | null;
   clinicalDomain: "germline_classification" | "oncogenicity" | "therapeutic" | "diagnostic" | "prognostic" | "population" | "functional" | "other";
   title: string;
@@ -88,10 +88,35 @@ async function collectPubMed(variant: Variant): Promise<PublicEvidenceDraft[]> {
   });
 }
 
-export async function collectPublicEvidence(variant: Variant) {
+export async function collectPublicEvidence(
+  variant: Variant,
+  options: { purpose?: "germline" | "somatic"; diseaseContext?: string | null } = {}
+) {
   const results: PublicEvidenceDraft[] = [];
-  const settled = await Promise.allSettled([collectClinVar(variant), collectPubMed(variant)]);
-  for (const result of settled) if (result.status === "fulfilled") results.push(...result.value);
+  const purpose = options.purpose ?? "germline";
+
+  if (purpose === "somatic") {
+    const { loadSomaticKnowledge } = await import("./somaticKb");
+    const knowledge = await loadSomaticKnowledge(variant, options.diseaseContext ?? null);
+    results.push(...knowledge.drafts);
+  } else {
+    const settled = await Promise.allSettled([collectClinVar(variant), collectPubMed(variant)]);
+    for (const result of settled) if (result.status === "fulfilled") results.push(...result.value);
+    if (variant.gene) {
+      results.push({
+        source: "OMIM",
+        sourceRecordId: variant.gene,
+        clinicalDomain: "other",
+        title: `OMIM search for ${variant.gene}`,
+        url: `https://omim.org/search?index=entry&search=${encodeURIComponent(variant.gene)}`,
+        excerpt: "OMIM licensed content is not automatically ingested. Verify gene–disease relationships via the link and add only permitted evidence to the Evidence Ledger.",
+        direction: "neutral",
+        evidenceLevel: "External verification required",
+        payload: { gene: variant.gene, licensedContentIngested: false },
+      });
+    }
+  }
+
   if (variant.populationAf !== null) {
     results.push({
       source: "gnomAD",
@@ -102,20 +127,10 @@ export async function collectPublicEvidence(variant: Variant) {
       excerpt: `Population allele frequency recorded in the input VCF annotation is ${variant.populationAf}. Verify the population and dataset version in the original gnomAD record.`,
       direction: "neutral",
       evidenceLevel: "VCF provenance",
-      payload: { populationAf: variant.populationAf, provenance: "input_vcf_annotation" },
-    });
-  }
-  if (variant.gene) {
-    results.push({
-      source: "OMIM",
-      sourceRecordId: variant.gene,
-      clinicalDomain: "other",
-      title: `OMIM search for ${variant.gene}`,
-      url: `https://omim.org/search?index=entry&search=${encodeURIComponent(variant.gene)}`,
-      excerpt: "OMIM licensed content is not automatically ingested. Verify gene–disease relationships via the link and add only permitted evidence to the Evidence Ledger.",
-      direction: "neutral",
-      evidenceLevel: "External verification required",
-      payload: { gene: variant.gene, licensedContentIngested: false },
+      payload: {
+        populationAf: Number(variant.populationAf),
+        provenance: "input_vcf_annotation",
+      },
     });
   }
   return results;

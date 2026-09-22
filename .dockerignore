@@ -1,0 +1,25 @@
+.git
+.github
+node_modules
+dist
+.pnpm-store
+*.log
+
+# Secrets and local-only config
+.env
+.env.local
+.env.*.local
+
+# Python build artefacts
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.venv
+**/venv
+
+# Docs and local tooling that never belongs in an image
+docs
+*.md
+!engine/README.md
+attached_assets
+terminals

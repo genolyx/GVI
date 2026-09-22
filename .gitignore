@@ -110,3 +110,9 @@ temp/
 .webdev/
 
 .project-config.json
+
+# Python engine worker
+engine/.venv/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/

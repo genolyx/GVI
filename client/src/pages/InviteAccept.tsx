@@ -4,10 +4,12 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useOrganization } from "@/contexts/OrganizationContext";
 import { startLogin } from "@/const";
 import { trpc } from "@/lib/trpc";
-import { Building2, CheckCircle2, Dna, LogIn, ShieldAlert } from "lucide-react";
+import { GenolyxWordmark } from "@/components/BrandMark";
+import { Building2, CheckCircle2, LogIn, ShieldAlert } from "lucide-react";
 import { useEffect } from "react";
 import { toast } from "sonner";
 import { useLocation, useParams } from "wouter";
+import { formatDateTime } from "@/lib/datetime";
 
 export default function InviteAcceptPage() {
   const params = useParams<{ token: string }>();
@@ -108,7 +110,7 @@ export default function InviteAcceptPage() {
         </div>
         <div className="flex justify-between gap-4">
           <dt className="text-muted-foreground">Expires</dt>
-          <dd className="font-medium">{new Date(data.expiresAt).toLocaleString()}</dd>
+          <dd className="font-medium">{formatDateTime(data.expiresAt)}</dd>
         </div>
       </dl>
 
@@ -206,17 +208,12 @@ export default function InviteAcceptPage() {
 
 function InviteShell({ children }: { children: React.ReactNode }) {
   return (
-    <div className="grid min-h-screen place-items-center bg-[radial-gradient(circle_at_top_right,oklch(0.89_0.07_181),transparent_32rem)] px-5 py-10">
+    <div className="grid min-h-screen place-items-center bg-[radial-gradient(circle_at_top_right,rgb(61_176_199_/_35%),transparent_32rem)] px-5 py-10">
       <div className="clinical-panel w-full max-w-lg overflow-hidden">
-        <div className="border-b border-border/70 bg-slate-950 px-6 py-4 text-white">
-          <div className="flex items-center gap-3">
-            <div className="grid size-9 place-items-center rounded-xl bg-teal-500 text-white">
-              <Dna className="size-4" />
-            </div>
-            <div>
-              <p className="font-display text-sm font-semibold">Genolyx</p>
-              <p className="text-[10px] uppercase tracking-[0.16em] text-slate-400">Variant Interpreter</p>
-            </div>
+        <div className="border-b border-border/70 bg-[#050b14] px-6 py-4 text-foreground">
+          <div>
+            <GenolyxWordmark onDark className="h-7 max-w-[160px]" />
+            <p className="mt-2 text-[10px] uppercase tracking-[0.16em] text-slate-400">Variant Curation</p>
           </div>
         </div>
         <div className="p-8">{children}</div>

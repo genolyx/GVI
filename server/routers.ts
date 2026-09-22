@@ -7,6 +7,7 @@ import { projectsRouter } from "./routers/projects";
 import { casesRouter } from "./routers/cases";
 import { variantsRouter } from "./routers/variants";
 import { copilotRouter } from "./routers/copilot";
+import { curationRouter } from "./routers/curation";
 import { dashboardRouter } from "./routers/dashboard";
 import { reportsRouter } from "./routers/reports";
 
@@ -28,6 +29,7 @@ export const appRouter = router({
   cases: casesRouter,
   variants: variantsRouter,
   copilot: copilotRouter,
+  curation: curationRouter,
   dashboard: dashboardRouter,
   reports: reportsRouter,
 });

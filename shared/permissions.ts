@@ -18,6 +18,9 @@ export const PERMISSIONS = [
   "case:edit",
   "file:upload",
   "variant:read",
+  // Queueing engine curation is metered separately from editing an interpretation:
+  // each run costs minutes of a warm worker and external API quota.
+  "curation:run",
   "interpretation:edit",
   "interpretation:approve",
   "report:draft",
@@ -40,6 +43,7 @@ export const ROLE_PERMISSIONS: Record<OrganizationRole, readonly Permission[]> =
     "case:edit",
     "file:upload",
     "variant:read",
+    "curation:run",
     "interpretation:edit",
     "report:draft",
     "report:read",
@@ -49,6 +53,7 @@ export const ROLE_PERMISSIONS: Record<OrganizationRole, readonly Permission[]> =
     "case:read",
     "case:edit",
     "variant:read",
+    "curation:run",
     "interpretation:edit",
     "interpretation:approve",
     "report:draft",

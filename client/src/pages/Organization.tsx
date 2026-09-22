@@ -15,6 +15,7 @@ import type { OrganizationRole } from "@shared/permissions";
 import { Building2, Copy, MailPlus, UserRoundCog, UsersRound, X } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { formatDateTime } from "@/lib/datetime";
 
 const roles: { value: OrganizationRole; label: string; description: string }[] = [
   { value: "administrator", label: "Administrator", description: "Full organization, member, and security management" },
@@ -301,7 +302,7 @@ export default function OrganizationPage() {
                     <TableRow key={item.id}>
                       <TableCell className="pl-6 text-xs font-medium">{item.email}</TableCell>
                       <TableCell className="text-xs capitalize">{item.role}</TableCell>
-                      <TableCell className="text-[10px] text-muted-foreground">{new Date(item.expiresAt).toLocaleString()}</TableCell>
+                      <TableCell className="text-[10px] text-muted-foreground">{formatDateTime(item.expiresAt)}</TableCell>
                       <TableCell className="pr-6 text-right">
                         <div className="flex items-center justify-end gap-2">
                           <span className="status-pill bg-muted text-muted-foreground">{state}</span>

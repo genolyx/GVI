@@ -17,10 +17,19 @@ import {
   SOMATIC_TIERS,
 } from "../../shared/clinical-standards";
 import { protectedProcedure, router } from "../_core/trpc";
-import { suggestAcmgClassification } from "../domain/acmg";
+import {
+  ACMG_STRENGTHS,
+  describeClassificationDivergence,
+  suggestAcmgClassification,
+  toAcmgStrength,
+  type AcmgCode,
+} from "../domain/acmg";
+import { describeSomaticDivergence, suggestAmpClassification } from "../domain/amp";
 import { writeAuditEvent } from "../domain/audit";
 import { collectPublicEvidence } from "../domain/publicEvidence";
+import { factsFromLedger, loadSomaticKnowledge } from "../domain/somaticKb";
 import { requireDb, requireOrganizationPermission } from "../domain/tenant";
+import { TRIAGE_TIERS } from "../domain/triage";
 
 const acmgCode = z.enum(ACMG_CRITERIA);
 
@@ -52,8 +61,11 @@ export const variantsRouter = router({
         impact: z.enum(["HIGH", "MODERATE", "LOW", "MODIFIER", "UNKNOWN"]).optional(),
         reviewStatus: z.enum(["unreviewed", "reviewing", "reviewed", "flagged"]).optional(),
         maxPopulationAf: z.number().min(0).max(1).optional(),
+        triageTier: z.enum(TRIAGE_TIERS).optional(),
         search: z.string().trim().max(100).optional(),
-        sortBy: z.enum(["position", "gene", "impact", "populationAf", "vaf"]).default("position"),
+        sortBy: z
+          .enum(["position", "gene", "impact", "populationAf", "vaf", "triageScore"])
+          .default("position"),
         sortDirection: z.enum(["asc", "desc"]).default("asc"),
         limit: z.number().int().min(1).max(500).default(100),
         offset: z.number().int().min(0).default(0),
@@ -71,6 +83,7 @@ export const variantsRouter = router({
       if (input.impact) conditions.push(eq(variants.impact, input.impact));
       if (input.reviewStatus) conditions.push(eq(variants.reviewStatus, input.reviewStatus));
       if (input.maxPopulationAf !== undefined) conditions.push(lte(variants.populationAf, String(input.maxPopulationAf)));
+      if (input.triageTier) conditions.push(eq(variants.triageTier, input.triageTier));
       if (input.search) {
         conditions.push(
           or(
@@ -87,6 +100,7 @@ export const variantsRouter = router({
         impact: variants.impact,
         populationAf: variants.populationAf,
         vaf: variants.vaf,
+        triageScore: variants.triageScore,
       }[input.sortBy];
       return db
         .select({
@@ -104,6 +118,9 @@ export const variantsRouter = router({
           impact: variants.impact,
           clinvarSignificance: variants.clinvarSignificance,
           reviewStatus: variants.reviewStatus,
+          triageTier: variants.triageTier,
+          triageScore: variants.triageScore,
+          triageReasons: variants.triageReasons,
           germlineClassification: interpretations.germlineClassification,
           somaticTier: interpretations.somaticTier,
           oncogenicity: interpretations.oncogenicity,
@@ -116,10 +133,11 @@ export const variantsRouter = router({
             eq(interpretations.variantId, variants.id),
             eq(interpretations.organizationId, variants.organizationId),
             // Join only the latest interpretation version per variant to avoid duplicate rows.
+            // Column identifiers are quoted because Postgres folds bare identifiers to lowercase.
             sql`${interpretations.id} = (
               select i.id from interpretations i
-              where i.variantId = ${variants.id}
-                and i.organizationId = ${variants.organizationId}
+              where i."variantId" = ${variants.id}
+                and i."organizationId" = ${variants.organizationId}
               order by i.version desc, i.id desc
               limit 1
             )`
@@ -129,6 +147,33 @@ export const variantsRouter = router({
         .orderBy(input.sortDirection === "desc" ? desc(sortColumn) : asc(sortColumn))
         .limit(input.limit)
         .offset(input.offset);
+    }),
+
+  /**
+   * Tier totals for a case.
+   *
+   * Separate from `list` so the triage chips keep showing case-wide totals while a
+   * tier filter narrows the table, and so the counts survive the 500-row list cap.
+   */
+  triageCounts: protectedProcedure
+    .input(z.object({ organizationId: z.number().int().positive(), caseId: z.number().int().positive() }))
+    .query(async ({ ctx, input }) => {
+      await requireOrganizationPermission(ctx.user.id, input.organizationId, "variant:read");
+      const db = await requireDb();
+      const rows = await db
+        .select({ tier: variants.triageTier, count: sql<number>`count(*)::int` })
+        .from(variants)
+        .where(
+          and(eq(variants.organizationId, input.organizationId), eq(variants.caseId, input.caseId))
+        )
+        .groupBy(variants.triageTier);
+
+      const counts = { t1_curate: 0, t2_review: 0, t3_filtered: 0, untriaged: 0 };
+      for (const row of rows) {
+        if (row.tier) counts[row.tier] = row.count;
+        else counts.untriaged = row.count;
+      }
+      return counts;
     }),
 
   detail: protectedProcedure
@@ -147,13 +192,64 @@ export const variantsRouter = router({
       const criteria = currentInterpretation
         ? await db.select().from(criteriaAssessments).where(and(eq(criteriaAssessments.organizationId, input.organizationId), eq(criteriaAssessments.interpretationId, currentInterpretation.id)))
         : [];
-      const metCodes = criteria.filter(item => item.state === "met" && ACMG_CRITERIA.includes(item.code as any)).map(item => item.code as (typeof ACMG_CRITERIA)[number]);
+      // Carry each criterion's recorded strength into the combination logic so an
+      // engine or reviewer adjustment such as PVS1→Strong actually changes the
+      // suggestion instead of being ignored.
+      const metCriteria = criteria
+        .filter(item => item.state === "met" && ACMG_CRITERIA.includes(item.code as AcmgCode))
+        .map(item => ({
+          code: item.code,
+          strength: toAcmgStrength(item.strengthOverride),
+        }));
+      const acmgSuggestion =
+        record.clinicalCase.purpose === "germline" ? suggestAcmgClassification(metCriteria) : null;
+
+      let ampSuggestion = null;
+      let somaticDivergence = null;
+      if (record.clinicalCase.purpose === "somatic") {
+        const diseaseContext =
+          currentInterpretation?.diseaseContext ||
+          record.clinicalCase.indication ||
+          record.clinicalCase.phenotypeText ||
+          null;
+        const knowledge = await loadSomaticKnowledge(record.variant, diseaseContext);
+        const af = record.variant.populationAf !== null ? Number(record.variant.populationAf) : null;
+        const facts = [
+          ...knowledge.facts,
+          ...factsFromLedger(evidence),
+          ...(Number.isFinite(af)
+            ? [{
+                source: "gnomAD" as const,
+                ampLevel: null,
+                clinicalDomain: "population" as const,
+                sameTumor: false,
+                populationAf: af,
+              }]
+            : []),
+        ];
+        ampSuggestion = suggestAmpClassification(facts, { sourcesDisabled: knowledge.sourcesDisabled });
+        somaticDivergence = describeSomaticDivergence(currentInterpretation, ampSuggestion);
+      }
+
       return {
         ...record,
         evidence,
         interpretations: interpretationRows,
         criteria,
-        acmgSuggestion: record.clinicalCase.purpose === "germline" ? suggestAcmgClassification(metCodes) : null,
+        acmgSuggestion,
+        ampSuggestion,
+        /**
+         * Where the reviewer's classification differs from what the criteria
+         * combine to. Surfaced so the gap is resolved before a report is signed
+         * rather than discovered afterwards.
+         */
+        classificationDivergence: acmgSuggestion
+          ? describeClassificationDivergence(
+              currentInterpretation?.germlineClassification ?? null,
+              acmgSuggestion,
+              criteria
+            )
+          : somaticDivergence,
         conversations,
         audit,
       };
@@ -188,7 +284,10 @@ export const variantsRouter = router({
     .mutation(async ({ ctx, input }) => {
       await requireOrganizationPermission(ctx.user.id, input.organizationId, "interpretation:edit");
       const record = await requireVariant(input.organizationId, input.variantId);
-      const drafts = await collectPublicEvidence(record.variant);
+      const drafts = await collectPublicEvidence(record.variant, {
+        purpose: record.clinicalCase.purpose,
+        diseaseContext: record.clinicalCase.indication || record.clinicalCase.phenotypeText || null,
+      });
       const db = await requireDb();
       const existing = await db
         .select({
@@ -263,8 +362,8 @@ export const variantsRouter = router({
         evidenceLevel: input.evidenceLevel || null,
         payload: input.payload || null,
         createdBy: ctx.user.id,
-      });
-      const id = Number(result[0].insertId);
+      }).returning({ id: evidenceItems.id });
+      const id = result[0].id;
       await writeAuditEvent({
         organizationId: input.organizationId,
         actorUserId: ctx.user.id,
@@ -321,8 +420,8 @@ export const variantsRouter = router({
           ...values,
           version: (existing[0]?.version || 0) + 1,
           createdBy: ctx.user.id,
-        });
-        id = Number(result[0].insertId);
+        }).returning({ id: interpretations.id });
+        id = result[0].id;
       }
       await writeAuditEvent({
         organizationId: input.organizationId,
@@ -343,7 +442,7 @@ export const variantsRouter = router({
       interpretationId: z.number().int().positive(),
       code: acmgCode,
       state: z.enum(["met", "not_met", "not_applicable"]),
-      strengthOverride: z.string().trim().max(40).optional(),
+      strengthOverride: z.enum(ACMG_STRENGTHS).optional(),
       evidenceIds: z.array(z.number().int().positive()).max(50).default([]),
       note: z.string().trim().max(4000).optional(),
     }))
@@ -360,6 +459,9 @@ export const variantsRouter = router({
         const validIds = new Set(evidence.map(item => item.id));
         if (input.evidenceIds.some(id => !validIds.has(id))) throw new TRPCError({ code: "BAD_REQUEST", message: "Evidence does not belong to this variant" });
       }
+      // A person touching an engine suggestion promotes it to human_confirmed, which
+      // is what `describeClassificationDivergence` counts as reviewed. Rows the
+      // engine has never touched stay plain `human`.
       await db.insert(criteriaAssessments).values({
         organizationId: input.organizationId,
         interpretationId: input.interpretationId,
@@ -368,14 +470,19 @@ export const variantsRouter = router({
         strengthOverride: input.strengthOverride || null,
         evidenceIds: input.evidenceIds,
         note: input.note || null,
+        origin: "human",
         updatedBy: ctx.user.id,
-      }).onDuplicateKeyUpdate({ set: {
-        state: input.state,
-        strengthOverride: input.strengthOverride || null,
-        evidenceIds: input.evidenceIds,
-        note: input.note || null,
-        updatedBy: ctx.user.id,
-      }});
+      }).onConflictDoUpdate({
+        target: [criteriaAssessments.organizationId, criteriaAssessments.interpretationId, criteriaAssessments.code],
+        set: {
+          state: input.state,
+          strengthOverride: input.strengthOverride || null,
+          evidenceIds: input.evidenceIds,
+          note: input.note || null,
+          origin: sql`case when ${criteriaAssessments.origin} = 'human' then 'human' else 'human_confirmed' end::evidence_origin`,
+          updatedBy: ctx.user.id,
+        },
+      });
       await writeAuditEvent({
         organizationId: input.organizationId,
         actorUserId: ctx.user.id,

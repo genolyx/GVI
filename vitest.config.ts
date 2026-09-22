@@ -14,6 +14,15 @@ export default defineConfig({
   },
   test: {
     environment: "node",
-    include: ["server/**/*.test.ts", "server/**/*.spec.ts"],
+    include: [
+      "server/**/*.test.ts",
+      "server/**/*.spec.ts",
+      "shared/**/*.test.ts",
+      "shared/**/*.spec.ts",
+      // Client-side units only; files needing a DOM opt in via a
+      // `@vitest-environment jsdom` pragma rather than slowing the whole suite.
+      "client/src/lib/**/*.test.ts",
+      "client/src/components/**/*.test.ts",
+    ],
   },
 });

@@ -1,0 +1,48 @@
+{
+  "inputs": {
+    "c_dot": "c.2798G>T",
+    "case_id": "EMG496622968",
+    "emg_parsed_json": {
+      "export_row": {
+        "ClinVarID": "3583456",
+        "DNAID": "3885830",
+        "EMGID": "EMG496622968",
+        "Gene": "NLRP3",
+        "Inheritance": "",
+        "Nomenclature": "c.2798G>T (p.Gly933Val)",
+        "Phenotypes": "20.3yo with close Autistic behavior.",
+        "Transcript": "NM_001243133.2",
+        "VariantType": "Missense Variant",
+        "Zygosity": "",
+        "cNom": "c.2798G>T",
+        "pNom1": "p.Gly933Val"
+      },
+      "source": "workbench_intake",
+      "spliceai": {},
+      "variant_interpretation": "Missense, Rare, ClinVar Uncertain, Autosomal Dominant, Partial Phenotypic Match  MDS: medium predictors, previously reported for proband, VUS in CV, match for althralgia, fatigue, myalgia and pain but mostly related to CTD (main concern and cx diagnosis of EDS - Beighton 5/9). No mention of cold-induced symptoms or rash (CAPS), CINCA is congenital, VUSN, DNR HT: previously reported for this patient (KFV), predictions uncertain, CADD pathogenic, 1x in gnomAD, VUS in CLinVar, requested curation\n\nN/A",
+      "wes_parsed": {
+        "SpliceAI": "",
+        "cNom": "c.2798G>T",
+        "caseId": "EMG496622968",
+        "gene": "NLRP3",
+        "labId": "3885830",
+        "nomen": "c.2798G>T (p.Gly933Val)",
+        "pNom1": "p.Gly933Val",
+        "spliceai": {},
+        "transcript": "NM_001243133.2"
+      }
+    },
+    "emg_raw": "Illumina Emedgene Logo\nSearch for a case\nDashboard\nCases\n\nadd\nNew Case\nSM\nProband ID:3885830.TTAGG...\nFinalized by Maruhen Silveira Yesterday\n Case is not resolved\nCandidates\nLab\nGenome View\nAnalysis Tools\nnavigate_before\n3885830.TTAGG...\nNLRP3\nSNV\nchr1:247444106 G > T\nMissense, Rare, ClinVar Uncertain, Autosomal Dominant, Partial Phenotypic Match  MDS: medium predictors, previously reported for proband, VUS in CV, match for althralgia, fatigue, myalgia and pain but mostly related to CTD (main concern and cx diagnosis of EDS - Beighton 5/9). No mention of cold-induced symptoms or rash (CAPS), CINCA is congenital, VUSN, DNR HT: previously reported for this patient (KFV), predictions uncertain, CADD pathogenic, 1x in gnomAD, VUS in CLinVar, requested curation\nclose\n\nSummary\n\nClinical Significance\n\nQuality\n\nVisualization\n\nPopulation Statistics\n\nConnected Variants\n\nRelated Cases\n\nEvidence\nSummary\nVariant Interpretation\nEdit\n\n\n\n \n\n\nlink\nVariant Info\nMissense Variant\nNLRP3\nNM_001243133.2 c.2798G>T\nNP_001230062.1 p.Gly933Val\nlink\nlink\nQuality\nDRGN4.2.4\nProband\nHET\n29x\n55%\nHIGH\nlink\nGene's Related Diseases (13)\nCINCA syndrome\nAD\nDefinitive\n+2\nOMIM ORPHANET GENCC MONARCH\n5 / 26\nDisease Phenotypes\nProband Phenotypes\ncheck\nArthritis\ncheck\nArthritis\ncheck\nArthritis\ncheck\nArthritis\ncheck\nGrowth delay\nclose\nProgressive visual field defects\nclose\nFever\nclose\nIncreased total leukocyte count\nclose\nHepatosplenomegaly\nclose\nProptosis\nclose\nFrontal bossing\nclose\nSkin rash\nclose\nRecurrent fever\nclose\nProgressive sensorineural hearing impairment\nclose\nElevated circulating C-reactive protein concentration\nclose\nPapilledema\nclose\nIncreased total eosinophil count\nclose\nElevated erythrocyte sedimentation rate\nclose\nMeningitis\nclose\nLymphedema\nclose\nUveitis\nclose\nLymphadenopathy\nclose\nAnemia\nclose\nSeizure\nclose\nHearing impairment\nclose\nPatellar overgrowth\nlink\nIn Silico Predictions\nMissense Prediction\nNEUTRAL\nConservation\nHIGH\nSplice Prediction\nMODERATE\nlink\nACMG Classification\ninfo_outline\nUncertain significance\n| 4\nlink\nClinical Significance\nCLINVAR\nlink\nConnected Variants\ninfo_outline\nMNV:\n0\nJIDS:\n0\nCompound Heterozygote:\n0\nlink\nPopulation Summary\ngnomAD (non-UKB)\ngnomAD All AF:\n0\ngnomAD Allele Count:\n1\ngnomAD Hom / Hemi count:\n0 / 0\ngnomAD Max AF:\n0\nlink\nPathogenicity\nChoose pathogenicity\nlink\nClinical Significance\nVariant Info\nType\nSNV\nMain Effect\nMissense Variant\nCytoband\n1q44\nZygosity\nHET\nTranscript\nNLRP3\nNM_001243133.2:\nc.2798G>T\nNP_001230062.1:\np.Gly933Val\nmissense variant\nExon\n8 / 10\ndbSNP\nrs1664431304\nResources\nUCSC-Browser, PubMed-search, Google Scholar, LitVar2, Genomenon\nIn Silico Predictions\nkeyboard_arrow_up\nMissense Prediction\nNEUTRAL\nPolyphen2 HDIV\nD\nPolyphen2 HVAR\nD\nSIFT\nT\nMutationTaster\nD\nLRT\nD\nREVEL\n0.292\nPrimateAI3D\n0.667 (D)\nCADD Phred\n26.2\nkeyboard_arrow_up\nConservation\nHIGH\nSiPhy 29 Mammals\n12.049\nGERP RS\n-5.14\nphastCons 100 vertebrate\n0.997\nkeyboard_arrow_up\nSplice Prediction\nMODERATE\nSpliceAI DS AG\n0 (-2bp)\nSpliceAI DS AL\n0 (-42bp)\nSpliceAI DS DG\n0.28 (-2bp)\nSpliceAI DS DL\n0 (28bp)\nPredicted effect\nPartial exon deletion\nResources\nAlamut\nGene Metrics\nExAC\ngnomAD\np(LoF intolerant)\n0.45\n0\nZ missense\n2.45\n3.52\np(REC)\n0.55\n1\nRVIS ratio\n10.75\nN/A\npLoF o/e\nN/A\n0.501 (0.395-0.639)\nResources\nClinGen gene, DECIPHER gene, GenCC, OMIM gene\nClinical Significance\nManually Classified\nN/A\nBGCurated  \nN/A\nHGMD PRO  \nN/A\nClinVar  \n3583456\n(Uncertain)\nSingle submitter\nGene's Related Diseases\nEdit\nGene: NLRP3 (13)\n\n\nCINCA syndrome \nDefinitive\n+2\nOMIM AD , ORPHANET , GENCC AD , MONARCH\n\nDeafness, autosomal dominant 34, with or without inflammation\nOMIM AD , CGD AD , MONARCH\n\nFamilial cold inflammatory syndrome 1\nOMIM AD , MONARCH\n\nKeratoendothelitis fugax hereditaria\nOMIM AD , MONARCH\n\nMuckle-Wells syndrome \nSupportive\nOMIM AD , CGD AD , ORPHANET , GENCC AD , MONARCH\n\nCryopyrin-Associated Periodic Syndrome\nEMEDGENE ADPP/AD\n\nChronic Infantile Neurologic Cutaneous Articular (CINCA) syndrome\nCGD AD\n\nFamilial cold-induced autoinflammatory syndrome 1\nCGD AD\n\nNeonatal Onset Multisystem Inflammatory Disease (NOMID)\nCGD AD\n\nFamilial cold urticaria\nORPHANET , MONARCH\n\nKeratitis fugax hereditaria \nLimited\nORPHANET , GENCC AD , MONARCH\n\nfamilial cold autoinflammatory syndrome \nDefinitive\n+1\nGENCC AD , MONARCH\n\nfamilial cold autoinflammatory syndrome 1 \nStrong\nGENCC AD , MONARCH\nQuality\nVariant Quality\nHIGH\nDRGN4.2.4\ninfo_outline Click on the subject to explore the data:\nProband\nHET\nH\nQuality Data | Proband\nVCF Filter\nPASS\nBase Quality\nHIGH\n50.68\nDepth\nHIGH\n29x\nMapping Quality\nHIGH\n250\nGenotype Quality\nHIGH\n50\nAllele Distribution | Proband\nlensT (55%)\nlensG (45%)\nVisualization\nSwitch to advanced\n \ninfo_outline Please load local BAM and BAI files\n\nchr1\nchr1:247,444,056-247,444,156\nPopulation Statistics\nHighest Allele Frequency per Demographics Rare\nDemographics\nHighest Allele Frequency\n# of Homozygotes\nDetails\nEuropean\n0\nN/A\nkeyboard_arrow_down\nAfrican\n0 (1/41446 of Africans / African Americans)\nN/A\nkeyboard_arrow_down\nAsian\n0\nN/A\nkeyboard_arrow_down\nLatino\n0\nN/A\nkeyboard_arrow_down\nMiddle Eastern\n0\nN/A\nkeyboard_arrow_down\nOther\n0\nN/A\nkeyboard_arrow_down\nEmedgeneDB\n0\nN/A\nkeyboard_arrow_down\nOrganization DBs\n0\nN/A\nkeyboard_arrow_down\nConnected Variants (0)\nSwitch to advanced\nGene\tType\tVariant details\tMain effect\tConnection\tProband quality\tDepth\tAllele bias\tZygosity help_outline\t\nNo data available\nRelated Cases (0 Cases)\nSwitch to advanced\nCollaborator\tCase ID\tPathogenicity\tDate\tTag\tZygosity help_outline\tSelected Disease\t\nNo data available\n\nEvidence\nPathogenicity\nChoose pathogenicity\nEvidence\nVariant Interpretation\nEdit\n\n\n\n \n\n\nACMG Classification\nUncertain significance\n| 4\n-6\n0\n6\n10\nBased on ACMG guidelines and recommendations Read more.\nPathogenic\nBenign\narrow_back\nnavigate_next\nmore_vert\nSearch\nBG Preset v2025\tReviewed\nAI shortlist\nLow quality rescue known P/LP\nLow quality rescue deleterious\nHigh MAF rescue\nSTR\nSTR-FGF14\nSTRv2\nSTR-AFF3,ZFHX3,THAP11,FGF14\nACMG SF\nFinal report\nde novo -disease\nComp het -disease\nhomo -disease\nlow MAF known P/LP\nDeleterious variants\nMosaic\nX-linked\nphenomatch\nCNV-large\nmito\nde novo -research\nhomo -research\ncomp het -research\ncarrier -UDN\nBluePrint base filter\nGene Lists\tAdd\nShowing 1 - 1 of 1 variants (filtered from 123271 total)\n\nchr1:247444106G>T,rs1664431304\nNLRP3\nMost Likely\n(13) AD CINCA syndrome\nmissense variant\nCLINVAR\nHET\nHIGH\n29\narrow_back\nFirst  \n1\n  Last\narrow_forward\nCase Info\nFamily Tree (1)\nFinalize\nActivity\nCase ID:\nEMG496622968\nSample Type:\nVCF\nCase Type:\nWhole Genome\nReference:\nGRCh38\nGene List:\nAll genes\nAnalysis Type:\nHereditary Disease\nOrdered by:\nApiBGProd\n\nMay 27, 2026\nSigned by:\nMaruhen Silveira\n\nJun 01, 2026\nRelated cases:\nN/A\nDue Date:\n Jun 02, 2026\nAdditional Information\nFamily Id:\n2744561\nPatient Id:\n11618142\nTest Code:\n1810\nParticipants\nUnsubscribe\nA\nHT\nSM\nMS\nPatient Information\nSex:\nFemale\nAge:\n20.3\nClinical Information\nProband Phenotypes:\nclose Autistic behavior\nclose Attention deficit hyperactivity disorder\ncheck Joint hypermobility\ncheck Arthralgia\ncheck Myalgia\nclose Fatigue\ncheck Chronic pain\nclose Retinal detachment\nclose Endometriosis\ncheck Menorrhagia\nclose Hypertension\nclose Arrhythmia\nSuspected Disease:\nN/A\nMaternal Ethnicity:\nN/A\nPaternal Ethnicity:\nN/A\nConsanguinity:\nNo\nReport Secondary:\nN/A\nSharing Consent:\nrestricted\nClinical Note:\nN/A",
+    "gene": "NLRP3",
+    "lab_id": "3885830",
+    "transcript": "NM_001243133.2"
+  },
+  "name": "NLRP3_c.2798G_T",
+  "source": {
+    "batch_id": 9,
+    "captured_at": "2026-06-06T22:41:26+00:00",
+    "captured_run_id": 119,
+    "engine_version": "v11",
+    "entry_id": 16
+  }
+}

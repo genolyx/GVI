@@ -15,7 +15,9 @@ import {
 import { protectedProcedure, router } from "../_core/trpc";
 import { writeAuditEvent } from "../domain/audit";
 import { requireDb, requireOrganizationPermission } from "../domain/tenant";
+import { runTriagePass } from "../domain/triagePass";
 import { parseVcf } from "../domain/vcf";
+import { variantReingestSet, variantReingestTarget } from "../domain/vcfIngest";
 import { storageCreateUploadUrl, storageGetSignedUrl } from "../storage";
 
 const caseStatus = z.enum([
@@ -80,11 +82,19 @@ async function ingestVcfForJob(params: {
     if (!parsed.length) throw new Error("VCF contains no readable variant records");
     await db.transaction(async tx => {
       for (let offset = 0; offset < parsed.length; offset += 500) {
-        await tx.insert(variants).values(parsed.slice(offset, offset + 500).map(variant => ({
-          ...variant,
-          organizationId,
-          caseId,
-        })));
+        await tx
+          .insert(variants)
+          .values(
+            parsed.slice(offset, offset + 500).map(variant => ({
+              ...variant,
+              organizationId,
+              caseId,
+            }))
+          )
+          .onConflictDoUpdate({
+            target: [...variantReingestTarget],
+            set: variantReingestSet,
+          });
       }
       await tx.update(analysisJobs).set({ status: "review_ready", progressPercent: 100, completedAt: new Date() }).where(
         and(eq(analysisJobs.id, jobId), eq(analysisJobs.organizationId, organizationId))
@@ -100,6 +110,11 @@ async function ingestVcfForJob(params: {
         and(eq(cases.id, caseId), eq(cases.organizationId, organizationId))
       );
     });
+    try {
+      await runTriagePass(organizationId, caseId);
+    } catch (error) {
+      console.warn(`[VCF] triage after ingest failed for case ${caseId}:`, error);
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : "VCF ingestion failed";
     await db.update(analysisJobs).set({ status: "failed", errorMessage: message, completedAt: new Date() }).where(
@@ -228,8 +243,8 @@ export const casesRouter = router({
           consentSecondaryFindings: input.consentSecondaryFindings,
           consentDataUse: input.consentDataUse,
           createdBy: ctx.user.id,
-        });
-        const id = Number(result[0].insertId);
+        }).returning({ id: cases.id });
+        const id = result[0].id;
         const sampleResult = await tx.insert(samples).values(
           input.samples.map(sample => ({
             organizationId: input.organizationId,
@@ -240,10 +255,8 @@ export const casesRouter = router({
             tumorContentPercent:
               sample.tumorContentPercent === undefined ? null : String(sample.tumorContentPercent),
           }))
-        );
-        const firstSampleId = Number(sampleResult[0].insertId);
-        const ids = input.samples.map((_, index) => firstSampleId + index);
-        return { caseId: id, sampleIds: ids };
+        ).returning({ id: samples.id });
+        return { caseId: id, sampleIds: sampleResult.map(row => row.id) };
       });
       await writeAuditEvent({
         organizationId: input.organizationId,
@@ -327,8 +340,8 @@ export const casesRouter = router({
         byteSize: input.byteSize,
         sha256: input.sha256.toLowerCase(),
         uploadedBy: ctx.user.id,
-      });
-      const id = Number(result[0].insertId);
+      }).returning({ id: caseFiles.id });
+      const id = result[0].id;
       await writeAuditEvent({
         organizationId: input.organizationId,
         actorUserId: ctx.user.id,
@@ -384,8 +397,8 @@ export const casesRouter = router({
           idempotencyKey,
           manifest,
           createdBy: ctx.user.id,
-        });
-        const id = Number(result[0].insertId);
+        }).returning({ id: analysisJobs.id });
+        const id = result[0].id;
         await tx.insert(analysisEvents).values({
           organizationId: input.organizationId,
           jobId: id,
@@ -395,8 +408,8 @@ export const casesRouter = router({
         });
         const cas = await tx.update(cases).set({ status: "queued" }).where(
           and(eq(cases.id, input.caseId), eq(cases.organizationId, input.organizationId), eq(cases.status, "draft"))
-        );
-        if (Number(cas[0].affectedRows) !== 1) {
+        ).returning({ id: cases.id });
+        if (cas.length !== 1) {
           throw new TRPCError({ code: "CONFLICT", message: "Case is already submitted" });
         }
         return id;

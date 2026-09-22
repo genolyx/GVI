@@ -9,10 +9,10 @@ export function MetricCard({ label, value, caption, icon: Icon, tone = "teal" }:
   tone?: "teal" | "violet" | "amber" | "slate";
 }) {
   const tones = {
-    teal: "bg-teal-50 text-teal-700 ring-teal-100",
-    violet: "bg-violet-50 text-violet-700 ring-violet-100",
-    amber: "bg-amber-50 text-amber-700 ring-amber-100",
-    slate: "bg-slate-100 text-slate-700 ring-slate-200",
+    teal: "bg-primary/10 text-primary ring-primary/20",
+    violet: "bg-primary/8 text-[#8fa3b8] ring-primary/15",
+    amber: "bg-[#3297ac]/15 text-[#3db0c7] ring-[#3297ac]/25",
+    slate: "bg-[#111f2e] text-[#8fa3b8] ring-[rgb(61_176_199_/_14%)]",
   };
   return (
     <article className="clinical-card p-5">

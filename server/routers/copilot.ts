@@ -149,8 +149,8 @@ export const copilotRouter = router({
           title: input.question.slice(0, 120),
           modelId,
           createdBy: ctx.user.id,
-        });
-        conversationId = Number(result[0].insertId);
+        }).returning({ id: aiConversations.id });
+        conversationId = result[0].id;
       }
 
       const previous = await db

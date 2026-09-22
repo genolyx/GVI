@@ -64,8 +64,8 @@ export const organizationsRouter = router({
             slug: input.slug,
             dataRegion: input.dataRegion,
             createdBy: ctx.user.id,
-          });
-          const organizationId = Number(insertResult[0].insertId);
+          }).returning({ id: organizations.id });
+          const organizationId = insertResult[0].id;
           await tx.insert(organizationMembers).values({
             organizationId,
             userId: ctx.user.id,
@@ -79,7 +79,7 @@ export const organizationsRouter = router({
         const causeMessage =
           error instanceof Error && error.cause instanceof Error ? error.cause.message : "";
         const combined = `${message}\n${causeMessage}`;
-        // MySQL duplicate key on organizations.slug unique index (ER_DUP_ENTRY)
+        // Postgres unique violation on organizations.slug (SQLSTATE 23505)
         if (
           combined.includes("organizations_slug_uq") ||
           combined.includes("Duplicate entry") ||
@@ -182,8 +182,8 @@ export const organizationsRouter = router({
         tokenHash,
         expiresAt,
         createdBy: ctx.user.id,
-      });
-      const id = Number(insertResult[0].insertId);
+      }).returning({ id: organizationInvites.id });
+      const id = insertResult[0].id;
       await writeAuditEvent({
         organizationId: input.organizationId,
         actorUserId: ctx.user.id,

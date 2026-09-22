@@ -24,4 +24,24 @@ export const ENV = {
    * Comma-separated emails; matched case-insensitively on login.
    */
   platformAdminEmails: parseEmailAllowlist(process.env.PLATFORM_ADMIN_EMAILS),
+  /** Shared secret presented by curation engine workers on /api/engine/v1/*. */
+  engineWorkerToken: process.env.ENGINE_WORKER_TOKEN ?? "",
+  /**
+   * How long a claimed curation run stays leased. A worker heartbeats to extend it;
+   * once it lapses the reaper requeues the run, so this bounds how long a crashed
+   * worker can strand a variant.
+   */
+  engineLeaseSeconds: parsePositiveInt(process.env.ENGINE_LEASE_SECONDS, 900),
+  /**
+   * OncoKB API bearer token (academic registration at oncokb.org/api-access).
+   * Without it, somatic refresh still runs CIViC and records `oncokb` as disabled.
+   */
+  oncokbToken: process.env.ONCOKB_TOKEN ?? "",
+  /** Optional CIViC GraphQL key — lifts the anonymous 3 req/s cap. */
+  civicApiKey: process.env.CIVIC_API_KEY ?? "",
 };
+
+function parsePositiveInt(raw: string | undefined, fallback: number): number {
+  const parsed = Number.parseInt(raw ?? "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
