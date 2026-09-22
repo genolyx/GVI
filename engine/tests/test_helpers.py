@@ -199,10 +199,12 @@ def test_clinvar_variation_name_score_ddx3x_repeat_notation_via_protein():
     assert score == 85
 
 
-def test_pick_clinvar_from_esearch_ddx3x_inframe_del():
+def test_pick_clinvar_from_esearch_ddx3x_inframe_del(monkeypatch, tmp_path):
     from vc_engine.analyze import _pick_clinvar_from_esearch
     import requests
 
+    monkeypatch.setenv("VC_DATA_ROOT", str(tmp_path))
+    (tmp_path / "clinvar-source").write_text("ncbi\n")
     uid, sig, sc = _pick_clinvar_from_esearch(
         requests.Session(),
         "DDX3X",
@@ -1635,8 +1637,10 @@ def test_exonic_dup_not_deep_intronic_or_pre_atg():
     )
 
 
-def test_slc16a2_clinvar_and_hgvs_derive():
+def test_slc16a2_clinvar_and_hgvs_derive(monkeypatch, tmp_path):
     import requests
+    monkeypatch.setenv("VC_DATA_ROOT", str(tmp_path))
+    (tmp_path / "clinvar-source").write_text("ncbi\n")
     from vc_engine.analyze import (
         _clinvar_variation_name_score,
         _ensure_derived_hgvs_p_for_inframe,

@@ -20,6 +20,7 @@ from flask import Blueprint, request, jsonify
 from flask import jsonify, request
 from google.genai import types
 from vc_engine.clinvar import _clinvar_cdot_label_from_esummary, _clinvar_coding_hgvs_from_hit, _clinvar_display_sig_from_rcv, _clinvar_geneinfo_matches, _clinvar_genomic_hgvs_from_hit, _clinvar_name_change_class, _clinvar_plp_sig_for_deleted_exon, _clinvar_rcv_any_pathogenic_or_likely, _clinvar_rcv_list_from_hit, _clinvar_sig_from_esummary_obj, _clinvar_variant_id_from_hit, _clinvar_variation_uid_for_pubmed_elink, _fetch_clinvar_aliases, _fetch_clinvar_esummary_map, _fetch_myvariant_clinvar_variant_hit, clinvar_portal_url
+from vc_engine.gnomad_local import apply_local_gnomad, local_gnomad_configured
 from vc_engine.hgmd import _hgmd_ordered_candidate_keys, _merge_hgmd_downstream_hits, _merge_hgmd_skipped_exon_hits, _merge_hgmd_upstream_hits
 from vc_engine.lit_index import search_lit_index
 from vc_engine.noncoding import (
@@ -85,6 +86,15 @@ analyze_bp = Blueprint("analyze", __name__)
 
 # Injected by the app_v11 mount after the engine data is loaded.
 GLOBAL_VCF = None
+
+
+def _clinvar_vcf():
+    """Local ClinVar handle when Settings selected the file. None in NCBI mode."""
+    from vc_engine.source_mode import clinvar_file_active
+
+    if not clinvar_file_active():
+        return None
+    return GLOBAL_VCF
 GLOBAL_HGMD = None
 GLOBAL_HGMD_PMIDS = None
 http_session = None
@@ -258,6 +268,10 @@ def _merge_refseq_synonyms_from_clinvar_myvariant_hit(hit, parsed_data):
 
 def _enrich_refseq_synonyms_clinvar_vid_lookup(http_session, variant_id, parsed_data):
     """Fetch full clinvar.hgvs.coding list by ClinVar variation ID when the query hit was sparse."""
+    from vc_engine.source_mode import clinvar_remote_active
+
+    if not clinvar_remote_active():
+        return
     vid = str(variant_id or "").strip()
     if not vid.isdigit():
         return
@@ -456,10 +470,10 @@ def _run_skipped_exon_clinvar_plp_scan(parsed_data, effective_gene):
         vcf_chrom = str(del_c["chr"]).replace("chr", "")
         g0, g1 = _ensembl_inclusive_to_pysam_fetch_interval(del_c["start"], del_c["end"])
         parsed_data["skipped_exon_plp_checked"] = True
-        if GLOBAL_VCF is not None and g0 is not None and g1 is not None:
+        if _clinvar_vcf() is not None and g0 is not None and g1 is not None:
             skipped_hits = []
             skipped_seen = set()
-            for rec in GLOBAL_VCF.fetch(vcf_chrom, g0, g1):
+            for rec in _clinvar_vcf().fetch(vcf_chrom, g0, g1):
                 if "CLNSIG" not in rec.info:
                     continue
                 sig = rec.info.get("CLNSIG", [""])[0].lower()
@@ -2174,7 +2188,8 @@ def _resolve_clinvar_from_genomic_locus(
     HGVS c. strings alone are unreliable (ClinVar may use c.391del vs lab c.382del); anchor on
     coordinates + transcript/protein concordance instead of MyVariant text search.
     """
-    if GLOBAL_VCF is None:
+    vcf = _clinvar_vcf()
+    if vcf is None:
         return False
     chrom = str(parsed_data.get("grch38_chrom") or "").replace("chr", "").strip()
     start = parsed_data.get("grch38_start")
@@ -2197,7 +2212,7 @@ def _resolve_clinvar_from_genomic_locus(
     candidate_ids = []
     id_to_rec = {}
     try:
-        for rec in GLOBAL_VCF.fetch(str(chrom), fetch_start, fetch_end):
+        for rec in vcf.fetch(str(chrom), fetch_start, fetch_end):
             if not rec.id or str(rec.id) in ("None", "."):
                 continue
             gene_info = rec.info.get("GENEINFO", "")
@@ -2224,7 +2239,10 @@ def _resolve_clinvar_from_genomic_locus(
     if not candidate_ids:
         return False
 
-    summaries = _fetch_clinvar_esummary_map(http_session, candidate_ids[:25])
+    from vc_engine.source_mode import clinvar_remote_active
+
+    remote = clinvar_remote_active()
+    summaries = _fetch_clinvar_esummary_map(http_session, candidate_ids[:25]) if remote else {}
     hgvs_p = parsed_data.get("hgvs_p") or ""
     best_uid = None
     best_score = 0
@@ -2239,7 +2257,10 @@ def _resolve_clinvar_from_genomic_locus(
         score = _clinvar_variation_name_score(
             variation_name, effective_gene, target_transcript, c_dot, hgvs_p=hgvs_p
         )
-        if score < 40:
+        if not remote and rec is not None:
+            # The indexed VCF record is the ClinVar answer; do not require an NCBI title.
+            score = max(score, 100)
+        elif score < 40:
             # Same locus + gene + overlapping indel when user asked for a deletion/frameshift
             q_class = _c_dot_change_class(_myvariant_c_dot_tail_norm(c_dot))
             if q_class in ("del", "dup", "ins", "indel") and rec is not None:
@@ -2279,6 +2300,10 @@ def _resolve_clinvar_from_genomic_locus(
 
 def _pick_clinvar_from_esearch(http_session, effective_gene, c_dot, target_transcript=None, hgvs_p=None):
     """ClinVar ESearch with esummary disambiguation — never trust idlist[0] alone."""
+    from vc_engine.source_mode import clinvar_remote_active
+
+    if not clinvar_remote_active():
+        return None, None, 0
     try:
         search_terms = [f'{effective_gene}[gene] AND "{c_dot}"']
         nm_base = (target_transcript or "").split(".")[0].upper()
@@ -4362,27 +4387,29 @@ def analyze_variant():
                 # Clean up if dbnsfp gives "ENSPXXXX:p.Arg123"
                 parsed_data['hgvs_p'] = parsed_data['hgvs_p'].split(':')[1]
         
-            # Get gnomAD AF (exomes first; genomes matter for snRNA / noncoding loci)
-            if 'gnomad_exomes' in hit and 'af' in hit['gnomad_exomes']:
-                try:
-                    parsed_data['gnomad_af'] = hit['gnomad_exomes']['af']['af']
-                    parsed_data['gnomad_af_source'] = 'exomes'
-                except Exception:
-                    pass
-            if (parsed_data.get('gnomad_af') in (None, 0, 0.0)) and 'gnomad_genomes' in hit:
-                try:
-                    gaf = hit['gnomad_genomes'].get('af')
-                    if isinstance(gaf, dict):
-                        parsed_data['gnomad_af'] = gaf.get('af') or gaf.get('AF') or 0
-                    elif gaf is not None:
-                        parsed_data['gnomad_af'] = float(gaf)
-                    parsed_data['gnomad_af_source'] = 'genomes'
-                except Exception:
-                    pass
-            parsed_data['gnomad_checked'] = True
-            if parsed_data.get('gnomad_af') is None:
-                parsed_data['gnomad_af'] = 0
-                parsed_data['gnomad_af_source'] = 'absent'
+            # Get gnomAD AF. A configured local sites VCF replaces MyVariant entirely.
+            if not local_gnomad_configured():
+                # Exomes first; genomes matter for snRNA / noncoding loci.
+                if 'gnomad_exomes' in hit and 'af' in hit['gnomad_exomes']:
+                    try:
+                        parsed_data['gnomad_af'] = hit['gnomad_exomes']['af']['af']
+                        parsed_data['gnomad_af_source'] = 'exomes'
+                    except Exception:
+                        pass
+                if (parsed_data.get('gnomad_af') in (None, 0, 0.0)) and 'gnomad_genomes' in hit:
+                    try:
+                        gaf = hit['gnomad_genomes'].get('af')
+                        if isinstance(gaf, dict):
+                            parsed_data['gnomad_af'] = gaf.get('af') or gaf.get('AF') or 0
+                        elif gaf is not None:
+                            parsed_data['gnomad_af'] = float(gaf)
+                        parsed_data['gnomad_af_source'] = 'genomes'
+                    except Exception:
+                        pass
+                parsed_data['gnomad_checked'] = True
+                if parsed_data.get('gnomad_af') is None:
+                    parsed_data['gnomad_af'] = 0
+                    parsed_data['gnomad_af_source'] = 'absent'
             if 'dbnsfp' in hit and 'uniprot' in hit['dbnsfp']:
                 uniprot_acc = _pick_dbnsfp_uniprot_accession(
                     hit['dbnsfp']['uniprot'], effective_gene
@@ -5174,8 +5201,8 @@ def analyze_variant():
                         # Native Local ClinVar Integration (Thread-Local Scope)
                             try:
                                 vcf_chrom = chrom.replace('chr', '') # NCBI VCFs use raw numbers '1', '2', 'X' instead of 'chr1'
-                                if GLOBAL_VCF is not None:
-                                    for rec in GLOBAL_VCF.fetch(vcf_chrom, int(pos) - 1, int(pos)):
+                                if _clinvar_vcf() is not None:
+                                    for rec in _clinvar_vcf().fetch(vcf_chrom, int(pos) - 1, int(pos)):
                                         if rec.ref == ref and alt in [str(a) for a in rec.alts]:
                                                 if 'CLNSIG' in rec.info:
                                                     sig = rec.info.get('CLNSIG', [''])[0]
@@ -6116,7 +6143,9 @@ def analyze_variant():
         except Exception as _p_up_err:
             print(f"[hgvs_p] named-source upgrade failed: {_p_up_err}")
 
-        if parsed_data.get('clinvar_rcv') and not parsed_data.get('legacy_exon_label'):
+        from vc_engine.source_mode import clinvar_remote_active as _clinvar_remote
+
+        if _clinvar_remote() and parsed_data.get('clinvar_rcv') and not parsed_data.get('legacy_exon_label'):
             try:
                 rcv_uid = str(parsed_data.get('clinvar_rcv') or '').strip()
                 sum_url = (
@@ -6136,7 +6165,7 @@ def analyze_variant():
                 print(f"ClinVar legacy alias fetch error: {e_legacy}")
 
         # Always try to resolve legacy IVS / exon aliases (independent of rescue hook)
-        if parsed_data.get('clinvar_rcv') and not parsed_data.get('legacy_exon_label'):
+        if _clinvar_remote() and parsed_data.get('clinvar_rcv') and not parsed_data.get('legacy_exon_label'):
             try:
                 legacy_uid = _clinvar_variation_uid_for_pubmed_elink(
                     effective_gene, c_dot, str(parsed_data.get('clinvar_rcv'))
@@ -6879,20 +6908,20 @@ def analyze_variant():
         combined_hits = []
         hit_ids_seen = set()
 
-        if g_chrom and g_start and g_end and GLOBAL_VCF:
+        if g_chrom and g_start and g_end and _clinvar_vcf():
             all_vids = []
             try:
                 # Provide a 15-bp genomic buffer to mathematically capture ClinVar INDELs that are natively left-aligned
                 # along homopolymer arrays (e.g. c.2230del physically occupying position 11123260 instead of 11123263)
                 fetch_start = max(0, int(g_start) - 15)
                 fetch_end = int(g_end) + 15
-                for rec in GLOBAL_VCF.fetch(str(g_chrom), fetch_start, fetch_end):
+                for rec in _clinvar_vcf().fetch(str(g_chrom), fetch_start, fetch_end):
                     vid = str(rec.id)
                     if vid != "None" and vid != str(parsed_data.get('clinvar_rcv', '')):
                         if vid not in all_vids:
                             all_vids.append(vid)
                             
-                if all_vids:
+                if all_vids and _clinvar_remote():
                     target_vids = all_vids[:80] # Protect URL length limits
                     q_str = " OR ".join([f"clinvar.variant_id:{v}" for v in target_vids])
                     alt_url = (
@@ -6911,7 +6940,7 @@ def analyze_variant():
                 print(f"Error fetching Pysam-to-MyVariant tandem logic: {e}")
 
         # Fallback: local ClinVar VCF missing or returned no rows — same cDNA locus (other alleles) via MyVariant
-        if pos_match and effective_gene:
+        if _clinvar_remote() and pos_match and effective_gene:
             cpos_digits = pos_match.group(1).split('_')[0].split('+')[0].split('-')[0]
             if cpos_digits.isdigit():
                 try:
@@ -7099,6 +7128,8 @@ def analyze_variant():
         parsed_data['c_allele_search_link'] = f"https://www.ncbi.nlm.nih.gov/clinvar/?term={urllib.parse.quote(c_search_term)}" if c_search_term else ""
         parsed_data['p_allele_search_link'] = f"https://www.ncbi.nlm.nih.gov/clinvar/?term={urllib.parse.quote(p_search_term)}" if p_search_term else parsed_data['c_allele_search_link']
 
+        apply_local_gnomad(parsed_data)
+
         if noncoding_track:
             try:
                 apply_noncoding_curation_pack(
@@ -7106,7 +7137,7 @@ def analyze_variant():
                     gene=effective_gene,
                     c_dot=c_dot,
                     transcript=target_transcript or "",
-                    global_vcf=GLOBAL_VCF,
+                    global_vcf=_clinvar_vcf(),
                 )
             except Exception as _nc_err:
                 print(f"Noncoding curation pack error: {_nc_err}")
@@ -7611,6 +7642,7 @@ def analyze_variant():
         except Exception as e:
             print(f"Logic Builder Error: {e}")
 
+        apply_local_gnomad(parsed_data)
         results_custom = apply_rubric(parsed_data)
         results_acmg = apply_acmg(parsed_data)
         

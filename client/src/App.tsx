@@ -19,6 +19,7 @@ import OrganizationPage from "./pages/Organization";
 import InviteAcceptPage from "./pages/InviteAccept";
 import AuditLogPage from "./pages/AuditLog";
 import SecurityConsolePage from "./pages/SecurityConsole";
+import SettingsPage from "./pages/Settings";
 
 function Router() {
   // make sure to consider if you need authentication for certain routes
@@ -37,6 +38,7 @@ function Router() {
       <Route path={"/organization"} component={OrganizationPage} />
       <Route path={"/audit"} component={AuditLogPage} />
       <Route path={"/security"} component={SecurityConsolePage} />
+      <Route path={"/settings"} component={SettingsPage} />
       <Route path={"/404"} component={NotFound} />
       {/* Final fallback route */}
       <Route component={NotFound} />

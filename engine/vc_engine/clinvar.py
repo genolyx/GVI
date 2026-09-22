@@ -247,6 +247,10 @@ def _fetch_clinvar_esummary_map(http_session, uid_list):
     burst of pipeline calls can return HTTP 429); a silent skip here would otherwise drop
     the c./p. labels for skipped-exon and region hits.
     """
+    from vc_engine.source_mode import clinvar_remote_active
+
+    if not clinvar_remote_active():
+        return {}
     import time
 
     out = {}
@@ -283,6 +287,10 @@ def _fetch_clinvar_esummary_map(http_session, uid_list):
 
 def _fetch_myvariant_clinvar_variant_hit(http_session, variant_id):
     """Single ClinVar variation record (the variant being curated)."""
+    from vc_engine.source_mode import clinvar_remote_active
+
+    if not clinvar_remote_active():
+        return None
     vid = str(variant_id or "").strip()
     if not vid or not vid.isdigit():
         return None
@@ -328,6 +336,10 @@ def _clinvar_synthetic_hit_from_esummary(http_session, variant_id):
 
 def _fetch_clinvar_aliases(http_session, clinvar_uid):
     """Return list of aliases from ClinVar esummary variation_set, or None on failure."""
+    from vc_engine.source_mode import clinvar_remote_active
+
+    if not clinvar_remote_active():
+        return None
     if not clinvar_uid:
         return None
     try:

@@ -39,6 +39,7 @@ import {
   LogOut,
   Microscope,
   PanelLeft,
+  Settings,
   ShieldCheck,
   Users,
 } from "lucide-react";
@@ -124,7 +125,13 @@ function LoginPanel({ isDevAuth, isGoogleAuth }: { isDevAuth: boolean; isGoogleA
   );
 }
 
-const menuItems = [
+const menuItems: Array<{
+  icon: typeof LayoutDashboard;
+  label: string;
+  path: string;
+  permission?: string;
+  platformAdmin?: boolean;
+}> = [
   { icon: LayoutDashboard, label: "Dashboard", path: "/", permission: "case:read" },
   { icon: ClipboardList, label: "Cases", path: "/cases", permission: "case:read" },
   { icon: FlaskConical, label: "Variant Workbench", path: "/workbench", permission: "variant:read" },
@@ -133,6 +140,7 @@ const menuItems = [
   { icon: Activity, label: "Audit Log", path: "/audit", permission: "audit:view" },
   { icon: ShieldCheck, label: "Security", path: "/security", permission: "security:view" },
   { icon: Users, label: "Organization", path: "/organization", permission: "member:manage" },
+  { icon: Settings, label: "Settings", path: "/settings", platformAdmin: true },
 ];
 
 const SIDEBAR_WIDTH_KEY = "gvi-sidebar-width";
@@ -174,7 +182,7 @@ function DashboardLayoutContent({ children, setSidebarWidth }: { children: React
   const [isResizing, setIsResizing] = useState(false);
   const sidebarRef = useRef<HTMLDivElement>(null);
   const { organizations, activeOrganization, setActiveOrganizationId, hasPermission, isLoading: organizationsLoading, organizationError, refetchOrganizations } = useOrganization();
-  const visibleMenuItems = menuItems.filter(item => hasPermission(item.permission));
+  const visibleMenuItems = menuItems.filter(item => item.platformAdmin ? user?.role === "admin" : hasPermission(item.permission || ""));
   const activeMenuItem = menuItems.find(item => item.path === "/" ? location === "/" : location.startsWith(item.path));
   const ActiveIcon = activeMenuItem?.icon;
 
