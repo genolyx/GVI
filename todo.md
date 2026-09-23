@@ -49,7 +49,7 @@
 - [x] Explicitly expose model/messageQuery error and retry UI in the AI Copilot tab of the Workbench.
 - [x] Replace remaining empty states in Reports and Cases with the common StatePanel.
 - [x] Expose organization list query failure in the global layout as a recoverable StatePanel.
-- [x] Add per-operation retry actions for refresh/saveInterpretation/saveCriterion/approve/ask failures in the Workbench.
+- [x] Add per-operation retry actions for refresh/ßsaveInterpretation/saveCriterion/approve/ask failures in the Workbench.
 - [x] Re-verify focus, reduced-motion, and keyboard interaction application in index.css and major screens in code and fill gaps.
 - [x] Audit loading/empty/error/forbidden/keyboard/focus coverage per file for all routes and major/secondary screens and fill gaps.
 - [x] Apply an explicit read-permission-insufficient StatePanel on direct URL access to Cases, CaseDetail, Workbench, Reports, and ReportEditor.
@@ -61,3 +61,4 @@
 - [x] Update `gatewayAuth.test.ts` to inject its own test token without requiring an external `GVI_GATEWAY_TOKEN` and restore the environment on exit.
 - [x] Re-run TypeScript check, 22 tests, and production build in a process without `GVI_GATEWAY_TOKEN`.
 - [x] Document the local-environment-independent verification result and regenerate the revised source ZIP, SHA-256 checksum, and checkpoint.
+-  [x] Test
