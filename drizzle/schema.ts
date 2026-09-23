@@ -35,6 +35,11 @@ export type CurationRunInput = {
   } | null;
   liftError?: string | null;
   runLiterature: boolean;
+  /** Sample / DNA id from the workbench intake form. */
+  labId?: string | null;
+  /** Free-text case identifier, not the numeric `cases.id`. */
+  externalCaseId?: string | null;
+  pmids?: string | null;
 };
 
 /** Failure recorded on `curation_runs.error`. */
@@ -586,6 +591,33 @@ export const variants = pgTable(
   ]
 );
 
+// ── Curation batches (SAM-VC workbench) ────────────────────────────────────────
+
+/**
+ * A named set of ad-hoc curation runs.
+ *
+ * SAM-VC's workbench is organized as batches: a curator adds gene + HGVS rows,
+ * runs them, and reviews one entry at a time while stepping through the rest.
+ * "Single variants" is the shared batch those one-off runs land in.
+ */
+export const curationBatches = pgTable(
+  "curation_batches",
+  {
+    id: surrogateId(),
+    organizationId: integer("organizationId")
+      .notNull()
+      .references(() => organizations.id),
+    name: varchar("name", { length: 160 }).notNull(),
+    createdBy: integer("createdBy").references(() => users.id),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  table => [
+    unique("curation_batches_id_org_uq").on(table.id, table.organizationId),
+    unique("curation_batches_org_name_uq").on(table.organizationId, table.name),
+  ]
+);
+
 // ── Curation runs (SAM-VC engine) ──────────────────────────────────────────────
 
 /**
@@ -608,6 +640,11 @@ export const curationRuns = pgTable(
     caseId: integer("caseId"),
     /** Null for ad-hoc curation of a variant that was never ingested. */
     variantId: integer("variantId"),
+    /** Workbench batch this run belongs to. Null for case-bound triage runs. */
+    batchId: integer("batchId"),
+    /** Curator-saved institutional call. Independent of the engine ACMG label. */
+    institutionalLabel: varchar("institutionalLabel", { length: 80 }),
+    institutionalClass: varchar("institutionalClass", { length: 16 }),
     status: curationRunStatusEnum("status").default("queued").notNull(),
     /** Higher runs first. Interactive requests outrank bulk triage batches. */
     priority: integer("priority").default(0).notNull(),
@@ -655,6 +692,7 @@ export const curationRuns = pgTable(
     index("curation_runs_org_status_idx").on(table.organizationId, table.status, table.queuedAt),
     index("curation_runs_variant_idx").on(table.organizationId, table.variantId),
     index("curation_runs_case_idx").on(table.organizationId, table.caseId),
+    index("curation_runs_batch_idx").on(table.organizationId, table.batchId),
     // One variant cannot sit in the queue twice. Ad-hoc runs have a null
     // variantId and Postgres treats those as distinct, so they are unaffected.
     uniqueIndex("curation_runs_active_variant_uq")
@@ -670,6 +708,11 @@ export const curationRuns = pgTable(
       name: "curation_runs_variant_org_fk",
       columns: [table.variantId, table.organizationId],
       foreignColumns: [variants.id, variants.organizationId],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "curation_runs_batch_org_fk",
+      columns: [table.batchId, table.organizationId],
+      foreignColumns: [curationBatches.id, curationBatches.organizationId],
     }).onDelete("cascade"),
   ]
 );

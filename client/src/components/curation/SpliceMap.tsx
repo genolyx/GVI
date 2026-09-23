@@ -807,7 +807,7 @@ function SpliceMapLegend({ spliceViz }: { spliceViz: SpliceViz }) {
         </p>
         <p>
           <span className="font-semibold text-amber-600">◆</span> marks the variant locus
-          (schematic, from HGVS c.). A <span className="font-semibold text-rose-600">striped exon</span>{" "}
+          (schematic, from HGVSc). A <span className="font-semibold text-rose-600">striped exon</span>{" "}
           is absent from that product&apos;s mRNA. A{" "}
           <span className="font-semibold text-emerald-600">dashed green box</span> is an intronic
           pseudo-exon retained between the labelled GT/AG sites.

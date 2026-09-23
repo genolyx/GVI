@@ -35,6 +35,7 @@ export type EnqueueCurationRun = {
   input: CurationRunInput;
   priority?: number;
   requestedBy?: number | null;
+  batchId?: number | null;
 };
 
 /**
@@ -78,6 +79,7 @@ export async function enqueueCurationRun(run: EnqueueCurationRun): Promise<{ id:
       organizationId: run.organizationId,
       caseId: run.caseId ?? null,
       variantId: run.variantId ?? null,
+      batchId: run.batchId ?? null,
       input: run.input,
       priority: run.priority ?? 0,
       requestedBy: run.requestedBy ?? null,
@@ -283,7 +285,7 @@ export async function buildCurationInputForVariant(
   if (!variant.gene || !variant.hgvsC) {
     throw new TRPCError({
       code: "PRECONDITION_FAILED",
-      message: "Curation needs a gene symbol and HGVS c. notation on the variant.",
+      message: "Curation needs a gene symbol and HGVSc on the variant.",
     });
   }
   assertCurationSupported(variant.referenceBuild);

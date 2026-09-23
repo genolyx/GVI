@@ -50,6 +50,13 @@
       "when": 1790032871488,
       "tag": "0006_curation_run_set_null_column",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1790100000000,
+      "tag": "0007_curation_batches",
+      "breakpoints": true
     }
   ]
 }

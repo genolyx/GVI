@@ -1,0 +1,566 @@
+/* Subset of auto_classifier_v8.html styles for saved-run review */
+.banner { padding: 10px 14px; border-radius: 8px; margin-top: 12px; font-size: 0.9rem; }
+.banner.info { background: rgba(59, 130, 246, 0.15); border: 1px solid rgba(59, 130, 246, 0.35); }
+.banner.error { background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.35); color: #fecaca; }
+.banner.warn { background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.35); color: #fde68a; }
+:root {
+  --primary: #3b82f6;
+  --card-bg: rgba(255, 255, 255, 0.03);
+  --card-border: rgba(255, 255, 255, 0.08);
+  --text-main: #f8fafc;
+  --text-muted: #94a3b8;
+  --line: rgba(255, 255, 255, 0.1);
+}
+/* Review uses full classifier width (wb-main is 1200px by default). */
+body.wb-review-page .wb-main {
+  max-width: min(1420px, 96vw);
+}
+.classifier-review-shell { max-width: min(1420px, 96vw); margin: 0 auto; width: 100%; }
+.classifier-review-shell .card {
+  background: var(--card-bg);
+  padding: 28px;
+  border-radius: 16px;
+  border: 1px solid var(--card-border);
+}
+.classifier-review-shell h2 { font-weight: 600; font-size: 20px; color: #e2e8f0; margin: 0 0 12px; }
+.eval-section {
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 12px;
+  padding: 16px 18px;
+  margin-bottom: 14px;
+}
+.eval-section-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: #64748b;
+}
+.eval-section-title--with-source {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+}
+.eval-section-source {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: none;
+  color: #94a3b8;
+}
+.lit-review-section .lit-review-body {
+  font-size: 0.95em;
+  line-height: 1.6;
+  color: #e2e8f0;
+}
+.lit-review-spec {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 6px;
+  font-size: 12px;
+  color: #94a3b8;
+}
+.lit-review-spec summary {
+  cursor: pointer;
+  color: #c4b5fd;
+  font-weight: 600;
+}
+.lit-review-spec ul {
+  margin: 8px 0 0 18px;
+  padding: 0;
+}
+.lit-review-spec li {
+  margin-bottom: 4px;
+}
+.lit-review-spec-lead,
+.lit-review-spec-note {
+  margin: 8px 0 0;
+  line-height: 1.45;
+}
+.eval-pill-row { display: flex; flex-wrap: wrap; gap: 10px; }
+.eval-spliceai-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+.eval-pangolin-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+}
+.eval-substack { display: flex; flex-direction: column; gap: 12px; margin-top: 4px; }
+.data-pill {
+  display: inline-flex;
+  align-items: center;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 6px 10px;
+  border-radius: 6px;
+  font-size: 13px;
+  margin-right: 8px;
+  margin-bottom: 8px;
+  color: #94a3b8;
+}
+.data-pill strong { color: #e2e8f0; margin-left: 6px; font-weight: 600; }
+.score-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 24px;
+  border-top: 1px solid var(--line);
+  padding-top: 20px;
+  margin-top: 20px;
+}
+.score-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.score-total { font-size: 48px; font-weight: 700; margin-top: 12px; line-height: 1; }
+.classification {
+  display: inline-block;
+  padding: 6px 16px;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 700;
+  margin-top: 12px;
+  text-transform: uppercase;
+}
+.classification.pathogenic { background: rgba(239, 68, 68, 0.15); color: #fca5a5; border: 1px solid rgba(239, 68, 68, 0.3); }
+.classification.benign { background: rgba(56, 189, 248, 0.15); color: #7dd3fc; border: 1px solid rgba(56, 189, 248, 0.3); }
+.classification.vus { background: rgba(248, 113, 113, 0.05); color: #e2e8f0; border: 1px solid rgba(255, 255, 255, 0.15); }
+
+.wb-class-select {
+  width: 100%;
+  max-width: 320px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(0, 0, 0, 0.25);
+  color: #f8fafc;
+  font: inherit;
+}
+.wb-class-save-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+.wb-class-save-status { font-size: 0.82rem; color: #94a3b8; }
+.result-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 12px 0;
+  border-bottom: 1px dashed var(--line);
+  font-size: 14px;
+  color: #cbd5e1;
+}
+.gene-profile-panel {
+  margin-bottom: 20px;
+  background: rgba(59, 130, 246, 0.05);
+  padding: 16px;
+  border-radius: 8px;
+  border: 1px solid rgba(59, 130, 246, 0.2);
+}
+.gene-profile-header {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--primary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+}
+.gene-profile-content {
+  font-size: 14px;
+  line-height: 1.5;
+  color: #e2e8f0;
+}
+.eval-substack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 4px;
+}
+.eval-allele-stack {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  align-items: flex-start;
+  margin-top: 4px;
+}
+.eval-allele-stack > .eval-allele-wide {
+  flex: 1 1 100%;
+  width: 100%;
+  min-width: 0;
+}
+.eval-allele-stack > .eval-allele-wide .data-pill {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+.copy-paste-card { margin-top: 16px; padding: 20px; }
+.copy-paste-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.copy-paste-textarea {
+  width: 100%;
+  min-height: 220px;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #e2e8f0;
+  padding: 14px;
+  border-radius: 6px;
+  font-family: ui-monospace, monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  resize: vertical;
+}
+.eval-section h3.eval-section-title {
+  font-family: inherit;
+  margin: 0 0 12px;
+}
+.eval-section:last-child {
+  margin-bottom: 0;
+}
+#parsedDataPanel {
+  margin-top: 8px;
+}
+#parsedDataContent {
+  display: block;
+}
+
+/* Splice / transcript exon map — must match auto_classifier_v8.html */
+.splice-viz-wrap {
+  width: 100%;
+  box-sizing: border-box;
+}
+.splice-isoform-panel {
+  width: 100%;
+  min-width: 100%;
+  box-sizing: border-box;
+}
+.splice-track-scroll {
+  width: 100%;
+  overflow-x: auto;
+  overflow-y: visible;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: 4px;
+  box-sizing: border-box;
+}
+.splice-reference-track {
+  padding-top: 10px;
+}
+.splice-reference-track-row {
+  align-items: flex-end;
+}
+.splice-map-section {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  gap: 8px;
+  margin-bottom: 16px;
+  box-sizing: border-box;
+}
+.splice-map-section-label {
+  width: 100%;
+  font-size: 0.72rem;
+  color: #cbd5e1;
+  line-height: 1.35;
+}
+.splice-track-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+  width: 100%;
+  box-sizing: border-box;
+}
+.splice-track-row:last-child {
+  margin-bottom: 0;
+}
+.splice-track-tag {
+  flex: 0 0 64px;
+  font-size: 0.58rem;
+  font-weight: 700;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  line-height: 1.2;
+}
+.splice-track-body {
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 0;
+  position: relative;
+  min-height: 38px;
+  box-sizing: border-box;
+}
+.splice-pre-mrna-body {
+  min-height: 38px;
+}
+.splice-skip-arc {
+  display: none;
+}
+
+@media (max-width: 1100px) {
+  .eval-spliceai-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .eval-pangolin-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 520px) {
+  .eval-spliceai-row,
+  .eval-pangolin-row {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 900px) {
+  .eval-spliceai-row, .eval-pangolin-row { grid-template-columns: repeat(2, 1fr); }
+}
+
+/* splice map from auto_classifier_v8 */
+/* Splice exon map — textbook-style pre-mRNA / mRNA tracks */
+.splice-viz-wrap {
+    width: 100%;
+    box-sizing: border-box;
+}
+.splice-isoform-panel {
+    width: 100%;
+    min-width: 100%;
+    box-sizing: border-box;
+}
+.splice-track-scroll {
+    width: 100%;
+    overflow-x: auto;
+    overflow-y: visible;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 4px;
+    box-sizing: border-box;
+}
+.splice-reference-track {
+    padding-top: 10px;
+}
+.splice-reference-track-row {
+    align-items: flex-end;
+}
+.splice-map-section {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    gap: 8px;
+    margin-bottom: 16px;
+    box-sizing: border-box;
+}
+.splice-map-section-label {
+    width: 100%;
+    font-size: 0.72rem;
+    color: #cbd5e1;
+    line-height: 1.35;
+}
+.splice-track-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 6px;
+    width: 100%;
+    box-sizing: border-box;
+}
+.splice-track-row:last-child {
+    margin-bottom: 0;
+}
+.splice-track-tag {
+    flex: 0 0 64px;
+    font-size: 0.58rem;
+    font-weight: 700;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    line-height: 1.2;
+}
+.splice-track-body {
+    flex: 1 1 auto;
+    width: 100%;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 0;
+    position: relative;
+    min-height: 38px;
+    box-sizing: border-box;
+}
+.splice-pre-mrna-body {
+    min-height: 38px;
+}
+.splice-skip-arc {
+    display: none;
+}
+
+
+/* Splice exon map — textbook-style pre-mRNA / mRNA tracks */
+.splice-viz-wrap {
+    width: 100%;
+    box-sizing: border-box;
+}
+.splice-isoform-panel {
+    width: 100%;
+    min-width: 100%;
+    box-sizing: border-box;
+}
+.splice-track-scroll {
+    width: 100%;
+    overflow-x: auto;
+    overflow-y: visible;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 4px;
+    box-sizing: border-box;
+}
+.splice-reference-track {
+    padding-top: 10px;
+}
+.splice-reference-track-row {
+    align-items: flex-end;
+}
+.splice-map-section {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    gap: 8px;
+    margin-bottom: 16px;
+    box-sizing: border-box;
+}
+.splice-map-section-label {
+    width: 100%;
+    font-size: 0.72rem;
+    color: #cbd5e1;
+    line-height: 1.35;
+}
+.splice-track-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 6px;
+    width: 100%;
+    box-sizing: border-box;
+}
+.splice-track-row:last-child {
+    margin-bottom: 0;
+}
+.splice-track-tag {
+    flex: 0 0 64px;
+    font-size: 0.58rem;
+    font-weight: 700;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    line-height: 1.2;
+}
+.splice-track-body {
+    flex: 1 1 auto;
+    width: 100%;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 0;
+    position: relative;
+    min-height: 38px;
+    box-sizing: border-box;
+}
+.splice-pre-mrna-body {
+    min-height: 38px;
+}
+.splice-skip-arc {
+    display: none;
+}
+
+
+/* Splice exon map — textbook-style pre-mRNA / mRNA tracks */
+.splice-viz-wrap {
+    width: 100%;
+    box-sizing: border-box;
+}
+.splice-isoform-panel {
+    width: 100%;
+    min-width: 100%;
+    box-sizing: border-box;
+}
+.splice-track-scroll {
+    width: 100%;
+    overflow-x: auto;
+    overflow-y: visible;
+    -webkit-overflow-scrolling: touch;
+    padding-bottom: 4px;
+    box-sizing: border-box;
+}
+.splice-reference-track {
+    padding-top: 10px;
+}
+.splice-reference-track-row {
+    align-items: flex-end;
+}
+.splice-map-section {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    gap: 8px;
+    margin-bottom: 16px;
+    box-sizing: border-box;
+}
+.splice-map-section-label {
+    width: 100%;
+    font-size: 0.72rem;
+    color: #cbd5e1;
+    line-height: 1.35;
+}
+.splice-track-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 6px;
+    width: 100%;
+    box-sizing: border-box;
+}
+.splice-track-row:last-child {
+    margin-bottom: 0;
+}
+.splice-track-tag {
+    flex: 0 0 64px;
+    font-size: 0.58rem;
+    font-weight: 700;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    line-height: 1.2;
+}
+.splice-track-body {
+    flex: 1 1 auto;
+    width: 100%;
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 0;
+    position: relative;
+    min-height: 38px;
+    box-sizing: border-box;
+}
+.splice-pre-mrna-body {
+    min-height: 38px;
+}
+.splice-skip-arc {
+    display: none;
+}
+

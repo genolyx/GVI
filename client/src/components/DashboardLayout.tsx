@@ -9,6 +9,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -252,7 +253,6 @@ function DashboardLayoutContent({ children, setSidebarWidth }: { children: React
             </SidebarMenu>
           </SidebarContent>
           <SidebarFooter className="border-t border-sidebar-border/60 p-3">
-            <AppearanceControls collapsed={isCollapsed} />
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button className="flex w-full items-center gap-3 rounded-lg p-1 text-left hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-sidebar-ring">
@@ -260,7 +260,11 @@ function DashboardLayoutContent({ children, setSidebarWidth }: { children: React
                   {!isCollapsed ? <div className="min-w-0 flex-1"><p className="truncate text-xs font-semibold">{user?.name || "-"}</p><div className="mt-1 flex items-center gap-2"><p className="truncate text-[9px] text-sidebar-foreground/50">{user?.email || "-"}</p>{activeOrganization ? <Badge variant="outline" className="h-4 border-sidebar-border px-1 text-[7px] uppercase text-sidebar-foreground/60">{activeOrganization.role}</Badge> : null}</div></div> : null}
                 </button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-52"><DropdownMenuItem onClick={logout} className="text-destructive focus:text-destructive"><LogOut className="mr-2 size-4" />Sign out</DropdownMenuItem></DropdownMenuContent>
+              <DropdownMenuContent align="end" className="w-64">
+                <AppearanceControls />
+                <DropdownMenuSeparator />
+                <DropdownMenuItem onClick={logout} className="text-destructive focus:text-destructive"><LogOut className="mr-2 size-4" />Sign out</DropdownMenuItem>
+              </DropdownMenuContent>
             </DropdownMenu>
           </SidebarFooter>
         </Sidebar>

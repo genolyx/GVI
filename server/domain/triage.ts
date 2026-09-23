@@ -137,7 +137,7 @@ export function triageVariant(variant: TriageInput, context: TriageContext = {})
     return {
       tier: "t2_review",
       score: 0,
-      reasons: ["Missing gene symbol or HGVS c. notation required by the engine"],
+      reasons: ["Missing gene symbol or HGVSc required by the engine"],
     };
   }
 

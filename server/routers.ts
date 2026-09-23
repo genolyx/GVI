@@ -8,6 +8,7 @@ import { casesRouter } from "./routers/cases";
 import { variantsRouter } from "./routers/variants";
 import { copilotRouter } from "./routers/copilot";
 import { curationRouter } from "./routers/curation";
+import { workbenchRouter } from "./routers/workbench";
 import { dashboardRouter } from "./routers/dashboard";
 import { reportsRouter } from "./routers/reports";
 import { referenceDataRouter } from "./routers/referenceData";
@@ -31,6 +32,7 @@ export const appRouter = router({
   variants: variantsRouter,
   copilot: copilotRouter,
   curation: curationRouter,
+  workbench: workbenchRouter,
   dashboard: dashboardRouter,
   reports: reportsRouter,
   referenceData: referenceDataRouter,

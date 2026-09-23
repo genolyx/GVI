@@ -114,7 +114,7 @@ export default function CuratePage() {
       <PageHeader
         eyebrow="Deep curation"
         title="Curate a variant"
-        description="Gene symbol plus HGVS c. notation — no case or VCF required. Results are advisory and are not attached to any report until a clinician says so."
+        description="Gene symbol plus HGVSc — no case or VCF required. Results are advisory and are not attached to any report until a clinician says so."
       />
 
       <div className="grid gap-5 xl:grid-cols-[minmax(340px,.8fr)_minmax(520px,1.2fr)]">
@@ -131,7 +131,7 @@ export default function CuratePage() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="hgvsC">HGVS c.</Label>
+              <Label htmlFor="hgvsC">HGVSc</Label>
               <Input
                 id="hgvsC"
                 value={hgvsC}
@@ -167,7 +167,7 @@ export default function CuratePage() {
             <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2">
               <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-amber-700" />
               <p className="text-[10px] leading-4 text-amber-900">
-                The engine analyses on GRCh38. A GRCh37 case is lifted at enqueue; gene + HGVS c. is transcript-relative and does not change. A run takes a few minutes.
+                The engine analyses on GRCh38. A GRCh37 case is lifted at enqueue; gene + HGVSc is transcript-relative and does not change. A run takes a few minutes.
               </p>
             </div>
 
@@ -214,7 +214,7 @@ export default function CuratePage() {
                 <Microscope className="mx-auto size-7 text-muted-foreground/35" />
                 <p className="mt-3 text-xs font-medium">No ad-hoc curations yet</p>
                 <p className="mt-1 text-[10px] text-muted-foreground">
-                  Submit a gene and HGVS on the left to start one.
+                  Submit a gene and HGVSc on the left to start one.
                 </p>
               </div>
             ) : (
