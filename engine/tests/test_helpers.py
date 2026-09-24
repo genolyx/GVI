@@ -641,14 +641,14 @@ def test_finalize_local_allele_scan_metadata_hgvs_fallback_note():
     sections = []
     _append_allelic_context_logic_sections(sections, parsed)
     assert sections
-    assert sections[0][0] == 'Allelic context'
+    assert sections[0][0] == 'ClinVar'
     body = sections[0][1]
-    assert 'Same nucleotide change:' in body
-    assert 'Same amino acid change: none' in body
+    assert 'Same nucleotide' not in body
+    assert 'Same amino acid change' not in body
     assert 'Nearby residue (±5 aa):' in body
     assert 'p.Cys119Arg' in body
     assert 'Regional hotspot' not in body
-    assert 'Local ClinVar allelic scan' in body
+    assert 'Local ClinVar allelic scan' not in body
 
 
 def test_append_clingen_and_allelic_logic_sections():
@@ -673,10 +673,9 @@ def test_append_clingen_and_allelic_logic_sections():
     _append_allelic_context_logic_sections(sections, pd)
     _finalize_logic_explanation(pd, sections)
     plain = pd.get('logic_explanation_plaintext') or ''
-    assert plain.startswith('ClinGen:')
-    assert 'Same nucleotide change: none' in plain
-    assert 'Same amino acid change: none' in plain
-    assert 'Nearby residue (±5 aa): none' in plain
+    assert plain.startswith('ClinVar')
+    assert 'This variant is not in ClinVar.' in plain
+    assert 'haploinsufficiency score 3' in plain
 
 
 def test_same_aa_line_excludes_regional_hotspot_neighbors():

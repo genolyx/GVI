@@ -91,7 +91,7 @@ function buildSpliceVizHtml(sv, opts) {
         const target = cfg.targetRank;
         const skipRank = cfg.skipRank;
         const skip2Rank = cfg.skip2Rank;
-        let st = 'background:#2f5fbf;border:1px solid #3b82f6;';
+        let st = 'background:#1e7386;border:1px solid #3db0c7;';
         let tip = 'Exon ' + r + ' \u2014 ' + (cfg.lenBp || '') + ' coding bp';
         if ((mode === 'skip' || mode === 'skip-pre') && skipRank != null && r === skipRank) {
             st = 'background:repeating-linear-gradient(135deg,rgba(244,63,94,0.22),rgba(244,63,94,0.22) 4px,rgba(20,20,30,0.4) 4px,rgba(20,20,30,0.4) 8px);border:1px dashed #f43f5e;opacity:0.85;';
@@ -794,7 +794,7 @@ function buildSpliceVizHtml(sv, opts) {
             const e = arr[i];
             const w = (e.w * 100);
             const r = e.rank;
-            let st = 'background: rgba(59,130,246,0.22); border: 1px solid rgba(99, 179, 237, 0.45);';
+            let st = 'background:#1e7386;border:1px solid #3db0c7;';
             let tip = 'Exon ' + r + ' — ' + (e.len_bp || '') + ' coding bp (box width \u221d exon length)';
             if (mode === 'skip2' && secTarget != null && r === secTarget) {
                 st = 'background: repeating-linear-gradient(135deg, rgba(251, 191, 36, 0.22), rgba(251, 191, 36, 0.22) 4px, rgba(20,20,30,0.4) 4px, rgba(20,20,30,0.4) 8px); border: 1px dashed #fbbf24;';
@@ -1071,7 +1071,7 @@ function buildSpliceVizHtml(sv, opts) {
             + '</span>'
         : (target != null ? ' <span style="color:var(--sv-muted,#94a3b8);font-size:0.65rem;font-weight:500;">— E' + target + '</span>' : '');
     let h = '<div class="splice-viz-wrap" style="width:100%; flex-basis: 100%; margin-top: 14px; margin-bottom: 4px; padding: 12px 12px 14px; background: rgba(0,0,0,0.22); border-radius: 8px; border: 1px solid rgba(255,255,255,0.1); box-sizing: border-box;">';
-    h += '<div style="font-size:0.8rem; font-weight: 600; color: #7dd3fc; margin-bottom: 10px;">' + mapTitle + '</div>';
+    h += '<div style="font-size:0.8rem; font-weight: 600; color: #3db0c7; margin-bottom: 10px;">' + mapTitle + '</div>';
     if (showReference) {
         const refArr = (target != null && fp.exons && fp.exons.length) ? fp.exons : exFull;
         const refTb = (target != null && fp.exons && fp.exons.length) ? (fp.trunc_before || 0) : 0;
@@ -1081,7 +1081,7 @@ function buildSpliceVizHtml(sv, opts) {
         const refPtcCap = ptcLocFromSv('reference_ptc_location_kind', 'reference_ptc_location_label', 'reference_ptc_location_detail', (pm.reference && pm.reference.hgvs_p) || '')
             || ptcLocFromLayer(pm.reference, 'coding_exon');
         h += spliceMapSection(
-            '<span style="color:#7dd3fc;">Reference</span>' + refHgvsLbl
+            '<span style="color:#3db0c7;">Reference</span>' + refHgvsLbl
                 + (target != null
                     ? ' <span style="color:#64748b;font-size:0.62rem;">(zoomed \u00b12 exons around E'
                         + (sv.pre_atg_utr_pseudoexon && sv.start_codon_exon_rank ? sv.start_codon_exon_rank : target)

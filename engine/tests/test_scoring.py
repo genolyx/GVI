@@ -78,6 +78,45 @@ def test_apply_acmg_pm2_rare():
     assert "PM2" in codes
 
 
+def test_apply_acmg_start_loss_over_10_percent_is_pvs1_when_mechanism_unknown():
+    out = apply_acmg({
+        "consequence": "start_lost",
+        "disease_mechanism": "Unknown",
+        "nmd_escape_truncation_fraction": 0.154,
+    })
+    codes = {c["code"] for c in out["criteria"]}
+    assert "PVS1" in codes
+
+
+def test_apply_acmg_start_loss_under_10_percent_unknown_mechanism_is_not_pvs1():
+    out = apply_acmg({
+        "consequence": "start_lost",
+        "disease_mechanism": "Unknown",
+        "nmd_escape_truncation_fraction": 0.04,
+    })
+    assert "PVS1" not in {c["code"] for c in out["criteria"]}
+
+
+def test_apply_acmg_gof_blocks_start_loss_pvs1():
+    out = apply_acmg({
+        "consequence": "start_lost",
+        "disease_mechanism": "GOF",
+        "nmd_escape_truncation_fraction": 0.154,
+    })
+    assert "PVS1" not in {c["code"] for c in out["criteria"]}
+
+
+def test_apply_acmg_null_variant_unknown_mechanism_is_pvs1_labeled_unknown():
+    out = apply_acmg({
+        "consequence": "nonsense",
+        "disease_mechanism": "Unknown",
+        "clingen_haplo_score": "N/A",
+    })
+    pvs1 = [c for c in out["criteria"] if c["code"] == "PVS1"]
+    assert len(pvs1) == 1
+    assert "Mechanism unknown" in pvs1[0]["desc"]
+
+
 def test_apply_acmg_pvs1_null_lof_gene():
     out = apply_acmg({"consequence": "nonsense", "disease_mechanism": "LOF"})
     codes = {c["code"] for c in out["criteria"]}
@@ -108,6 +147,18 @@ def test_apply_acmg_no_pm2_when_af_missing():
     assert "PM2" not in {c["code"] for c in out["criteria"]}
 
 
+def test_apply_acmg_bs2_when_gnomad_has_a_homozygote():
+    out = apply_acmg({"consequence": "missense", "gnomad_af": 0.002, "gnomad_nhomalt": 2})
+    match = next(c for c in out["criteria"] if c["code"] == "BS2")
+    assert match["weight"] == "strong"
+    assert "2 homozygous genotypes" in match["desc"]
+
+
+def test_apply_acmg_no_bs2_without_homozygotes():
+    out = apply_acmg({"consequence": "missense", "gnomad_af": 0.002, "gnomad_nhomalt": 0})
+    assert "BS2" not in {c["code"] for c in out["criteria"]}
+
+
 def test_apply_acmg_ba1_at_five_percent():
     out = apply_acmg({"consequence": "missense", "gnomad_af": 0.05})
     assert "BA1" in {c["code"] for c in out["criteria"]}
@@ -133,6 +184,39 @@ def test_apply_acmg_no_bp4_from_spliceai_on_nonsense():
     assert "BP4" not in {c["code"] for c in out["criteria"]}
 
 
+def test_apply_acmg_inframe_deletion_low_spliceai_is_not_bp4():
+    out = apply_acmg({
+        "consequence": "inframe_deletion",
+        "spliceai_ds_ag": 0,
+        "spliceai_ds_al": 0.016,
+        "spliceai_ds_dg": 0.003,
+        "spliceai_ds_dl": 0.002,
+        "cadd_phred": 0,
+        "revel_score": 0,
+        "gnomad_af": 0,
+    })
+    assert "BP4" not in {c["code"] for c in out["criteria"]}
+
+
+def test_apply_acmg_no_bp4_when_spliceai_is_missing():
+    out = apply_acmg({
+        "consequence": "splice_region_variant",
+        "spliceai_ds_ag": 0,
+        "spliceai_ds_al": 0,
+        "spliceai_ds_dg": 0,
+        "spliceai_ds_dl": 0,
+    })
+    assert "BP4" not in {c["code"] for c in out["criteria"]}
+
+
+def test_apply_acmg_splice_region_low_spliceai_is_bp4():
+    out = apply_acmg({
+        "consequence": "splice_region_variant",
+        "spliceai_ds_dl": 0.05,
+    })
+    assert "BP4" in {c["code"] for c in out["criteria"]}
+
+
 def test_apply_acmg_no_pp3_stacked_with_pvs1():
     out = apply_acmg({
         "consequence": "splice_donor_variant",
@@ -154,13 +238,41 @@ def test_apply_acmg_pvs1_from_clingen_hi_when_mechanism_unknown():
     assert "PVS1" in {c["code"] for c in out["criteria"]}
 
 
-def test_apply_acmg_no_pvs1_clingen_hi_30():
+def test_apply_acmg_pvs1_when_clingen_hi_3_overrides_gof():
+    out = apply_acmg({
+        "consequence": "nonsense",
+        "disease_mechanism": "GOF",
+        "clingen_haplo_score": "3",
+    })
+    assert "PVS1" in {c["code"] for c in out["criteria"]}
+
+
+def test_apply_clingen_disease_mechanism_sets_lof_from_score_3():
+    from vc_engine.scoring import apply_clingen_disease_mechanism
+
+    pd = {"disease_mechanism": "Unknown", "clingen_haplo_score": "3"}
+    apply_clingen_disease_mechanism(pd)
+    assert pd["disease_mechanism"] == "LOF"
+    assert pd["disease_mechanism_citation"] == "ClinGen haploinsufficiency score 3"
+
+    emerging = {"disease_mechanism": "Unknown", "clingen_haplo_score": "2"}
+    apply_clingen_disease_mechanism(emerging)
+    assert emerging["disease_mechanism"] == "Unknown"
+
+    recessive = {"disease_mechanism": "Unknown", "clingen_haplo_score": "30"}
+    apply_clingen_disease_mechanism(recessive)
+    assert recessive["disease_mechanism"] == "Unknown"
+
+
+def test_apply_acmg_clingen_hi_30_is_pvs1_with_unknown_mechanism():
     out = apply_acmg({
         "consequence": "nonsense",
         "disease_mechanism": "Unknown",
         "clingen_haplo_score": "30",
     })
-    assert "PVS1" not in {c["code"] for c in out["criteria"]}
+    pvs1 = [c for c in out["criteria"] if c["code"] == "PVS1"]
+    assert len(pvs1) == 1
+    assert "Mechanism unknown" in pvs1[0]["desc"]
 
 
 def test_apply_acmg_inframe_splice_with_plp_is_pvs1_strong():

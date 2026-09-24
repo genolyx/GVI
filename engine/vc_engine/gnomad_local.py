@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 _AF_KEYS = ("AF", "AF_total", "AF_joint", "AF_popmax", "AF_POPMAX")
+_NHOM_KEYS = ("nhomalt", "nhomalt_joint")
 _DEFAULT_GENOMES_GLOB = "gnomad.genomes.v*.sites*.bgz"
 _DEFAULT_EXOMES_GLOB = "gnomad.exomes.v*.sites*.bgz"
 _CHR_IN_NAME = re.compile(r"(?:^|[._])chr([0-9]+|[xyxm])(?:[._]|$)", re.I)
@@ -155,13 +156,17 @@ class LocalGnomad:
         exomes_files = self.indexed_files("exomes")
         genomes_files = self.indexed_files("genomes")
         queried = bool(exomes_files or genomes_files)
+        exomes = self._lookup_one(exomes_files, chrom, pos, ref, alt) if exomes_files else None
+        genomes = self._lookup_one(genomes_files, chrom, pos, ref, alt) if genomes_files else None
         return {
             "queried": queried,
-            "exomes": self._lookup_one(exomes_files, chrom, pos, ref, alt) if exomes_files else None,
-            "genomes": self._lookup_one(genomes_files, chrom, pos, ref, alt) if genomes_files else None,
+            "exomes": None if exomes is None else exomes.get("af"),
+            "genomes": None if genomes is None else genomes.get("af"),
+            "exomes_nhomalt": None if exomes is None else exomes.get("nhomalt"),
+            "genomes_nhomalt": None if genomes is None else genomes.get("nhomalt"),
         }
 
-    def _lookup_one(self, files: list[str], chrom: str, pos: int, ref: str, alt: str) -> Optional[float]:
+    def _lookup_one(self, files: list[str], chrom: str, pos: int, ref: str, alt: str) -> Optional[dict[str, Any]]:
         path = pick_file_for_chrom(files, chrom)
         if not path:
             return None
@@ -177,12 +182,24 @@ class LocalGnomad:
                 alts = [str(item).upper() for item in (record.alts or [])]
                 if alt not in alts:
                     continue
+                af = None
                 for key in _AF_KEYS:
                     if key not in record.info:
                         continue
                     af = af_for_alt(record.info[key], alts, alt)
                     if af is not None:
-                        return af
+                        break
+                nhomalt = None
+                for key in _NHOM_KEYS:
+                    if key not in record.info:
+                        continue
+                    count = af_for_alt(record.info[key], alts, alt)
+                    if count is not None:
+                        nhomalt = int(count)
+                        break
+                if af is None and nhomalt is None:
+                    continue
+                return {"af": af, "nhomalt": nhomalt}
         except Exception as exc:
             print(f"[gnomad-local] lookup failed {chrom}:{pos} {ref}>{alt}: {exc}")
         return None
@@ -261,5 +278,30 @@ def apply_local_gnomad(parsed_data: dict, lookup=None) -> bool:
     else:
         parsed_data["gnomad_af"] = 0
         parsed_data["gnomad_af_source"] = "absent"
+    homozygotes = homozygote_total(found.get("exomes_nhomalt"), found.get("genomes_nhomalt"))
+    if homozygotes is not None:
+        parsed_data["gnomad_nhomalt"] = homozygotes
     parsed_data["gnomad_checked"] = True
     return True
+
+
+def homozygote_count(block: Any) -> Optional[int]:
+    """Read a gnomAD homozygous-genotype count from a MyVariant block."""
+    if not isinstance(block, dict):
+        return None
+    hom = block.get("hom")
+    raw = hom.get("hom") if isinstance(hom, dict) else hom
+    if raw is None:
+        raw = block.get("nhomalt")
+    number = first_numeric(raw)
+    if number is None:
+        return None
+    return int(number)
+
+
+def homozygote_total(*counts: Any) -> Optional[int]:
+    """Highest homozygous count across gnomAD datasets. Missing counts are skipped."""
+    found = [int(count) for count in counts if isinstance(count, (int, float)) and not isinstance(count, bool)]
+    if not found:
+        return None
+    return max(found)

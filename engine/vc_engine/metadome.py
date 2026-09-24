@@ -354,10 +354,7 @@ def append_metadome_logic_section(sections: list, parsed_data: dict) -> None:
     )
     if status == "ready":
         body = parsed_data.get("metadome_summary") or "tolerance retrieved"
-        note = (
-            " Lower sw_dn_ds = more missense-intolerant (complements UniProt domain names)."
-        )
-        sections.append(("MetaDome tolerance", f"{head} {body}.{note}"))
+        sections.append(("MetaDome", f"{body}."))
     elif status == "processing":
         sections.append((
             "MetaDome tolerance",

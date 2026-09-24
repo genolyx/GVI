@@ -49,6 +49,38 @@ body.wb-review-page .wb-main {
   letter-spacing: 0.1em;
   color: #64748b;
 }
+.logic-evidence-lead {
+  margin: 0 0 14px;
+  font-size: 0.98rem;
+  line-height: 1.45;
+  color: var(--sv-ink, #e2e8f0);
+}
+.logic-evidence-item {
+  display: grid;
+  grid-template-columns: 7.5rem minmax(0, 1fr);
+  gap: 8px 14px;
+  padding: 8px 0;
+  border-top: 1px solid var(--line, rgba(255, 255, 255, 0.08));
+}
+.logic-evidence-label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--primary, #3db0c7);
+  padding-top: 2px;
+}
+.logic-evidence-body {
+  font-size: 0.92rem;
+  line-height: 1.5;
+  color: var(--sv-ink, #e2e8f0);
+}
+@media (max-width: 640px) {
+  .logic-evidence-item {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+}
 .eval-section-title--with-source {
   display: flex;
   flex-wrap: wrap;
@@ -654,7 +686,7 @@ html:not(.dark) .samvc-review [style*="#64748b"] {
   color: #3d4f63 !important;
 }
 /* Exon letters and hatch captions sit on dark diagram fills. Keep that ink light. */
-html:not(.dark) .samvc-review .splice-viz-wrap [style*="background:#2f5fbf"] span,
+html:not(.dark) .samvc-review .splice-viz-wrap [style*="background:#1e7386"] span,
 html:not(.dark) .samvc-review .splice-viz-wrap [style*="rgba(20,20,30"] span {
   color: #f8fafc !important;
 }

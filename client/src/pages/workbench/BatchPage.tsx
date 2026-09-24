@@ -149,7 +149,7 @@ export default function BatchPage() {
               </Button>
             ) : null}
             {done[0] ? (
-              <Button className="bg-emerald-600 text-white hover:bg-emerald-700 dark:bg-emerald-600 dark:hover:bg-emerald-500" onClick={() => navigate(`/workbench/batches/${record.id}/review/${done[0]!.id}`)}>Review batch</Button>
+              <Button onClick={() => navigate(`/workbench/batches/${record.id}/review/${done[0]!.id}`)}>Review batch</Button>
             ) : null}
             <Button variant="outline" onClick={() => navigate("/workbench")}>
               <ArrowLeft className="mr-2 size-4" />

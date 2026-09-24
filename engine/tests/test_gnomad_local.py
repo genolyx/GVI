@@ -2,6 +2,8 @@
 from vc_engine.gnomad_local import (
     af_for_alt,
     apply_local_gnomad,
+    homozygote_count,
+    homozygote_total,
     pick_file_for_chrom,
     release_from_names,
 )
@@ -83,6 +85,28 @@ def test_myvariant_mode_leaves_the_local_file_unread(tmp_path, monkeypatch):
     assert apply_local_gnomad(parsed, lookup=lookup) is False
     assert calls["n"] == 0
     assert "gnomad_af" not in parsed
+
+
+def test_homozygote_count_reads_the_myvariant_total():
+    assert homozygote_count({"hom": {"hom": 3, "hom_nfe": 1}}) == 3
+    assert homozygote_total(3, None, 1) == 3
+    assert homozygote_total(None, None) is None
+
+
+def test_apply_keeps_the_higher_homozygote_count(monkeypatch):
+    monkeypatch.setenv("VC_GNOMAD_DIR", "/data/reference/annotation/gnomad")
+    parsed = {"grch38_chrom": "chr22", "grch38_start": 100, "ref": "A", "alt": "G"}
+    apply_local_gnomad(
+        parsed,
+        lookup=lambda *_args: {
+            "queried": True,
+            "exomes": 0.01,
+            "genomes": 0.002,
+            "exomes_nhomalt": 1,
+            "genomes_nhomalt": 4,
+        },
+    )
+    assert parsed["gnomad_nhomalt"] == 4
 
 
 def test_missing_coordinates_do_not_count_as_absent(monkeypatch):

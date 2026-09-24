@@ -110,15 +110,24 @@ def _clingen_haplo_score_int(parsed_data) -> int | None:
 def lof_is_known_mechanism(parsed_data) -> bool:
     """Richards PVS1: null variant in a gene where LOF is a known mechanism.
 
-    Gemini GOF blocks PVS1. Unknown mechanism can still qualify when ClinGen
-    haploinsufficiency is sufficient evidence (score 3).
+    ClinGen haploinsufficiency score 3 is sufficient evidence of loss of
+    function and sets the mechanism, including when a prior call was GOF or
+    Unknown. A gain-of-function call blocks PVS1 only when that score is absent.
     """
+    if _clingen_haplo_score_int(parsed_data) == 3:
+        return True
     mech = _normalize_disease_mechanism(parsed_data.get("disease_mechanism"))
     if mech == "GOF":
         return False
-    if mech in ("LOF", "BOTH"):
-        return True
-    return _clingen_haplo_score_int(parsed_data) == 3
+    return mech in ("LOF", "BOTH")
+
+
+def apply_clingen_disease_mechanism(parsed_data) -> None:
+    """Set disease mechanism from ClinGen haploinsufficiency score 3."""
+    if _clingen_haplo_score_int(parsed_data) != 3:
+        return
+    parsed_data["disease_mechanism"] = "LOF"
+    parsed_data["disease_mechanism_citation"] = "ClinGen haploinsufficiency score 3"
 
 
 def _is_nullish_consequence(consequence: str) -> bool:
@@ -245,8 +254,14 @@ def apply_acmg(parsed_data, splice_points=None, nmd_points=None):
     start_lost_pathogenic = bool(parsed_data.get("start_lost_5_prime_pathogenic", False))
     nmd_pts = nmd_points if nmd_points is not None else parsed_data.get("nmd_points")
 
-    # 1. PVS1 / PVS1_Strong / PM4 — null and canonical splice (ClinGen PVS1 SOP)
-    if _is_nullish_consequence(consequence) and lof_is_known_mechanism(parsed_data):
+    # 1. PVS1 / PVS1_Strong / PM4 — null and canonical splice (ClinGen PVS1 SOP).
+    # The variant rules apply even when the gene is not in ClinGen. That case
+    # is still PVS1, labeled mechanism unknown. A gain-of-function call blocks it.
+    gof_blocks = (
+        _normalize_disease_mechanism(parsed_data.get("disease_mechanism")) == "GOF"
+        and _clingen_haplo_score_int(parsed_data) != 3
+    )
+    if _is_nullish_consequence(consequence) and not gof_blocks:
         if consequence == "start_lost":
             if start_lost_pathogenic:
                 criteria.append({
@@ -338,15 +353,19 @@ def apply_acmg(parsed_data, splice_points=None, nmd_points=None):
                 "weight": "very_strong",
             })
         else:
+            null_desc = f"Null variant ({consequence.replace('_', ' ')})"
+            if lof_is_known_mechanism(parsed_data):
+                null_desc += " in a gene where LOF is a known mechanism of disease"
             criteria.append({
                 "code": "PVS1",
-                "desc": (
-                    f"Null variant ({consequence.replace('_', ' ')}) in a gene where "
-                    "LOF is a known mechanism of disease"
-                ),
+                "desc": null_desc,
                 "type": "pathogenic",
                 "weight": "very_strong",
             })
+        if not lof_is_known_mechanism(parsed_data):
+            for criterion in criteria:
+                if criterion["code"] in ("PVS1", "PVS1_Strong") and "Mechanism unknown" not in criterion["desc"]:
+                    criterion["desc"] = criterion["desc"].rstrip(".") + ". Mechanism unknown."
 
     # 2. PS1 / PM5 — same residue, not merely a nearby/local ClinVar allele
     if "missense" in consequence or "inframe" in consequence:
@@ -409,6 +428,22 @@ def apply_acmg(parsed_data, splice_points=None, nmd_points=None):
                 "type": "pathogenic",
                 "weight": "moderate",
             })
+
+    nhom = parsed_data.get("gnomad_nhomalt")
+    try:
+        nhom = int(nhom) if nhom is not None else None
+    except (TypeError, ValueError):
+        nhom = None
+    if nhom is not None and nhom >= 1:
+        criteria.append({
+            "code": "BS2",
+            "desc": (
+                f"gnomAD reports {nhom} homozygous "
+                f"{'genotype' if nhom == 1 else 'genotypes'}"
+            ),
+            "type": "benign",
+            "weight": "strong",
+        })
 
     # 4. PP3 / BP4 — do not stack with PVS1; do not treat "no splice effect" as
     # benign for missense or truncating variants.
@@ -506,6 +541,12 @@ def apply_acmg(parsed_data, splice_points=None, nmd_points=None):
                     "weight": "supporting",
                 })
         else:
+            # CADD/REVEL of 0 are missing scores, not benign calls. A low SpliceAI
+            # delta is only "no splicing impact" when splicing is the question.
+            # An in-frame protein change (MECP2 c.1366_1368del, SpliceAI 0.016)
+            # does not become BP4 because that score is absent or negligible.
+            splice_question = "splice" in consequence or "intron" in consequence
+            inframe = "inframe" in consequence
             if has_spliceai_path:
                 criteria.append({
                     "code": "PP3",
@@ -513,7 +554,7 @@ def apply_acmg(parsed_data, splice_points=None, nmd_points=None):
                     "type": "pathogenic",
                     "weight": "supporting",
                 })
-            elif has_spliceai_benign:
+            elif has_spliceai_benign and splice_question and not inframe:
                 criteria.append({
                     "code": "BP4",
                     "desc": "SpliceAI computationally predicts no splicing impact",

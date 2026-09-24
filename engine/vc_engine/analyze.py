@@ -20,7 +20,7 @@ from flask import Blueprint, request, jsonify
 from flask import jsonify, request
 from google.genai import types
 from vc_engine.clinvar import _clinvar_cdot_label_from_esummary, _clinvar_coding_hgvs_from_hit, _clinvar_display_sig_from_rcv, _clinvar_geneinfo_matches, _clinvar_genomic_hgvs_from_hit, _clinvar_name_change_class, _clinvar_plp_sig_for_deleted_exon, _clinvar_rcv_any_pathogenic_or_likely, _clinvar_rcv_list_from_hit, _clinvar_sig_from_esummary_obj, _clinvar_variant_id_from_hit, _clinvar_variation_uid_for_pubmed_elink, _fetch_clinvar_aliases, _fetch_clinvar_esummary_map, _fetch_myvariant_clinvar_variant_hit, clinvar_portal_url
-from vc_engine.gnomad_local import apply_local_gnomad, local_gnomad_configured
+from vc_engine.gnomad_local import apply_local_gnomad, homozygote_count, homozygote_total, local_gnomad_configured
 from vc_engine.hgmd import _hgmd_ordered_candidate_keys, _merge_hgmd_downstream_hits, _merge_hgmd_skipped_exon_hits, _merge_hgmd_upstream_hits
 from vc_engine.lit_index import search_lit_index
 from vc_engine.noncoding import (
@@ -50,6 +50,7 @@ from vc_engine.myvariant import (
     _gene_symbol_from_myvariant_hit,
     _pick_best_myvariant_hit,
     _resolve_effective_gene_from_vep_symbols,
+    revel_score_from_dbnsfp,
 )
 from vc_engine.regions import _downstream_plp_anchor_aa, _downstream_plp_hits_markup, _finalize_downstream_plp_scan_metadata, _finalize_plp_region_links, _finalize_skipped_exon_plp_links, _hydrate_skipped_exon_aa_bounds, _hydrate_splice_excised_region, _hydrate_whole_exon_skip_deleted_coords, _needs_downstream_clinvar_plp, _skipped_exon_aa_range_label, _skipped_exon_region_context_html, _splice_deleted_coords_complete, _upstream_plp_hits_markup, _whole_exon_skip_modeled
 from vc_engine.truncation import (
@@ -67,7 +68,7 @@ from vc_engine.truncation import (
     parse_nonsense_stop_aa_from_hgvs,
     start_loss_fraction_from_next_met,
 )
-from vc_engine.scoring import apply_acmg, apply_rubric
+from vc_engine.scoring import apply_acmg, apply_clingen_disease_mechanism, apply_rubric
 from vc_engine.splice import SPLICEAI_RECONCILE_MIN, _append_deep_intronic_splice_logic_sections, _append_nmd_escape_clinical_context, _append_splice_product_logic_sections, _append_splice_support_sections, _append_truncation_nmd_sections, _apply_canonical_splice_hgvs_override, _apply_near_splice_region_context, _apply_exon_skip_truncation_as_primary, _apply_pre_atg_splice_acceptor_context, _build_junction_align_payload, _build_splice_products_panel_html, _build_splice_variant_intro_short, _build_splice_viz_payload, _canonical_splice_junction_from_hgvs, _consequence_is_acceptor_splice, _consequence_is_donor_splice, _deep_intronic_signal_label, _defer_whole_exon_skip_to_deep_intronic, _ensure_cds_seq, _ensure_coding_exons_for_splice_viz, _ensure_protein_length_from_coding_exons, _ensure_splice_secondary_cryptic_gain, _finalize_splice_report_narratives, _format_whole_exon_skip_hgvs_p, _hit_at_user_splice_junction_locus, _hydrate_exon_skip_truncation_metrics, _junction_align_ruler_ticks, _logic_csq_is_splice_context, _logic_lines_block, _mark_oof_exon_skip_nmd_provisional, _logic_section_text_plain, _logic_should_show_deep_intronic_context, _lookup_clinvar_plp_downstream_of_ptc, _met_reinitiation_applies, _missense_same_codon_different_change, _normalize_to_forward_strand, _oofs_exon_skip_ptc_cds_and_cdna, _reconcile_splice_model_precedence, refresh_pre_atg_deep_intronic_readouts, _resolve_cryptic_splice_outcome, _resolve_exon_internal_cryptic_outcome, _resolve_splice_junction_locus, _same_canonical_splice_junction_locus, _select_splice_coding_exon, _set_spliceai_narrative_sentence, _should_show_spliceai_narrative_in_logic, _splice_cdna_anchor_from_hgvs, _splice_variant_intro_is_complete, _spliceai_exon_skip_takes_precedence_over_weak_cryptic, _refresh_secondary_gain_at_spliceai_dp, _spliceai_scores_4, _spliceai_secondary_acceptor_parallel_exon_skip_math, _spliceai_secondary_donor_parallel_exon_skip_math, _spliceai_variant_locus_string, _stash_transcript_mrna_exon_metadata, _suppress_start_loss_nmd_for_exon_skip_primary, _translate_cds_aas, _whole_exon_skip_primary_resolved, compute_deep_intronic_splice_math, compute_deep_intronic_spliceai_products
 from vc_engine.spliceai import _apply_emg_spliceai_ds_only, _apply_emg_spliceai_if_broad_unavailable, _emg_spliceai_ds_snapshot, _ingest_spliceai_broad_json, _refresh_spliceai_in_silico_source
 from vc_engine.state import clingen_db, clingen_gene_lookup
@@ -647,13 +648,6 @@ def _append_uniprot_domain_logic_section(sections, parsed_data):
     acc = (parsed_data.get('uniprot_primary_accession') or '').strip()
     if not link and acc:
         link = f"https://www.uniprot.org/uniprotkb/{acc}/entry#family_and_domains"
-    if link:
-        uniprot_head = (
-            f"<a href='{link}' target='_blank' style='text-decoration: underline; "
-            f"color: #4338ca;'>UniProt</a>:"
-        )
-    else:
-        uniprot_head = "UniProt:"
     if parsed_data.get('has_critical_domain'):
         at_ptc = parsed_data.get('critical_domain_at_ptc') or []
         lost_ds = parsed_data.get('critical_domain_lost_downstream') or []
@@ -671,10 +665,12 @@ def _append_uniprot_domain_logic_section(sections, parsed_data):
             parts.append(f"{prefix}: {', '.join(lost_ds)}")
         if not parts:
             parts.append(parsed_data.get('critical_domain_names', ''))
-        body = f"{uniprot_head} {'; '.join(parts)}."
-        sections.append(("", body))
+        body = f"{'; '.join(parts)}."
+        if link:
+            body += f" <a href='{link}' target='_blank' rel='noopener'>UniProt</a>."
+        sections.append(("UniProt", body))
     else:
-        sections.append(("", f"{uniprot_head} No domain of interest."))
+        sections.append(("UniProt", "No domain of interest at this residue."))
 
 
 def _logic_indefinite_article(phrase):
@@ -685,22 +681,31 @@ def _logic_indefinite_article(phrase):
 
 
 def _finalize_logic_explanation(parsed_data, sections):
+    sections = _order_logic_sections(sections)
     html_parts = []
     text_parts = []
     for _i, (cnt, desc) in enumerate(sections, 1):
         body = _logic_section_text_plain(desc) or ''
         cnt_s = (cnt or '').strip()
-        if cnt_s:
-            html_parts.append(f"<li style='margin-bottom: 6px;'><strong>{cnt_s}:</strong> {desc}</li>")
+        if cnt_s == "The Variant":
+            html_parts.append(f"<p class='logic-evidence-lead'>{desc}</p>")
+            text_parts.append(body)
+        elif cnt_s:
+            html_parts.append(
+                "<div class='logic-evidence-item'>"
+                f"<div class='logic-evidence-label'>{cnt_s}</div>"
+                f"<div class='logic-evidence-body'>{desc}</div>"
+                "</div>"
+            )
             if '\n' in body:
-                text_parts.append(f"{cnt_s}:\n{body}")
+                text_parts.append(f"{cnt_s}\n{body}")
             else:
-                text_parts.append(f"{cnt_s}: {body}")
+                text_parts.append(f"{cnt_s}\n{body}")
         else:
-            html_parts.append(f"<li style='margin-bottom: 6px;'>{desc}</li>")
+            html_parts.append(f"<div class='logic-evidence-item'><div class='logic-evidence-body'>{desc}</div></div>")
             text_parts.append(body)
     parsed_data['logic_explanation'] = (
-        f"<ul style='margin-top: 5px; padding-left: 20px;'>{''.join(html_parts)}</ul>"
+        f"<div class='logic-evidence'>{''.join(html_parts)}</div>"
     )
     parsed_data['logic_explanation_plaintext'] = "\n\n".join(text_parts)
 
@@ -1936,7 +1941,7 @@ def _format_allele_entries_plain(alleles):
             hgvs = hgvs_c or '?'
         sig = (a.get('significance') or '?').strip()
         vid = (a.get('vid') or '?').strip()
-        out.append(f"{hgvs} ({sig}) [VID: {vid}]")
+        out.append(f"{hgvs} — {sig} (ClinVar {vid})")
     return out
 
 
@@ -1988,7 +1993,7 @@ def _allelic_amino_acid_change_lines(parsed_data):
             hgvs = f"{c_str} / {p_str}"
         else:
             hgvs = p_str or c_str or '?'
-        lines.append(f"{hgvs} (Pathogenic) [VID: {vid_disp}]")
+        lines.append(f"{hgvs} — Pathogenic (ClinVar {vid_disp})")
     return lines
 
 
@@ -2015,21 +2020,54 @@ def _allelic_nearby_residue_change_lines(parsed_data):
     return lines
 
 
+def _clinvar_this_variant_line(parsed_data):
+    """Classification of this allele when ClinVar has a record."""
+    sig = str(parsed_data.get("clinvar_sig") or "").strip()
+    vid = str(parsed_data.get("clinvar_rcv") or "").strip()
+    if not sig or not vid:
+        return ""
+    low = sig.lower()
+    if "not found" in low or low in {"search", "n/a", "na"}:
+        return ""
+    href = f"https://www.ncbi.nlm.nih.gov/clinvar/variation/{vid}/"
+    return (
+        f"This variant — {sig} "
+        f"(<a href='{href}' target='_blank' rel='noopener'>ClinVar {vid}</a>)."
+    )
+
+
+def _order_logic_sections(sections):
+    """Variant, then ClinVar, then the remaining evidence in its original order."""
+    lead_names = ("The Variant", "ClinVar", "Allelic context", "Allelic context (noncoding)")
+    lead = {name: [] for name in lead_names}
+    rest = []
+    for item in sections:
+        label = (item[0] or "").strip()
+        if label in lead:
+            lead[label].append(item)
+        else:
+            rest.append(item)
+    ordered = []
+    for name in lead_names:
+        ordered.extend(lead[name])
+    return ordered + rest
+
+
 def _append_clingen_logic_section(sections, parsed_data, effective_gene=None):
-    """ClinGen haploinsufficiency curation — always first in logic explanation."""
+    """ClinGen haploinsufficiency, as a report sentence."""
     gene = (
         (effective_gene or parsed_data.get('gene_symbol') or parsed_data.get('gene') or '')
         .strip()
-    )
+    ) or "This gene"
     if parsed_data.get('has_clingen'):
         score = str(parsed_data.get('clingen_haplo_score') or '').strip()
         if score and score.upper() != 'N/A':
-            body = f"{gene}: haploinsufficiency score {score}."
+            lof = " (loss of function)" if score.split()[0] in {"3", "3.0"} else ""
+            body = f"{gene} haploinsufficiency score {score}{lof}."
         else:
-            body = f"{gene}: curated in ClinGen (haplo score not reported)."
+            body = f"{gene} is curated in ClinGen; no haploinsufficiency score is reported."
     else:
-        label = gene or 'Gene'
-        body = f"{label}: not in local ClinGen curation list."
+        body = f"{gene} is not in the ClinGen haploinsufficiency list."
     sections.append(("ClinGen", body))
 
 
@@ -2063,38 +2101,30 @@ def _append_allelic_context_logic_sections(sections, parsed_data):
         return
 
     lines = []
+    entry = _clinvar_this_variant_line(parsed_data)
+    if entry:
+        lines.append(entry)
     nuc = _allelic_nucleotide_change_lines(parsed_data)
     aa = _allelic_amino_acid_change_lines(parsed_data)
     nearby = _allelic_nearby_residue_change_lines(parsed_data)
 
     if nuc:
-        lines.append("Same nucleotide change: " + "; ".join(nuc))
-    else:
-        lines.append("Same nucleotide change: none")
-
+        lines.append("Same nucleotide: " + "; ".join(nuc))
     if aa:
         lines.append("Same amino acid change: " + "; ".join(aa))
-    else:
-        lines.append("Same amino acid change: none")
-
     if nearby:
         lines.append("Nearby residue (±5 aa): " + "; ".join(nearby))
-    else:
-        lines.append("Nearby residue (±5 aa): none")
 
     alt_tx = parsed_data.get("alternate_transcript_literature") or []
     if alt_tx:
         vid = str(parsed_data.get("clinvar_rcv") or "").strip() or "?"
         lines.append(
-            f"Alternate isoform HGVS (ClinVar VID {vid}): "
-            f"{len(alt_tx)} other transcript name(s) included in literature search."
+            f"Other transcript names on ClinVar {vid}: {len(alt_tx)} included in the literature search."
         )
 
-    scan_note = (parsed_data.get("local_clinvar_scan_note") or "").strip()
-    if scan_note:
-        lines.append(scan_note)
-
-    sections.append(("Allelic context", _logic_lines_block(*lines)))
+    if not lines:
+        lines.append("This variant is not in ClinVar.")
+    sections.append(("ClinVar", _logic_lines_block(*lines)))
 
 
 def _append_clinical_overlap_sections(sections, parsed_data):
@@ -3161,18 +3191,18 @@ def _populate_local_allele_lists_from_hits(
         if bucket == "true_pathogenic":
             if not any(x["vid"] == vid for x in alternate_alleles):
                 alternate_alleles.append(
-                    {"hgvs_c": entry["hgvs_c"], "significance": entry["significance"], "vid": vid}
+                    {"hgvs_c": entry["hgvs_c"], "hgvs_p": entry.get("hgvs_p") or "", "significance": entry["significance"], "vid": vid}
                 )
         elif bucket == "true_vus":
             if not any(x["vid"] == vid for x in vus_alternate_alleles):
                 vus_alternate_alleles.append(
-                    {"hgvs_c": entry["hgvs_c"], "significance": entry["significance"], "vid": vid}
+                    {"hgvs_c": entry["hgvs_c"], "hgvs_p": entry.get("hgvs_p") or "", "significance": entry["significance"], "vid": vid}
                 )
         elif bucket in ("splice_junction_plp", "splice_junction_vus"):
             target = splice_junction_alleles if bucket == "splice_junction_plp" else splice_junction_vus
             if target is not None and not any(x["vid"] == vid for x in target):
                 target.append(
-                    {"hgvs_c": entry["hgvs_c"], "significance": entry["significance"], "vid": vid}
+                    {"hgvs_c": entry["hgvs_c"], "hgvs_p": entry.get("hgvs_p") or "", "significance": entry["significance"], "vid": vid}
                 )
         elif bucket == "same_protein":
             if not any(x["vid"] == vid for x in same_protein_position_alleles):
@@ -4204,16 +4234,10 @@ def analyze_variant():
             if 'cadd' in hit and 'phred' in hit['cadd']:
                 parsed_data['cadd_phred'] = hit['cadd']['phred']
             
-            # Get REVEL
-            if 'dbnsfp' in hit and 'revel' in hit['dbnsfp']:
-                try:
-                    revel_data = hit['dbnsfp']['revel']
-                    if isinstance(revel_data, dict):
-                        parsed_data['revel_score'] = float(revel_data.get('score', 0))
-                    else:
-                        parsed_data['revel_score'] = float(revel_data)
-                except:
-                    pass
+            # Get REVEL. dbNSFP returns one score per transcript, as a list.
+            revel_score = revel_score_from_dbnsfp((hit.get("dbnsfp") or {}).get("revel"))
+            if revel_score is not None:
+                parsed_data["revel_score"] = revel_score
             
             # Extract Native ClinVar Significance and RCV Variation Binding
             if 'clinvar' in hit and myvariant_match_score >= 3:
@@ -4415,6 +4439,12 @@ def analyze_variant():
                 if parsed_data.get('gnomad_af') is None:
                     parsed_data['gnomad_af'] = 0
                     parsed_data['gnomad_af_source'] = 'absent'
+                homozygotes = homozygote_total(
+                    homozygote_count(hit.get('gnomad_exomes') or hit.get('gnomad_exome')),
+                    homozygote_count(hit.get('gnomad_genomes') or hit.get('gnomad_genome')),
+                )
+                if homozygotes is not None:
+                    parsed_data['gnomad_nhomalt'] = homozygotes
             if 'dbnsfp' in hit and 'uniprot' in hit['dbnsfp']:
                 uniprot_acc = _pick_dbnsfp_uniprot_accession(
                     hit['dbnsfp']['uniprot'], effective_gene
@@ -6905,6 +6935,29 @@ def analyze_variant():
         else:
             parsed_data['has_clingen'] = False
             parsed_data['clingen_haplo_score'] = 'N/A'
+        apply_clingen_disease_mechanism(parsed_data)
+        if parsed_data.get('disease_mechanism') == 'LOF' and (
+            parsed_data.get('disease_mechanism_citation') == 'ClinGen haploinsufficiency score 3'
+        ):
+            cite_html = (
+                " <span style='font-size: 0.85em; color: #9ca3af; font-style: italic;'>"
+                "(Source: ClinGen haploinsufficiency score 3)</span>"
+            )
+            mech_line = f"<br><b>Disease Mechanism:</b> LOF{cite_html}"
+            if "Disease Mechanism:" in gene_summary:
+                gene_summary = re.sub(
+                    r"<br><b>Disease Mechanism:</b>.*",
+                    mech_line,
+                    gene_summary,
+                    count=1,
+                )
+            elif "Mechanism treated as" in gene_summary:
+                gene_summary = gene_summary.replace(
+                    "Mechanism treated as <b>Unknown</b> for PVS1.",
+                    "Mechanism set to <b>LOF</b> from ClinGen haploinsufficiency score 3.",
+                )
+            else:
+                gene_summary += mech_line
         alternate_alleles = []
         vus_alternate_alleles = []
         splice_junction_alleles = []

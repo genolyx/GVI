@@ -48,6 +48,24 @@ describe("criterion evidence sentences", () => {
     );
   });
 
+  it("asks for a mechanism lookup when PVS1 is met and the mechanism is unknown", () => {
+    const sentence = criterionEvidence(
+      doc({
+        consequence: "splice_donor_variant&intron_variant",
+        parsed: {
+          splice_is_in_frame: false,
+          nmd_escape: false,
+          nmd_escape_truncation_fraction: 0.7956,
+          exon_skip_predicted_hgvs_p: "p.Glu107fsTer5",
+          disease_mechanism: "Unknown",
+        },
+      }),
+      "PVS1",
+      "Canonical splice predicted out-of-frame (presumed NMD)"
+    );
+    expect(sentence).toContain("Mechanism unknown — look up.");
+  });
+
   it("cites the gnomAD frequency for PM2", () => {
     const sentence = criterionEvidence(doc({ consequence: "splice_donor_variant", gnomadAf: 0 }), "PM2", "rare");
     expect(sentence).toBe("gnomAD allele frequency is 0, so the variant is absent or extremely rare.");

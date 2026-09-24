@@ -21,15 +21,25 @@ export default function BatchReviewPage() {
 
   const batch = trpc.workbench.getBatch.useQuery(
     { organizationId: activeOrganizationId || 0, batchId },
-    { enabled: Boolean(activeOrganizationId && batchId) }
+    {
+      enabled: Boolean(activeOrganizationId && batchId),
+      refetchInterval: query =>
+        query.state.data?.entries.some(entry => entry.status === "queued" || entry.status === "loading" || entry.status === "running") ? 2000 : false,
+    }
   );
+  const utils = trpc.useUtils();
   const entries = batch.data?.entries ?? [];
   const index = entries.findIndex(item => item.id === runId);
   const entry = index >= 0 ? entries[index] : undefined;
+  const finishedAt = entry?.status === "succeeded" && entry.completedAt ? new Date(entry.completedAt).getTime() : 0;
   const documentQuery = trpc.curation.document.useQuery(
     { organizationId: activeOrganizationId || 0, runId },
-    { enabled: Boolean(activeOrganizationId && runId && entry?.status === "succeeded") }
+    { enabled: Boolean(activeOrganizationId && runId && finishedAt) }
   );
+  useEffect(() => {
+    if (!finishedAt || !activeOrganizationId || !runId) return;
+    void utils.curation.document.invalidate({ organizationId: activeOrganizationId, runId });
+  }, [finishedAt, activeOrganizationId, runId, utils]);
   const saveInstitutional = trpc.workbench.setInstitutional.useMutation({
     onSuccess: async () => {
       await batch.refetch();
@@ -132,7 +142,9 @@ export default function BatchReviewPage() {
         <StatePanel
           type={entry.status === "failed" ? "error" : "empty"}
           title={`Classifier has not completed (status: ${workbenchStatusLabel(entry.status)})`}
-          description={entry.error?.message || "Return to the batch and wait for the run to finish."}
+          description={entry.status === "queued"
+            ? "Queued until the classifier is free. This page will load the result when the run finishes."
+            : entry.error?.message || "This page will load the result when the run finishes."}
           action={<Button variant="outline" onClick={() => navigate(`/workbench/batches/${batchId}`)}><ArrowLeft className="mr-2 size-4" />Batch</Button>}
         />
       ) : documentQuery.isError ? (

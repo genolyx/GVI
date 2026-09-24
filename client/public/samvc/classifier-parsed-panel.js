@@ -6,6 +6,362 @@
     return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
   }
 
+  function evidenceText(html) {
+    return String(html || '')
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&amp;/g, '&')
+      .replace(/[ \t]+/g, ' ')
+      .replace(/\n{2,}/g, '\n')
+      .trim();
+  }
+
+  function clinvarIds(line) {
+    const ids = [];
+    const re = /ClinVar\s+(\d+)|\[VID:\s*(\d+)\]/gi;
+    let match;
+    while ((match = re.exec(line))) {
+      const id = match[1] || match[2];
+      if (ids.indexOf(id) === -1) ids.push(id);
+    }
+    return ids;
+  }
+
+  function countClinVarMentions(line) {
+    const vids = line.match(/ClinVar\s+\d+|\[VID:\s*\d+\]/gi);
+    if (vids && vids.length) return vids.length;
+    const parts = line.split(';').map((part) => part.trim()).filter(Boolean);
+    return parts.length;
+  }
+
+  function stripEndPeriods(html) {
+    return String(html || '')
+      .split(/<br\s*\/?>/i)
+      .map((line) => line.replace(/\.\s*$/, '').trim())
+      .filter(Boolean)
+      .join('<br>');
+  }
+
+  function clinvarAnchor(id) {
+    return '<a href="https://www.ncbi.nlm.nih.gov/clinvar/variation/' + id + '/" target="_blank" rel="noopener">' + id + '</a>';
+  }
+
+  function decodeHgvs(text) {
+    return String(text || '')
+      .replace(/&gt;/gi, '>')
+      .replace(/&lt;/gi, '<')
+      .replace(/&amp;/gi, '&');
+  }
+
+  const CODON_AA = {
+    TTT:'Phe',TTC:'Phe',TTA:'Leu',TTG:'Leu',CTT:'Leu',CTC:'Leu',CTA:'Leu',CTG:'Leu',
+    ATT:'Ile',ATC:'Ile',ATA:'Ile',ATG:'Met',GTT:'Val',GTC:'Val',GTA:'Val',GTG:'Val',
+    TCT:'Ser',TCC:'Ser',TCA:'Ser',TCG:'Ser',CCT:'Pro',CCC:'Pro',CCA:'Pro',CCG:'Pro',
+    ACT:'Thr',ACC:'Thr',ACA:'Thr',ACG:'Thr',GCT:'Ala',GCC:'Ala',GCA:'Ala',GCG:'Ala',
+    TAT:'Tyr',TAC:'Tyr',TAA:'Ter',TAG:'Ter',CAT:'His',CAC:'His',CAA:'Gln',CAG:'Gln',
+    AAT:'Asn',AAC:'Asn',AAA:'Lys',AAG:'Lys',GAT:'Asp',GAC:'Asp',GAA:'Glu',GAG:'Glu',
+    TGT:'Cys',TGC:'Cys',TGA:'Ter',TGG:'Trp',CGT:'Arg',CGC:'Arg',CGA:'Arg',CGG:'Arg',
+    AGT:'Ser',AGC:'Ser',AGA:'Arg',AGG:'Arg',GGT:'Gly',GGC:'Gly',GGA:'Gly',GGG:'Gly',
+  };
+  const AA3 = { A:'Ala',R:'Arg',N:'Asn',D:'Asp',C:'Cys',E:'Glu',Q:'Gln',G:'Gly',H:'His',I:'Ile',L:'Leu',K:'Lys',M:'Met',F:'Phe',P:'Pro',S:'Ser',T:'Thr',W:'Trp',Y:'Tyr',V:'Val','*':'Ter' };
+
+  function proteinForOtherBase(variantC, variantP, otherC) {
+    const v = String(variantC || '').match(/^c\.(\d+)([ACGT])>([ACGT])$/i);
+    const o = String(otherC || '').match(/^c\.(\d+)([ACGT])>([ACGT])$/i);
+    const p = String(variantP || '').match(/p\.(?:([A-Z*])(\d+)([A-Z*])|([A-Z][a-z]{2})(\d+)([A-Z][a-z]{2}|\*))/);
+    if (!v || !o || !p || v[1] !== o[1] || v[2].toUpperCase() !== o[2].toUpperCase()) return '';
+    const ref3 = p[1] ? AA3[p[1]] : p[4];
+    const alt3 = p[3] ? (AA3[p[3]] || '') : p[6];
+    const aaPos = p[2] || p[5];
+    if (!ref3 || !alt3) return '';
+    const offset = (parseInt(v[1], 10) - 1) % 3;
+    const refBase = v[2].toUpperCase();
+    const varAlt = v[3].toUpperCase();
+    const otherAlt = o[3].toUpperCase();
+    const matches = Object.keys(CODON_AA).filter((codon) => {
+      if (codon[offset] !== refBase || CODON_AA[codon] !== ref3) return false;
+      const changed = codon.slice(0, offset) + varAlt + codon.slice(offset + 1);
+      return CODON_AA[changed] === alt3;
+    });
+    const proteins = [...new Set(matches.map((codon) => {
+      const changed = codon.slice(0, offset) + otherAlt + codon.slice(offset + 1);
+      return CODON_AA[changed];
+    }))];
+    if (proteins.length !== 1) return '';
+    return 'p.' + ref3 + aaPos + proteins[0];
+  }
+
+  function alleleBit(cdot, protein, sig, id) {
+    let hgvs = cdot ? esc(cdot) : '';
+    if (protein && protein !== cdot) hgvs += (hgvs ? ' / ' : '') + esc(protein);
+    let bit = hgvs;
+    if (sig) bit += (bit ? ': ' : '') + esc(sig);
+    if (id) bit += (bit ? ' ' : '') + '(ClinVar ' + clinvarAnchor(id) + ')';
+    return bit.trim();
+  }
+
+  function bitsFromRows(rows, pd, deriveProtein) {
+    const seen = {};
+    const bits = [];
+    (rows || []).forEach((row) => {
+      if (!row || typeof row !== 'object') return;
+      const id = String(row.vid || '').trim();
+      if (id && seen[id]) return;
+      if (id) seen[id] = true;
+      const raw = String(row.hgvs_c || '').trim();
+      const cdot = (raw.match(/c\.[^\s/]+/) || [])[0] || raw;
+      let protein = String(row.hgvs_p || '').trim();
+      if (!protein && deriveProtein) {
+        protein = proteinForOtherBase(pd && (pd.hgvs_c || pd.c_dot), pd && pd.hgvs_p, cdot);
+      }
+      const sig = String(row.significance || '').trim();
+      if (!cdot && !protein && !id) return;
+      bits.push(alleleBit(cdot, protein, sig, id));
+    });
+    return bits;
+  }
+
+  function bitsFromText(text) {
+    return decodeHgvs(text).split(';').map((part) => {
+      const cdot = (part.match(/c\.[^\s;/()]+/) || [])[0] || '';
+      const protein = (part.match(/p\.[^\s;/()]+/) || [])[0] || '';
+      const id = (part.match(/ClinVar\s+(\d+)|\[VID:\s*(\d+)\]/i) || []);
+      const vid = id[1] || id[2] || '';
+      const sig = (part.match(/\(([^)]*(?:pathogenic|benign|uncertain|conflicting)[^)]*)\)/i) || [])[1] || '';
+      if (!cdot && !protein && !vid) return '';
+      return alleleBit(cdot, protein, sig.trim(), vid);
+    }).filter(Boolean);
+  }
+
+  function joinAlleles(name, bits) {
+    const shown = bits.slice(0, 10);
+    const extra = bits.length > 10 ? '; and ' + (bits.length - 10) + ' more' : '';
+    return name + ': ' + shown.join('; ') + extra;
+  }
+
+  function summarizeClinVarBody(body, variantName, pd) {
+    const lines = evidenceText(body).split('\n').map((line) => line.trim()).filter(Boolean);
+    const kept = [];
+    lines.forEach((line) => {
+      if (/^This variant/i.test(line)) {
+        const clean = line
+          .replace(/^This variant\s*[—–-]\s*/i, (variantName ? variantName + ': ' : ''))
+          .replace(/\s+/g, ' ')
+          .replace(/\(\s+/g, '(')
+          .replace(/\s+\)/g, ')')
+          .replace(/\.\s*$/, '');
+        kept.push(clean.replace(/ClinVar\s+(\d+)/g, (all, id) => (
+          '<a href="https://www.ncbi.nlm.nih.gov/clinvar/variation/' + id + '/" target="_blank" rel="noopener">ClinVar ' + id + '</a>'
+        )));
+        return;
+      }
+      const labeled = line.match(/^(Same nucleotide|Same amino acid(?: change)?|Nearby residue[^:]*):\s*(.*)$/i);
+      if (!labeled) {
+        if (line.length < 180 && !/\[VID:|ClinVar\s+\d+/.test(line)) kept.push(line);
+        return;
+      }
+      const name = labeled[1].replace(/\s+change$/i, '');
+      let bits = [];
+      if (/same nucleotide/i.test(name)) {
+        bits = bitsFromRows([]
+          .concat((pd && pd.alternate_alleles) || [])
+          .concat((pd && pd.vus_alternate_alleles) || [])
+          .concat((pd && pd.splice_junction_alleles) || [])
+          .concat((pd && pd.splice_junction_vus_alleles) || []), pd, true);
+      } else if (/same amino acid/i.test(name)) {
+        bits = bitsFromRows([]
+          .concat((pd && pd.same_protein_position_alleles) || [])
+          .concat((pd && pd.pm5_local_alleles) || []), pd, false);
+      } else if (/nearby residue/i.test(name)) {
+        bits = bitsFromRows((pd && pd.regional_hotspot) || [], pd, false);
+      }
+      if (!bits.length) bits = bitsFromText(labeled[2]);
+      if (bits.length) {
+        kept.push(joinAlleles(name, bits));
+        return;
+      }
+      if (/:\s*none\b/i.test(line)) return;
+      kept.push(line.replace(/\.\s*$/, ''));
+    });
+    const sig = String((pd && pd.clinvar_sig) || '').trim();
+    const vid = String((pd && pd.clinvar_rcv) || '').trim();
+    const hasEntry = sig && vid && !/not found/i.test(sig);
+    const joined = kept.filter((line) => !(hasEntry && /this variant is not in clinvar/i.test(line))).join('<br>');
+    if (joined) return joined;
+    return hasEntry ? '' : 'This variant is not in ClinVar.';
+  }
+
+  function summarizeSpliceBody(body) {
+    const text = evidenceText(body);
+    const starts = [];
+    const re = /Product\s+(\d+)\b[^\n]{0,140}/gi;
+    let match;
+    while ((match = re.exec(text))) starts.push({ n: match[1], at: match.index, title: match[0] });
+    if (!starts.length) {
+      const short = text.split('\n').slice(0, 2).join(' ');
+      return short.length > 320 ? short.slice(0, 300).trim() + '…' : short;
+    }
+    const lines = starts.map((start, index) => {
+      const chunk = text.slice(start.at, starts[index + 1] ? starts[index + 1].at : start.at + 900);
+      const name = start.title
+        .replace(/^Product\s+\d+\s*/i, '')
+        .replace(/^\([^)]*\)\s*[—:-]\s*/i, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+      const frame = (chunk.match(/Frame:\s*([^\n.]+)/i) || [])[1];
+      const nmd = (chunk.match(/\bNMD:\s*([^\n.]+)/i) || [])[1];
+      const protein = (chunk.match(/(\d+(?:\.\d+)?%\s*C-terminal lost)/i) || [])[1];
+      let sentence = 'Product ' + start.n + ': ' + name.replace(/[.:]\s*$/, '');
+      if (frame) sentence += '; ' + frame.trim();
+      if (protein) sentence += '; ' + protein.trim();
+      else if (nmd) sentence += '; NMD ' + nmd.trim();
+      return sentence.replace(/\s+/g, ' ').replace(/\.\s*$/, '');
+    });
+    return lines.join('<br>');
+  }
+
+  function summarizeClinicalBody(body) {
+    const text = evidenceText(body);
+    const matched = text.match(/Matched variants?\s*\((\d+)\)/i);
+    const region = text.match(/inside the ([^(\n<]{0,40}?)(?:\s*\(([^)]+)\))?(?:\s+Matched|\s*:|$)/i);
+    if (matched) {
+      const where = region ? region[1].trim() : 'skipped exon';
+      const span = region && region[2] ? ' (' + region[2].trim() + ')' : '';
+      return matched[1] + ' ClinVar P/LP variants inside the ' + where + span;
+    }
+    if (/\[VID:|ClinVar\s+\d+/.test(text) && text.length > 280) {
+      const n = countClinVarMentions(text);
+      return n + ' ClinVar P/LP variants in this region';
+    }
+    return text
+      .replace(/\bUniProt\b:[\s\S]*$/i, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  /** Saved runs store the old bullet list. Present it as evidence without a rerun. */
+  function presentLogicEvidence(raw, pd) {
+    const html = String(raw || '');
+    if (!html) return '';
+    const doc = new DOMParser().parseFromString('<div>' + html + '</div>', 'text/html');
+    const nodes = doc.querySelectorAll('li').length
+      ? [...doc.querySelectorAll('li')]
+      : [...doc.querySelectorAll('.logic-evidence-item, .logic-evidence-lead')];
+    const items = nodes.map((li) => {
+      const strong = li.querySelector('strong');
+      let label = '';
+      if (strong) {
+        label = strong.textContent.replace(/:\s*$/, '').trim();
+        strong.remove();
+      }
+      if (li.classList && li.classList.contains('logic-evidence-lead')) {
+        return { label: 'The Variant', body: li.innerHTML.trim() };
+      }
+      const labeled = li.querySelector('.logic-evidence-label');
+      const boxed = li.querySelector('.logic-evidence-body');
+      if (labeled && boxed) {
+        return { label: labeled.textContent.trim(), body: boxed.innerHTML.trim() };
+      }
+      let body = li.innerHTML.replace(/^[\s:]+/, '').trim();
+      if (!label && /^<a[^>]*>\s*UniProt\s*<\/a>\s*:/i.test(body)) {
+        label = 'UniProt';
+        body = body.replace(/^<a[^>]*>\s*UniProt\s*<\/a>\s*:/i, '').trim();
+      } else if (!label && /^UniProt\s*:/i.test(body)) {
+        label = 'UniProt';
+        body = body.replace(/^UniProt\s*:/i, '').trim();
+      }
+      return { label, body };
+    });
+    if (!items.length) return html;
+    const sig = String((pd && pd.clinvar_sig) || '').trim();
+    const vid = String((pd && pd.clinvar_rcv) || '').trim();
+    const hasEntry = sig && vid && !/not found/i.test(sig);
+    if (hasEntry && !items.some((item) => item.label === 'ClinVar')) {
+      const variantAt = items.findIndex((item) => item.label === 'The Variant');
+      items.splice(variantAt + 1, 0, {
+        label: 'ClinVar',
+        body: 'This variant — ' + esc(sig) + ' (<a href="https://www.ncbi.nlm.nih.gov/clinvar/variation/' + encodeURIComponent(vid) + '/" target="_blank" rel="noopener">ClinVar ' + esc(vid) + '</a>)',
+      });
+    }
+    const rankOf = (label) => {
+      if (label === 'The Variant') return 0;
+      if (label === 'ClinGen') return 1;
+      if (label === 'ClinVar' || label === 'Allelic context') return 2;
+      if (label === 'UniProt' || label === 'MetaDome' || label === 'MetaDome tolerance') return 3;
+      if (label === 'Truncation & NMD') return 4;
+      if (label === 'Splice products' || label === 'Computational splicing (SpliceAI)') return 5;
+      if (label === 'Clinical context' || label === 'Hotspot') return 6;
+      return 7;
+    };
+    const rank = (label) => rankOf(label);
+    items.sort((a, b) => rank(a.label) - rank(b.label));
+    items.forEach((item) => {
+      if (item.label !== 'Allelic context' && item.label !== 'Allelic context (noncoding)') return;
+      item.label = 'ClinVar';
+      item.body = item.body
+        .split(/<br\s*\/?>/i)
+        .map((line) => line.trim())
+        .filter((line) => line && !/: none\b/i.test(line) && !/Local ClinVar allelic scan/i.test(line))
+        .map((line) => line
+          .replace(/Same nucleotide change:/i, 'Same nucleotide:')
+          .replace(/\[VID:\s*(\d+)\]/g, '(ClinVar $1)'))
+        .join('<br>');
+    });
+    const merged = [];
+    items.forEach((item) => {
+      const prev = merged[merged.length - 1];
+      if (prev && prev.label === 'ClinVar' && item.label === 'ClinVar') {
+        prev.body = prev.body + '<br>' + item.body;
+      } else {
+        merged.push(item);
+      }
+    });
+    const leadPlain = evidenceText((merged.find((item) => item.label === 'The Variant') || {}).body || '');
+    const gene = String((pd && (pd.gene_symbol || pd.gene)) || '').trim();
+    const cdot = String((pd && (pd.hgvs_c || pd.c_dot)) || '').trim();
+    const fromLead = leadPlain.match(/^(\S+\s+c\.\S+?)(?:\s|→|$)/);
+    const variantName = (gene && cdot) ? (gene + ' ' + cdot) : (fromLead ? fromLead[1] : '');
+    const blocks = merged.map((item) => {
+      let label = item.label;
+      let body = item.body;
+      if (label === 'MetaDome tolerance' || label === 'MetaDome') {
+        label = 'MetaDome';
+        body = body.replace(/\s*Lower sw_dn_ds = more missense-intolerant \(complements UniProt domain names\)\.?/i, '');
+        body = body.replace(/^(?:<a[^>]*>\s*)?MetaDome(?:\s*<\/a>)?\s*:\s*/i, '');
+      }
+      if (label === 'ClinGen') {
+        body = body.replace(/:\s*not in local ClinGen curation list\.?/i, ' is not in the ClinGen haploinsufficiency list.');
+        if (clingenHaploScoreInt(pd && pd.clingen_haplo_score) === 3 && !/loss of function/i.test(evidenceText(body))) {
+          body = body.replace(/haploinsufficiency score\s+3\b/i, 'haploinsufficiency score 3 (loss of function)');
+        }
+      }
+      if (label === 'ClinVar') {
+        body = summarizeClinVarBody(body, variantName, pd);
+        if (!evidenceText(body)) return '';
+      }
+      if (label === 'Splice products' || label === 'Computational splicing (SpliceAI)') {
+        label = 'Splice';
+        body = summarizeSpliceBody(body);
+      }
+      if (label === 'Clinical context') body = summarizeClinicalBody(body);
+      if (label === 'UniProt') {
+        body = evidenceText(body).replace(/\s+/g, ' ');
+        if (body.length > 220) body = body.slice(0, 200).trim() + '…';
+      }
+      body = stripEndPeriods(body);
+      if (label === 'The Variant') {
+        return "<p class='logic-evidence-lead'>" + body + '</p>';
+      }
+      return (
+        "<div class='logic-evidence-item'>"
+        + (label ? "<div class='logic-evidence-label'>" + esc(label) + '</div>' : '')
+        + "<div class='logic-evidence-body'>" + body + '</div></div>'
+      );
+    });
+    return "<div class='logic-evidence'>" + blocks.join('') + '</div>';
+  }
+
   /** Strip ClinVar/HGMD catalogues appended to nmd_math (shown under P/LP pills). */
   function stripNmdMathCatalogue(nmdMath) {
     let s = String(nmdMath || '').trim();
@@ -31,6 +387,13 @@
     return s !== '' && s.toUpperCase() !== 'N/A';
   }
 
+  function clingenHaploScoreInt(score) {
+    const s = score == null ? '' : String(score).trim();
+    if (!s || s.toUpperCase() === 'N/A') return null;
+    const n = parseInt(s, 10);
+    return Number.isFinite(n) ? n : null;
+  }
+
   function buildClinGenPill(pd) {
     const link = pd.clingen_link || '';
     if (!pd.has_clingen || !link) {
@@ -44,7 +407,8 @@
     const pillOpen =
       '<span class="data-pill" style="border-color: #60a5fa; background: rgba(59, 130, 246, 0.1); color: #60a5fa;">ClinGen Curation: <strong>';
     if (clingenHaploScorePresent(pd.clingen_haplo_score)) {
-      return pillOpen + 'Haplo Score ' + esc(pd.clingen_haplo_score) + ' (' + viewLink + ')</strong></span>';
+      const lof = clingenHaploScoreInt(pd.clingen_haplo_score) === 3 ? ' · LOF' : '';
+      return pillOpen + 'Haplo Score ' + esc(pd.clingen_haplo_score) + lof + ' (' + viewLink + ')</strong></span>';
     }
     return pillOpen + 'Curated gene (' + viewLink + ')</strong></span>';
   }
@@ -665,7 +1029,10 @@ if (skippedExonPill && autoPill && /Skipped exon P\/LP/i.test(autoPill) && /Skip
 }
 
 let mechanismAlertPill = '';
-const mech = res.parsed_data.disease_mechanism;
+const clingenLof = clingenHaploScoreInt(res.parsed_data.clingen_haplo_score) === 3;
+const storedMech = String(res.parsed_data.disease_mechanism || '').trim();
+const mechUnknown = !storedMech || /^unknown\b/i.test(storedMech);
+let mech = clingenLof && !mechUnknown ? 'LOF' : (storedMech || 'Unknown');
 const spliceLofPrimary = !!(
     res.parsed_data.splice_lof_mechanism_established
     || res.parsed_data.spliceai_exon_skip_spliceai_primary
@@ -678,10 +1045,11 @@ if (isMechanismTruncating) {
         if (spliceLofPrimary) {
             mechanismAlertPill = `<span class="data-pill" style="border-color: #10b981; background: rgba(16, 185, 129, 0.1); color:#34d399;">Mechanism Check: <strong>Splice LOF primary (whole-exon skip)</strong> — truncation expected even when gene mechanism is ${mech}</span>`;
         } else {
-            mechanismAlertPill = `<div class="eval-allele-wide"><span class="data-pill" style="border-color: #fca5a5; background: rgba(239, 68, 68, 0.2); color:#fca5a5; display: inline-flex; font-size:1.05em; padding:8px 12px; border-width:2px; box-shadow: 0 0 10px rgba(239,68,68,0.3);">⚠️ CRITICAL: TRUNCATING MUTATION WITHOUT ESTABLISHED LOF MECHANISM (${mech})</span></div>`;
+            mechanismAlertPill = `<div class="eval-allele-wide"><span class="data-pill" style="border-color: #fca5a5; background: rgba(239, 68, 68, 0.2); color:#fca5a5;">⚠️ CRITICAL: TRUNCATING MUTATION WITHOUT ESTABLISHED LOF MECHANISM (${mech})</span></div>`;
         }
     } else if (mech === 'LOF' || mech === 'Both') {
-        mechanismAlertPill = `<span class="data-pill" style="border-color: #10b981; background: rgba(16, 185, 129, 0.1); color:#34d399;">Mechanism Check: <strong>${mech} (Safely matches Truncation)</strong></span>`;
+        const mechLabel = clingenLof ? 'LOF (ClinGen haploinsufficiency score 3)' : mech;
+        mechanismAlertPill = `<span class="data-pill" style="border-color: #10b981; background: rgba(16, 185, 129, 0.1); color:#34d399;">Mechanism Check: <strong>${mechLabel} (Safely matches Truncation)</strong></span>`;
     }
 }
 
@@ -948,7 +1316,7 @@ ${noncodingTrackPill}
 ${(!res.parsed_data.noncoding_track && res.parsed_data.hgvs_p) ? `<span class="data-pill">p. Notation: <strong>${esc(res.parsed_data.hgvs_p)}</strong></span>` : ''}
 <span class="data-pill">CADD: <strong>${res.parsed_data.cadd_phred}</strong></span>
 <span class="data-pill">REVEL: <strong>${res.parsed_data.revel_score || 'N/A'}</strong></span>
-<span class="data-pill">gnomAD AF: <strong>${res.parsed_data.gnomad_af != null ? Number(res.parsed_data.gnomad_af).toFixed(6) : 'N/A'}</strong></span>
+<span class="data-pill">gnomAD AF: <strong>${res.parsed_data.gnomad_af != null ? Number(res.parsed_data.gnomad_af).toFixed(6) : 'N/A'}</strong>${res.parsed_data.gnomad_nhomalt != null ? ` · hom <strong>${res.parsed_data.gnomad_nhomalt}</strong>` : ''}</span>
 ${exonPill}
 ${nmdPill}
 ${truncPill}
@@ -1041,7 +1409,7 @@ ${literatureIndexHtml}
 ${(res.parsed_data && res.parsed_data.clinical_publication_summary_html) ? `<section class="eval-section" style="border-color: rgba(251, 191, 36, 0.35); background: rgba(251, 191, 36, 0.06);"><h3 class="eval-section-title" style="color:#fcd34d;border-bottom-color: rgba(251,191,36,0.25);">Clinical summary (for reports)</h3><div style="font-size: 0.95em;">${res.parsed_data.clinical_publication_summary_html}</div></section>` : ''}
 ${(res.literature && res.literature.clinical_summary) ? literatureReviewSection('Clinical Literature Review', '#c084fc', 'rgba(192, 132, 252, 0.35)', 'rgba(139, 92, 246, 0.08)', res.literature.clinical_summary, clinicalLiteratureSpecHtml()) : (res.literature && res.literature.clinical_error ? `<section class="eval-section"><p class="banner warn">Literature clinical summary: ${esc(res.literature.clinical_error)}</p></section>` : '')}
 ${(res.literature && res.literature.functional_summary) ? literatureReviewSection('Functional Studies Review', '#34d399', 'rgba(16, 185, 129, 0.35)', 'rgba(16, 185, 129, 0.06)', res.literature.functional_summary, '') : ''}
-${res.parsed_data.logic_explanation ? `<section class="eval-section" style="border-color: rgba(16, 185, 129, 0.25); background: rgba(16, 185, 129, 0.04);"><h3 class="eval-section-title" style="color:#34d399;border-bottom-color: rgba(16,185,129,0.2);">Logic explanation</h3><div style="font-size: 0.95em; color: #e2e8f0; line-height: 1.5;">${res.parsed_data.logic_explanation}</div></section>` : ''}
+${res.parsed_data.logic_explanation ? `<section class="eval-section logic-evidence-section"><h3 class="eval-section-title">Evidence</h3>${presentLogicEvidence(res.parsed_data.logic_explanation, res.parsed_data)}</section>` : ''}
       `;
     return {
       html: panelHtml,

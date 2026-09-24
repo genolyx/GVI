@@ -111,7 +111,12 @@ export function criterionEvidence(doc: CurationDocument, code: string, rationale
   const fallback = rationale.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
 
   if (base === "PVS1" || base === "PM4") {
-    return lossOfFunctionSentence(doc, parsed) || fallback;
+    const sentence = lossOfFunctionSentence(doc, parsed) || fallback;
+    const mechanism = text(parsed.disease_mechanism).toLowerCase();
+    if (base === "PVS1" && (mechanism === "unknown" || mechanism.startsWith("unknown "))) {
+      return `${sentence.replace(/\.\s*$/, "")}. Mechanism unknown — look up.`;
+    }
+    return sentence;
   }
   if (base === "PM2") return populationSentence(doc.scores.gnomadAf, "rare") || fallback;
   if (base === "BS1") return populationSentence(doc.scores.gnomadAf, "common") || fallback;

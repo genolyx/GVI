@@ -146,3 +146,27 @@ def _resolve_effective_gene_from_vep_symbols(user_gene, vep_genes):
     if user_gene.upper() in {g.upper() for g in (vep_genes or [])}:
         return user_gene
     return user_gene
+
+
+def revel_score_from_dbnsfp(revel):
+    """Read a REVEL score from a MyVariant dbNSFP block.
+
+    dbNSFP repeats the score once per transcript, so ``score`` is usually a list.
+    A missing or non-numeric value stays unset. When transcripts disagree, the
+    highest score is kept.
+    """
+    if revel is None:
+        return None
+    raw = revel.get("score") if isinstance(revel, dict) else revel
+    values = raw if isinstance(raw, (list, tuple)) else [raw]
+    scores = []
+    for item in values:
+        try:
+            number = float(item)
+        except (TypeError, ValueError):
+            continue
+        if number > 0:
+            scores.append(number)
+    if not scores:
+        return None
+    return max(scores)

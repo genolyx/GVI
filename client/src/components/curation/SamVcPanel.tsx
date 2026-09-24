@@ -19,10 +19,10 @@ declare global {
 }
 
 const SCRIPTS = [
-  "/samvc/splice-viz.js",
+  "/samvc/splice-viz.js?v=exon-teal",
   "/samvc/junction-align-viz.js",
   "/samvc/copy-paste-builder.js",
-  "/samvc/classifier-parsed-panel.js",
+  "/samvc/classifier-parsed-panel.js?v=logic-evidence-19",
 ];
 
 let scriptsPromise: Promise<void> | null = null;
@@ -98,8 +98,13 @@ export function SamVcPanel({ document }: { document: CurationDocument }) {
         }
         const gene = (result.effective_gene || document.variant.gene || "").toUpperCase();
         if (profileRef.current) {
-          profileRef.current.innerHTML = result.gene_summary
-            ? `<div class="gene-profile-header">Gene Profile: ${gene}</div><div class="gene-profile-content">${result.gene_summary}</div>`
+          let summary = result.gene_summary || "";
+          summary = summary.replace(
+            "Mechanism treated as <b>Unknown</b> for PVS1.",
+            "Mechanism unknown — look up.",
+          );
+          profileRef.current.innerHTML = summary
+            ? `<div class="gene-profile-header">Gene Profile: ${gene}</div><div class="gene-profile-content">${summary}</div>`
             : "";
         }
         const { html } = render(result);
