@@ -2,8 +2,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { trpc } from "@/lib/trpc";
 import { Loader2, Plus } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 export type VariantIntakeValues = {
   gene: string;
@@ -35,7 +36,18 @@ export function VariantIntakeForm({
   const [externalCaseId, setExternalCaseId] = useState("");
   const [pmids, setPmids] = useState("");
   const [clinicalNotes, setClinicalNotes] = useState("");
-  const canSubmit = gene.trim().length > 0 && hgvsC.trim().length > 2 && !pending;
+  const [lookup, setLookup] = useState("");
+  useEffect(() => {
+    const handle = window.setTimeout(() => setLookup(gene.trim()), 400);
+    return () => window.clearTimeout(handle);
+  }, [gene]);
+  const readyToCheck = /^[A-Za-z][A-Za-z0-9-]{1,29}$/.test(lookup);
+  const geneCheck = trpc.workbench.checkGene.useQuery(
+    { gene: lookup },
+    { enabled: readyToCheck, staleTime: 60 * 60 * 1000 }
+  );
+  const confirmed = geneCheck.data?.ok === true && lookup === gene.trim();
+  const canSubmit = confirmed && hgvsC.trim().length > 2 && !pending;
 
   return (
     <form
@@ -44,7 +56,7 @@ export function VariantIntakeForm({
         event.preventDefault();
         if (!canSubmit) return;
         onSubmit({
-          gene: gene.trim(),
+          gene: geneCheck.data?.ok ? geneCheck.data.symbol : gene.trim(),
           hgvsC: hgvsC.trim(),
           transcript: transcript.trim() || undefined,
           hgvsP: hgvsP.trim() || undefined,
@@ -64,7 +76,18 @@ export function VariantIntakeForm({
     >
       <div className="space-y-2">
         <Label htmlFor="wb-gene">Gene</Label>
-        <Input id="wb-gene" value={gene} onChange={event => setGene(event.target.value.toUpperCase())} placeholder="e.g. BRCA1" className="font-mono" required />
+        <Input id="wb-gene" value={gene} onChange={event => setGene(event.target.value.toUpperCase())} placeholder="e.g. BRCA1" className="font-mono" required aria-describedby="wb-gene-status" />
+        <p id="wb-gene-status" className="min-h-4 text-xs">
+          {gene.trim().length === 0 ? null : lookup !== gene.trim() || geneCheck.isFetching ? (
+            <span className="text-muted-foreground">Checking gene…</span>
+          ) : geneCheck.data?.ok ? (
+            <span className="text-emerald-700 dark:text-emerald-300">{geneCheck.data.symbol} confirmed</span>
+          ) : geneCheck.data && !geneCheck.data.ok ? (
+            <span className="text-rose-700 dark:text-rose-300">{geneCheck.data.reason}</span>
+          ) : geneCheck.isError ? (
+            <span className="text-rose-700 dark:text-rose-300">{geneCheck.error.message}</span>
+          ) : null}
+        </p>
       </div>
       <div className="space-y-2">
         <Label htmlFor="wb-cdot">HGVSc</Label>

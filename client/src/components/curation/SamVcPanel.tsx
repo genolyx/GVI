@@ -27,16 +27,23 @@ const SCRIPTS = [
 
 let scriptsPromise: Promise<void> | null = null;
 
+function ensureSamVcTheme() {
+  let link = document.querySelector<HTMLLinkElement>("link[data-samvc-theme]");
+  if (!link) {
+    link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.dataset.samvcTheme = "1";
+    document.head.appendChild(link);
+  }
+  // New URL every visit so a previously cached sheet cannot keep the old colors.
+  link.href = new URL(`/samvc/classifier-theme.css?v=${Date.now()}`, window.location.origin).href;
+}
+
 function loadSamVcScripts() {
+  ensureSamVcTheme();
   if (!scriptsPromise) {
     scriptsPromise = (async () => {
-      if (!document.querySelector("link[data-samvc-theme]")) {
-        const link = document.createElement("link");
-        link.rel = "stylesheet";
-        link.href = "/samvc/classifier-theme.css";
-        link.dataset.samvcTheme = "1";
-        document.head.appendChild(link);
-      }
+      ensureSamVcTheme();
       for (const src of SCRIPTS) {
         if (document.querySelector(`script[src="${src}"]`)) continue;
         await new Promise<void>((resolve, reject) => {
@@ -78,6 +85,7 @@ export function SamVcPanel({ document }: { document: CurationDocument }) {
 
   useEffect(() => {
     let cancelled = false;
+    ensureSamVcTheme();
     const result = analyzeResult(document);
     setError("");
     loadSamVcScripts()

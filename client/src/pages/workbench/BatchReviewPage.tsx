@@ -8,6 +8,7 @@ import { ArrowLeft, ChevronLeft, ChevronRight } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { useLocation, useParams } from "wouter";
+import { criterionEvidence } from "./acmgSummary";
 import { workbenchStatusLabel } from "./status";
 
 export default function BatchReviewPage() {
@@ -186,9 +187,54 @@ export default function BatchReviewPage() {
               <p className="mt-3 text-lg font-semibold">{acmg?.label || "—"}</p>
             </div>
           </div>
+          <AcmgSummary label={acmg?.label ?? null} criteria={criteria} document={documentQuery.data.document} />
         </section>
       )}
     </div>
+  );
+}
+
+const STRENGTH_LABEL: Record<string, string> = {
+  supporting: "Supporting",
+  moderate: "Moderate",
+  strong: "Strong",
+  very_strong: "Very strong",
+  stand_alone: "Stand-alone",
+};
+
+function AcmgSummary({
+  label,
+  criteria,
+  document,
+}: {
+  label: string | null;
+  criteria: { code: string; strength: string; direction: "pathogenic" | "benign"; rationale: string }[];
+  document: Parameters<typeof criterionEvidence>[0];
+}) {
+  const call = label || "VUS";
+  return (
+    <section className="mt-6 rounded-xl border border-border bg-muted/30 p-4">
+      <h3 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Classification summary</h3>
+      <p className="mt-2 text-sm text-foreground">
+        {criteria.length
+          ? <>The analysis met {criteria.length === 1 ? "one criterion" : `${criteria.length} criteria`}. Together they determine <strong>{call}</strong>.</>
+          : <>No ACMG criteria were met, so the classification is <strong>{call}</strong>.</>}
+      </p>
+      {criteria.length ? (
+        <ul className="mt-3 list-disc space-y-2 pl-5 text-sm">
+          {criteria.map(criterion => {
+            const match = criterionEvidence(document, criterion.code, criterion.rationale);
+            return (
+              <li key={criterion.code}>
+                <span className={`font-mono font-semibold ${criterion.direction === "pathogenic" ? "text-rose-700 dark:text-rose-300" : "text-sky-700 dark:text-sky-300"}`}>{criterion.code}</span>
+                <span className="text-muted-foreground"> · {STRENGTH_LABEL[criterion.strength] ?? criterion.strength}</span>
+                {match ? <span> — {match}</span> : null}
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
+    </section>
   );
 }
 

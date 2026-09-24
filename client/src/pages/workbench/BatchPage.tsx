@@ -13,6 +13,7 @@ import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useLocation, useParams } from "wouter";
 import { AnalysisLogDialog } from "./AnalysisLogDialog";
+import { DeleteEntryDialog } from "./DeleteEntryDialog";
 import { ReusedAnalysisDialog, type ReusedAnalysisNotice } from "./ReusedAnalysisDialog";
 import { BatchNameField } from "./BatchNameField";
 import { VariantIntakeForm } from "./intake";
@@ -29,6 +30,7 @@ export default function BatchPage() {
   const canCurate = hasPermission("curation:run");
   const [sort, setSort] = useState<{ key: BatchSortKey; direction: SortDirection } | null>(null);
   const [logRunId, setLogRunId] = useState<number | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: number; gene: string; hgvsC: string } | null>(null);
   const [reusedNotice, setReusedNotice] = useState<ReusedAnalysisNotice | null>(null);
 
   const batch = trpc.workbench.getBatch.useQuery(
@@ -71,6 +73,15 @@ export default function BatchPage() {
         return;
       }
       toast.success("Variant added to the batch.");
+    },
+    onError: error => toast.error(error.message),
+  });
+  const deleteEntry = trpc.workbench.deleteEntry.useMutation({
+    onSuccess: async () => {
+      setDeleteTarget(null);
+      setLogRunId(null);
+      await batch.refetch();
+      toast.success("Entry deleted.");
     },
     onError: error => toast.error(error.message),
   });
@@ -223,7 +234,20 @@ export default function BatchPage() {
                         </td>
                         <td className="whitespace-nowrap py-2 pr-3 text-muted-foreground">{analyzed === null ? "—" : formatDateTime(new Date(analyzed))}</td>
                         <td className="py-2 pr-3">
-                          <Button size="sm" variant="outline" className={entryAction} onClick={() => setLogRunId(entry.id)}>Log</Button>
+                          <div className="flex gap-2">
+                            <Button size="sm" variant="outline" className={entryAction} onClick={() => setLogRunId(entry.id)}>Log</Button>
+                            {canCurate ? (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className={entryAction}
+                                disabled={deleteEntry.isPending || entry.status === "loading" || entry.status === "running"}
+                                onClick={() => setDeleteTarget({ id: entry.id, gene: entry.input.gene, hgvsC: entry.input.hgvsC })}
+                              >
+                                Delete
+                              </Button>
+                            ) : null}
+                          </div>
                         </td>
                         <td className="py-2 text-right">
                           {entry.status === "succeeded" ? (
@@ -249,6 +273,16 @@ export default function BatchPage() {
         </CardContent>
       </Card>
       <ReusedAnalysisDialog notice={reusedNotice} onClose={() => setReusedNotice(null)} />
+      <DeleteEntryDialog
+        entry={deleteTarget}
+        pending={deleteEntry.isPending}
+        onClose={() => setDeleteTarget(null)}
+        onConfirm={() => {
+          if (!deleteTarget || !activeOrganizationId) return;
+          if (logRunId === deleteTarget.id) setLogRunId(null);
+          deleteEntry.mutate({ organizationId: activeOrganizationId, runId: deleteTarget.id });
+        }}
+      />
       <AnalysisLogDialog
         organizationId={activeOrganizationId || 0}
         target={(() => {

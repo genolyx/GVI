@@ -68,32 +68,32 @@ export function AnalysisLogDialog({
 
   return (
     <Dialog open={open} onOpenChange={next => { if (!next) onClose(); }}>
-      <DialogContent className="gap-0 overflow-hidden border-zinc-800 bg-zinc-950 p-0 text-zinc-100 sm:max-w-3xl">
-        <div className="flex items-center gap-2 border-b border-white/10 px-4 py-3">
+      <DialogContent className="gap-0 overflow-hidden border-border bg-card p-0 text-card-foreground sm:max-w-3xl">
+        <div className="flex items-center gap-2 border-b border-border px-4 py-3">
           <span className="size-2.5 rounded-full bg-rose-500" />
           <span className="size-2.5 rounded-full bg-amber-400" />
           <span className="size-2.5 rounded-full bg-emerald-500" />
-          <DialogTitle className="flex flex-1 items-center justify-center gap-2 font-mono text-sm font-medium text-zinc-100">
-            <Terminal className="size-3.5 text-zinc-400" />
+          <DialogTitle className="flex flex-1 items-center justify-center gap-2 font-mono text-sm font-medium text-foreground">
+            <Terminal className="size-3.5 text-muted-foreground" />
             Analysis Log
-            {live ? <span className="rounded-full bg-sky-500/20 px-2 py-0.5 text-[10px] uppercase tracking-wider text-sky-300">Live</span> : null}
+            {live ? <span className="rounded-md bg-sky-500/10 px-2 py-0.5 text-[10px] uppercase tracking-wider text-sky-700 dark:text-sky-300">Live</span> : null}
           </DialogTitle>
         </div>
           <DialogDescription className="sr-only">
             {shown ? `Classifier log for ${shown.gene} ${shown.hgvs}` : "Classifier log"}
           </DialogDescription>
           {shown ? (
-            <p className="border-b border-white/10 px-4 py-2 font-mono text-xs text-zinc-400">
+            <p className="border-b border-border px-4 py-2 font-mono text-xs text-muted-foreground">
               {shown.gene} {shown.hgvs}
             </p>
           ) : null}
-        <div ref={scroller} className="max-h-[420px] min-h-48 overflow-auto px-4 py-3 font-mono text-[12px] leading-6">
+        <div ref={scroller} className="max-h-[420px] min-h-48 overflow-auto bg-card px-4 py-3 font-mono text-[12px] leading-6">
           {events.isLoading ? (
-            <p className="text-zinc-500">Loading log…</p>
+            <p className="text-muted-foreground">Loading log…</p>
           ) : events.isError ? (
-            <p className="text-rose-300">{events.error.message}</p>
+            <p className="text-rose-700 dark:text-rose-300">{events.error.message}</p>
           ) : lines.length === 0 ? (
-            <p className="text-zinc-500">
+            <p className="text-muted-foreground">
               {live ? "Waiting for the classifier to write the first line." : "No log was recorded for this variant."}
             </p>
           ) : (
@@ -102,15 +102,15 @@ export function AnalysisLogDialog({
               const failed = line.status === "failed" || line.status === "merge_failed";
               return (
                 <div key={line.id} className="flex items-start gap-3">
-                  <span className="shrink-0 text-zinc-500">{logStamp(line.createdAt)}</span>
+                  <span className="shrink-0 text-muted-foreground">{logStamp(line.createdAt)}</span>
                   {done ? (
-                    <Check className="mt-1 size-3.5 shrink-0 text-emerald-400" />
+                    <Check className="mt-1 size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
                   ) : (
-                    <span className={`mt-2 size-1.5 shrink-0 rounded-full ${failed ? "bg-rose-400" : live && line === lines[lines.length - 1] ? "animate-pulse bg-sky-400" : "bg-sky-400"}`} />
+                    <span className={`mt-2 size-1.5 shrink-0 rounded-full ${failed ? "bg-rose-500" : live && line === lines[lines.length - 1] ? "animate-pulse bg-sky-500" : "bg-sky-500"}`} />
                   )}
-                  <span className={`w-10 shrink-0 text-right tabular-nums ${done ? "text-emerald-300" : "text-zinc-100"}`}>{line.progressPercent}%</span>
-                  <span className={`shrink-0 ${failed ? "text-rose-300" : "text-emerald-400"}`}>{phaseLabel(line.status)}</span>
-                  <span className={done ? "text-emerald-200" : failed ? "text-rose-200" : "text-zinc-300"}>{line.message}</span>
+                  <span className={`w-10 shrink-0 text-right tabular-nums ${done ? "text-emerald-700 dark:text-emerald-300" : "text-foreground"}`}>{line.progressPercent}%</span>
+                  <span className={`shrink-0 ${failed ? "text-rose-700 dark:text-rose-300" : "text-emerald-700 dark:text-emerald-400"}`}>{phaseLabel(line.status)}</span>
+                  <span className={done ? "text-emerald-800 dark:text-emerald-200" : failed ? "text-rose-800 dark:text-rose-200" : "text-foreground/80"}>{line.message}</span>
                 </div>
               );
             })

@@ -12,6 +12,7 @@ import { protectedProcedure, router } from "../_core/trpc";
 import { writeAuditEvent } from "../domain/audit";
 import { enqueueCurationRun } from "../domain/curationQueue";
 import { ensureCurationWorker } from "../domain/curationWorker";
+import { checkHumanGeneSymbol } from "../domain/geneSymbol";
 import { requireDb, requireOrganizationPermission } from "../domain/tenant";
 
 const orgInput = z.object({ organizationId: z.number().int().positive() });
@@ -56,6 +57,12 @@ const entryColumns = {
   startedAt: curationRuns.startedAt,
   completedAt: curationRuns.completedAt,
 };
+
+async function requireKnownGene(gene: string) {
+  const result = await checkHumanGeneSymbol(gene);
+  if (!result.ok) throw new TRPCError({ code: "BAD_REQUEST", message: result.reason });
+  return result.symbol;
+}
 
 async function requireBatch(organizationId: number, batchId: number) {
   const db = await requireDb();
@@ -298,6 +305,10 @@ async function startRequeue(organizationId: number, userId: number, released: { 
 }
 
 export const workbenchRouter = router({
+  checkGene: protectedProcedure
+    .input(z.object({ gene: z.string().trim().min(1).max(80) }))
+    .query(async ({ input }) => checkHumanGeneSymbol(input.gene)),
+
   listBatches: protectedProcedure.input(orgInput).query(async ({ ctx, input }) => {
     await requireOrganizationPermission(ctx.user.id, input.organizationId, "variant:read");
     const db = await requireDb();
@@ -419,7 +430,7 @@ export const workbenchRouter = router({
     .mutation(async ({ ctx, input }) => {
       await requireOrganizationPermission(ctx.user.id, input.organizationId, "curation:run");
       await requireBatch(input.organizationId, input.batchId);
-      const intake = variantInput(input);
+      const intake = variantInput({ ...input, gene: await requireKnownGene(input.gene) });
       const copied = await reuseCompletedAnalysis({
         organizationId: input.organizationId,
         batchId: input.batchId,
@@ -465,7 +476,7 @@ export const workbenchRouter = router({
     .mutation(async ({ ctx, input }) => {
       await requireOrganizationPermission(ctx.user.id, input.organizationId, "curation:run");
       const batch = await ensureSingleVariantsBatch(input.organizationId, ctx.user.id);
-      const intake = variantInput(input);
+      const intake = variantInput({ ...input, gene: await requireKnownGene(input.gene) });
       const copied = await reuseCompletedAnalysis({
         organizationId: input.organizationId,
         batchId: batch.id,
@@ -647,5 +658,39 @@ export const workbenchRouter = router({
         req: ctx.req,
       });
       return { label: label || "", class: cssClass || "vus" };
+    }),
+
+  /** Remove a workbench entry that is not currently running. Events cascade. */
+  deleteEntry: protectedProcedure
+    .input(orgInput.extend({ runId: z.number().int().positive() }))
+    .mutation(async ({ ctx, input }) => {
+      await requireOrganizationPermission(ctx.user.id, input.organizationId, "curation:run");
+      const db = await requireDb();
+      const rows = await db
+        .select({ id: curationRuns.id, status: curationRuns.status, input: curationRuns.input })
+        .from(curationRuns)
+        .where(and(eq(curationRuns.organizationId, input.organizationId), eq(curationRuns.id, input.runId)))
+        .limit(1);
+      const entry = rows[0];
+      if (!entry) throw new TRPCError({ code: "NOT_FOUND", message: "Entry not found" });
+      if (entry.status === "loading" || entry.status === "running") {
+        throw new TRPCError({
+          code: "PRECONDITION_FAILED",
+          message: "This variant is still running. Delete it after the classifier finishes or the run is cancelled.",
+        });
+      }
+      await db
+        .delete(curationRuns)
+        .where(and(eq(curationRuns.organizationId, input.organizationId), eq(curationRuns.id, input.runId)));
+      await writeAuditEvent({
+        organizationId: input.organizationId,
+        actorUserId: ctx.user.id,
+        action: "curation.batch_entry_deleted",
+        entityType: "curation_run",
+        entityId: input.runId,
+        after: { gene: entry.input.gene, hgvsC: entry.input.hgvsC, status: entry.status },
+        req: ctx.req,
+      });
+      return { id: input.runId };
     }),
 });

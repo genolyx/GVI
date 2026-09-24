@@ -6,7 +6,6 @@
 /* Scoped to the review panel. These must not live on :root: --primary collides
    with the app theme in index.css, and this sheet stays loaded after review. */
 .samvc-review {
-  --primary: #3b82f6;
   --card-bg: rgba(255, 255, 255, 0.03);
   --card-border: rgba(255, 255, 255, 0.08);
   --text-main: #f8fafc;
@@ -16,7 +15,6 @@
   --sv-ink: #e2e8f0;
 }
 html:not(.dark) .samvc-review {
-  --primary: #2f96ab;
   --card-bg: rgb(11 21 32 / 3%);
   --card-border: rgb(11 21 32 / 10%);
   --text-main: #0b1520;
@@ -594,17 +592,8 @@ html:not(.dark) .samvc-review .lit-review-spec summary,
 html:not(.dark) .samvc-review .lit-review-section .lit-review-body {
   color: #0b1520;
 }
-html:not(.dark) .samvc-review .data-pill,
-html:not(.dark) .samvc-review .data-pill strong,
-html:not(.dark) .samvc-review .data-pill span {
-  color: #1e293b !important;
-}
 html:not(.dark) .samvc-review .data-pill a {
   color: #1e3a8a !important;
-}
-html:not(.dark) .samvc-review .data-pill {
-  background: rgb(11 21 32 / 4%);
-  border-color: rgb(11 21 32 / 18%);
 }
 html:not(.dark) .samvc-review .data-pill strong,
 html:not(.dark) .samvc-review .gene-profile-content,
@@ -650,4 +639,31 @@ html:not(.dark) .samvc-review [style*="#fcd34d"] {
 html:not(.dark) .samvc-review [style*="#fca5a5"],
 html:not(.dark) .samvc-review [style*="#fecaca"] {
   color: #9f1239 !important;
+}
+html:not(.dark) .samvc-review [style*="#a7f3d0"],
+html:not(.dark) .samvc-review [style*="#d1fae5"],
+html:not(.dark) .samvc-review [style*="#ecfdf5"],
+html:not(.dark) .samvc-review [style*="#bbf7d0"],
+html:not(.dark) .samvc-review [style*="#dbeafe"],
+html:not(.dark) .samvc-review [style*="#bae6fd"],
+html:not(.dark) .samvc-review [style*="#93c5fd"],
+html:not(.dark) .samvc-review [style*="#bfdbfe"] {
+  color: #0b1520 !important;
+}
+html:not(.dark) .samvc-review [style*="#64748b"] {
+  color: #3d4f63 !important;
+}
+/* Exon letters and hatch captions sit on dark diagram fills. Keep that ink light. */
+html:not(.dark) .samvc-review .splice-viz-wrap [style*="background:#2f5fbf"] span,
+html:not(.dark) .samvc-review .splice-viz-wrap [style*="rgba(20,20,30"] span {
+  color: #f8fafc !important;
+}
+html:not(.dark) .samvc-review .splice-map-section-label,
+html:not(.dark) .samvc-review .splice-track-tag {
+  color: #0b1520 !important;
+}
+
+/* Drop the colored left rule. Keep the callout fill and warning colors. */
+.samvc-review div[style*="border-left"] {
+  border-left: none !important;
 }
