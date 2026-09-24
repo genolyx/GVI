@@ -14,7 +14,7 @@ function buildSpliceVizHtml(sv, opts) {
     if (!sv) return '';
     if (sv.eligible === false) {
         if (section === 'isoforms') return '';
-        return '<div style="width:100%; flex-basis:100%; margin-top:10px; padding:8px 10px; font-size:0.8rem; color:#94a3b8; border-radius:6px; border:1px dashed rgba(255,255,255,0.12);">'
+        return '<div style="width:100%; flex-basis:100%; margin-top:10px; padding:8px 10px; font-size:0.8rem; color:var(--sv-muted,#94a3b8); border-radius:6px; border:1px dashed var(--line,rgba(255,255,255,0.12));">'
             + 'Transcript exon map: ' + String(sv.reason || 'unavailable').replace(/</g, '&lt;') + '</div>';
     }
     const showReference = section === 'full' || section === 'reference';
@@ -91,7 +91,7 @@ function buildSpliceVizHtml(sv, opts) {
         const target = cfg.targetRank;
         const skipRank = cfg.skipRank;
         const skip2Rank = cfg.skip2Rank;
-        let st = 'background:rgba(59,130,246,0.22);border:1px solid rgba(99,179,237,0.45);';
+        let st = 'background:#2f5fbf;border:1px solid #3b82f6;';
         let tip = 'Exon ' + r + ' \u2014 ' + (cfg.lenBp || '') + ' coding bp';
         if ((mode === 'skip' || mode === 'skip-pre') && skipRank != null && r === skipRank) {
             st = 'background:repeating-linear-gradient(135deg,rgba(244,63,94,0.22),rgba(244,63,94,0.22) 4px,rgba(20,20,30,0.4) 4px,rgba(20,20,30,0.4) 8px);border:1px dashed #f43f5e;opacity:0.85;';
@@ -175,7 +175,7 @@ function buildSpliceVizHtml(sv, opts) {
         return '<div style="position:relative;flex:0 0 ' + w + 'px;min-width:' + w + 'px;min-height:34px;border-radius:4px;border:2px dashed ' + bd + ';background:rgba(16,185,129,0.1);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:2px 4px;box-sizing:border-box;" title="' + T(boxTip) + '">'
             + terTick
             + '<span style="font-size:0.58rem;font-weight:700;color:' + col + ';line-height:1.1;">+' + T(ntStr) + ' nt</span>'
-            + '<span style="font-size:0.46rem;color:#94a3b8;">' + subLbl + '</span>'
+            + '<span style="font-size:0.46rem;color:var(--sv-muted,#94a3b8);">' + subLbl + '</span>'
             + (withPtc && !isUtr ? '<span style="font-size:0.46rem;color:#fca5a5;">PTC</span>' : '')
             + '</div>';
     };
@@ -373,13 +373,13 @@ function buildSpliceVizHtml(sv, opts) {
         } else if (kind === 'coding_exon') {
             s += '<span style="color:#fca5a5;">' + T(label) + '</span>';
         } else {
-            s += '<span style="color:#e2e8f0;">' + T(label || 'see protein line above') + '</span>';
+            s += '<span style="color:var(--sv-ink,#e2e8f0);">' + T(label || 'see protein line above') + '</span>';
         }
         if (detail) {
-            s += ' <span style="color:#94a3b8;">(' + T(detail) + ')</span>';
+            s += ' <span style="color:var(--sv-muted,#94a3b8);">(' + T(detail) + ')</span>';
         }
         if (hgvs) {
-            s += ' — <span style="color:#e2e8f0;">' + T(hgvs) + '</span>';
+            s += ' — <span style="color:var(--sv-ink,#e2e8f0);">' + T(hgvs) + '</span>';
         }
         s += ' <span style="color:#64748b;">— Ter marker on map shows position.</span>';
         return s;
@@ -466,7 +466,7 @@ function buildSpliceVizHtml(sv, opts) {
         if (!pw.exons.length) return '';
         const zoomLbl = ' <span style="color:#64748b;font-size:0.62rem;">(zoomed \u00b12 exons around E' + er + ')</span>';
         const sub = productLabel
-            ? ('<span style="color:#94a3b8;font-size:0.65rem;font-weight:500;">' + T(productLabel) + '</span>')
+            ? ('<span style="color:var(--sv-muted,#94a3b8);font-size:0.65rem;font-weight:500;">' + T(productLabel) + '</span>')
             : '';
         return spliceMapSection(
             '<span style="color:#fca5a5;">Novel stop (PTC)</span>' + (sub ? ' \u2014 ' + sub : '') + zoomLbl,
@@ -583,7 +583,7 @@ function buildSpliceVizHtml(sv, opts) {
         if (anchorEx != null) exons.push({ rank: anchorEx, w: 0.42, len_bp: exLenBpFromFull(anchorEx) || 200 });
         if (downEx != null && downEx !== anchorEx) exons.push({ rank: downEx, w: 0.42, len_bp: exLenBpFromFull(downEx) || 200 });
         if (!exons.length) {
-            return '<div style="color:#94a3b8;font-size:0.72rem;">Exon context unavailable for schematic.</div>';
+            return '<div style="color:var(--sv-muted,#94a3b8);font-size:0.72rem;">Exon context unavailable for schematic.</div>';
         }
         const dual = buildDualTrackIsoform(exons, 0, 0, {
             preStyleMode: 'jun-pre',
@@ -605,7 +605,7 @@ function buildSpliceVizHtml(sv, opts) {
         const note = cfg.noteLine || ('Mature mRNA: exon ' + (anchorEx || '?') + ' + ' + ntStr + ' nt pseudo-exon + exon ' + (downEx || '?') + '.');
         return '<div style="width:100%;display:flex;flex-direction:column;padding:2px 0;box-sizing:border-box;">'
             + dual
-            + '<div style="margin-top:8px;font-size:0.58rem;color:#94a3b8;line-height:1.45;width:100%;">' + note + '</div>'
+            + '<div style="margin-top:8px;font-size:0.58rem;color:var(--sv-muted,#94a3b8);line-height:1.45;width:100%;">' + note + '</div>'
             + '</div>';
     };
 
@@ -716,7 +716,7 @@ function buildSpliceVizHtml(sv, opts) {
             note += ' <span style="color:#fca5a5;">' + T(altPtcHgvs) + '</span>';
         }
         if (altHasPtc && sv.ptc_location_label) {
-            note += ' <span style="color:#94a3b8;">PTC location: ' + T(sv.ptc_location_label) + '.</span>';
+            note += ' <span style="color:var(--sv-muted,#94a3b8);">PTC location: ' + T(sv.ptc_location_label) + '.</span>';
         }
         return buildDeepIntronicRetainedSchematic({
             anchorExon: eLo,
@@ -758,7 +758,7 @@ function buildSpliceVizHtml(sv, opts) {
             note += ' <span style="color:#fca5a5;">' + T(altPtcHgvs) + '</span>';
         }
         if (altHasPtc && alt.ptc_location_label) {
-            note += ' <span style="color:#94a3b8;">PTC location: ' + T(alt.ptc_location_label) + '.</span>';
+            note += ' <span style="color:var(--sv-muted,#94a3b8);">PTC location: ' + T(alt.ptc_location_label) + '.</span>';
         }
         return buildDeepIntronicRetainedSchematic({
             anchorExon: eLo,
@@ -874,11 +874,11 @@ function buildSpliceVizHtml(sv, opts) {
     } else if (sv.competing && lossGtGain) {
         skipHeading = '<span style="color:#fca5a5">Preferred loss:</span> whole-exon\u2013skip \u2014 ' + exEm + ' removed';
     } else if (sv.competing && gainGtLoss) {
-        skipHeading = '<span style="color:#fca5a5">Parallel whole-exon\u2013skip</span> <span style="color:#94a3b8;font-size:0.65rem;font-weight:500;">(loss product)</span> \u2014 ' + exEm + ' removed';
+        skipHeading = '<span style="color:#fca5a5">Parallel whole-exon\u2013skip</span> <span style="color:var(--sv-muted,#94a3b8);font-size:0.65rem;font-weight:500;">(loss product)</span> \u2014 ' + exEm + ' removed';
     } else if (sv.competing) {
-        skipHeading = '<span style="color:#fca5a5">Whole-exon\u2013skip</span> <span style="color:#94a3b8;font-size:0.65rem;font-weight:500;">(loss product)</span> \u2014 ' + exEm + ' removed';
+        skipHeading = '<span style="color:#fca5a5">Whole-exon\u2013skip</span> <span style="color:var(--sv-muted,#94a3b8);font-size:0.65rem;font-weight:500;">(loss product)</span> \u2014 ' + exEm + ' removed';
     } else if (jPri && sv.junction_row) {
-        skipHeading = '<span style="color:#fca5a5">Parallel whole-exon\u2013skip</span> <span style="color:#94a3b8;font-size:0.65rem;font-weight:500;">(baseline if canonical site fails)</span> \u2014 ' + exEm + ' removed';
+        skipHeading = '<span style="color:#fca5a5">Parallel whole-exon\u2013skip</span> <span style="color:var(--sv-muted,#94a3b8);font-size:0.65rem;font-weight:500;">(baseline if canonical site fails)</span> \u2014 ' + exEm + ' removed';
     }
     const skipRow = spliceMapSection(
         skipHeading,
@@ -898,7 +898,7 @@ function buildSpliceVizHtml(sv, opts) {
     let skip2Row = '';
     if (secTarget != null && fs && fs.exons && fs.exons.length) {
         const secFrameNote = (sv.secondary_in_frame_skip === true)
-            ? ' <span style="color:#94a3b8;font-size:0.65rem;font-weight:500;">(multiple of 3; in-frame deletion \u2014 no novel stop from the skip alone)</span>'
+            ? ' <span style="color:var(--sv-muted,#94a3b8);font-size:0.65rem;font-weight:500;">(multiple of 3; in-frame deletion \u2014 no novel stop from the skip alone)</span>'
             : '';
         const altLabel = sv.deep_intronic_products
             ? '<span style="color:#fbbf24">2. Alternate splice product</span> \u2014 <em style="color:#fbbf24">E' + T(String(secTarget)) + '</em> removed (donor loss)'
@@ -927,7 +927,7 @@ function buildSpliceVizHtml(sv, opts) {
             ? (' (+' + sv.pseudoexon_retained_nt + ' nt 5\u2032 UTR, pre-AUG)')
             : '';
         junTitleHtml = '<span style="color:#6ee7b7">1. Primary splice product</span> \u2014 <span style="color:#7dd3fc">donor gain (DS_DG)' + ntUtr + '</span>'
-            + ' <span style="color:#94a3b8;font-size:0.68rem;">ORF unchanged; mRNA/translation effects possible</span>';
+            + ' <span style="color:var(--sv-muted,#94a3b8);font-size:0.68rem;">ORF unchanged; mRNA/translation effects possible</span>';
     } else if (sv.deep_intronic_products && sv.junction_row && sv.in_frame_exonization) {
         const ntLbl = (sv.pseudoexon_insert_nt != null) ? (' (+' + sv.pseudoexon_insert_nt + ' nt pseudo-exon, in-frame)') : ' (in-frame pseudo-exon)';
         junTitleHtml = '<span style="color:#6ee7b7">1. Primary splice product</span> \u2014 <span style="color:#a7f3d0">exonization' + ntLbl + '</span>';
@@ -1028,7 +1028,7 @@ function buildSpliceVizHtml(sv, opts) {
 
     const buildAcceptorGainAltMapRow = (alt, label, sublabel) => {
         const ntAlt = (alt.pseudoexon_retained_nt != null) ? (' (+' + alt.pseudoexon_retained_nt + ' nt)') : '';
-        const sub = sublabel ? (' \u2014 <span style="color:#94a3b8;font-size:0.68rem;">' + T(sublabel) + '</span>') : '';
+        const sub = sublabel ? (' \u2014 <span style="color:var(--sv-muted,#94a3b8);font-size:0.68rem;">' + T(sublabel) + '</span>') : '';
         const altTitle = '<span style="color:#fbbf24">' + label + '. Alternate splice product</span> \u2014 <span style="color:#fde68a">acceptor gain (DS_AG)' + ntAlt + '</span>' + sub;
         return spliceMapSection(
             altTitle,
@@ -1064,12 +1064,12 @@ function buildSpliceVizHtml(sv, opts) {
 
     const mapTitle = sv.reference_only ? 'Transcript exon map' : 'Splice exon map';
     const refHgvsLbl = hgvsViz
-        ? ' <span style="color:#94a3b8;font-size:0.65rem;font-weight:500;">— ' + T(hgvsViz)
+        ? ' <span style="color:var(--sv-muted,#94a3b8);font-size:0.65rem;font-weight:500;">— ' + T(hgvsViz)
             + (sv.pre_atg_utr_pseudoexon && sv.start_codon_exon_rank
                 ? ' (intron between E1 and E' + sv.start_codon_exon_rank + ')'
                 : (target != null ? ' (E' + target + ')' : ''))
             + '</span>'
-        : (target != null ? ' <span style="color:#94a3b8;font-size:0.65rem;font-weight:500;">— E' + target + '</span>' : '');
+        : (target != null ? ' <span style="color:var(--sv-muted,#94a3b8);font-size:0.65rem;font-weight:500;">— E' + target + '</span>' : '');
     let h = '<div class="splice-viz-wrap" style="width:100%; flex-basis: 100%; margin-top: 14px; margin-bottom: 4px; padding: 12px 12px 14px; background: rgba(0,0,0,0.22); border-radius: 8px; border: 1px solid rgba(255,255,255,0.1); box-sizing: border-box;">';
     h += '<div style="font-size:0.8rem; font-weight: 600; color: #7dd3fc; margin-bottom: 10px;">' + mapTitle + '</div>';
     if (showReference) {
@@ -1109,8 +1109,8 @@ function buildSpliceVizHtml(sv, opts) {
         }
     }
     if (showReference || showIsoforms) {
-        h += '<div style="font-size:0.68rem;color:#94a3b8;margin-top:10px;line-height:1.45;border-top:1px solid rgba(255,255,255,0.06);padding-top:8px;">'
-            + '<strong style="color:#cbd5e1;">How to read this map</strong> '
+        h += '<div style="font-size:0.68rem;color:var(--sv-muted,#94a3b8);margin-top:10px;line-height:1.45;border-top:1px solid var(--line,rgba(255,255,255,0.06));padding-top:8px;">'
+            + '<strong style="color:var(--sv-ink,#cbd5e1);">How to read this map</strong> '
             + (showReference ? '<span style="color:#fbbf24;">\u25C6</span> = variant locus on the reference gene row (exon position is schematic from HGVSc). ' : '')
             + (showIsoforms
                 ? '(schematic; exon box width \u221d coding bp — same width in Pre-mRNA and mRNA rows). Each isoform shows a <strong>Pre-mRNA</strong> row (gene with introns) and an <strong>mRNA</strong> row (spliced product). '

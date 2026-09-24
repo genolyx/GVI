@@ -106,8 +106,8 @@ export function SamVcPanel({ document }: { document: CurationDocument }) {
   }, [document]);
 
   return (
-    <div className="samvc-review space-y-4 text-slate-100">
-      {error ? <p className="rounded-lg border border-rose-400/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-100">{error}</p> : null}
+    <div className="samvc-review space-y-4 text-foreground">
+      {error ? <p className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-3 py-2 text-sm text-rose-800 dark:text-rose-100">{error}</p> : null}
       <div ref={profileRef} className="gene-profile-panel empty:hidden" />
       <div>
         <div className="eval-section-title mb-2">Classification detail</div>

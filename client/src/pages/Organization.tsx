@@ -159,7 +159,7 @@ export default function OrganizationPage() {
                         <p className="mt-1 text-[10px] text-muted-foreground">{member.email || `User #${member.userId}`}</p>
                       </TableCell>
                       <TableCell>
-                        <span className="status-pill bg-emerald-50 text-emerald-700">{member.status}</span>
+                        <span className="status-pill border border-emerald-500/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300">{member.status}</span>
                       </TableCell>
                       <TableCell className="pr-6 text-right">
                         <Select
@@ -247,10 +247,10 @@ export default function OrganizationPage() {
               </Button>
             </form>
             {inviteLink ? (
-              <div className="mt-5 rounded-xl border border-emerald-200 bg-emerald-50 p-3">
-                <p className="text-[10px] font-semibold text-emerald-800">Invite link</p>
+              <div className="mt-5 rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-3">
+                <p className="text-[10px] font-semibold text-emerald-800 dark:text-emerald-200">Invite link</p>
                 <div className="mt-2 flex gap-2">
-                  <Input readOnly value={inviteLink} className="h-8 bg-white text-[10px]" />
+                  <Input readOnly value={inviteLink} className="h-8 bg-background text-[10px]" />
                   <Button
                     size="icon"
                     variant="outline"

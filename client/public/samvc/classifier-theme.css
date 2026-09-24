@@ -3,13 +3,27 @@
 .banner.info { background: rgba(59, 130, 246, 0.15); border: 1px solid rgba(59, 130, 246, 0.35); }
 .banner.error { background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.35); color: #fecaca; }
 .banner.warn { background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.35); color: #fde68a; }
-:root {
+/* Scoped to the review panel. These must not live on :root: --primary collides
+   with the app theme in index.css, and this sheet stays loaded after review. */
+.samvc-review {
   --primary: #3b82f6;
   --card-bg: rgba(255, 255, 255, 0.03);
   --card-border: rgba(255, 255, 255, 0.08);
   --text-main: #f8fafc;
   --text-muted: #94a3b8;
   --line: rgba(255, 255, 255, 0.1);
+  --sv-muted: #94a3b8;
+  --sv-ink: #e2e8f0;
+}
+html:not(.dark) .samvc-review {
+  --primary: #2f96ab;
+  --card-bg: rgb(11 21 32 / 3%);
+  --card-border: rgb(11 21 32 / 10%);
+  --text-main: #0b1520;
+  --text-muted: #5c6f82;
+  --line: rgb(11 21 32 / 12%);
+  --sv-muted: #5c6f82;
+  --sv-ink: #0b1520;
 }
 /* Review uses full classifier width (wb-main is 1200px by default). */
 body.wb-review-page .wb-main {
@@ -564,3 +578,32 @@ body.wb-review-page .wb-main {
     display: none;
 }
 
+
+html:not(.dark) .samvc-review .eval-section,
+html:not(.dark) .samvc-review .lit-review-spec,
+html:not(.dark) .samvc-review .copy-paste-textarea {
+  background: rgb(11 21 32 / 3%);
+  border-color: rgb(11 21 32 / 10%);
+  color: #0b1520;
+}
+html:not(.dark) .samvc-review .data-pill {
+  background: rgb(11 21 32 / 4%);
+  border-color: rgb(11 21 32 / 10%);
+  color: #5c6f82;
+}
+html:not(.dark) .samvc-review .data-pill strong,
+html:not(.dark) .samvc-review .gene-profile-content,
+html:not(.dark) .samvc-review .lit-review-section .lit-review-body,
+html:not(.dark) .samvc-review .result-row,
+html:not(.dark) .samvc-review .splice-map-section-label {
+  color: #0b1520;
+}
+html:not(.dark) .samvc-review .gene-profile-panel {
+  background: rgb(47 150 171 / 8%);
+  border-color: rgb(47 150 171 / 28%);
+}
+html:not(.dark) .samvc-review .classification.pathogenic { color: #be123c; }
+html:not(.dark) .samvc-review .classification.benign { color: #0369a1; }
+html:not(.dark) .samvc-review .classification.vus { color: #0b1520; border-color: rgb(11 21 32 / 15%); }
+html:not(.dark) .samvc-review .banner.error { color: #9f1239; }
+html:not(.dark) .samvc-review .banner.warn { color: #92400e; }

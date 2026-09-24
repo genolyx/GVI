@@ -139,19 +139,19 @@ export default function BatchReviewPage() {
       ) : documentQuery.isLoading || !documentQuery.data ? (
         <p className="text-sm text-muted-foreground">Loading classification detail…</p>
       ) : (
-        <section className="rounded-2xl border border-slate-700 bg-[#0b1220] p-5 text-slate-100">
+        <section className="rounded-2xl border border-border/80 bg-card p-5 text-card-foreground">
           <h2 className="font-display text-xl font-semibold">
-            Evaluation Results <span className="ml-2 text-xs font-medium uppercase tracking-wider text-amber-300">saved run · {documentQuery.data.document.meta.engineVersion}</span>
+            Evaluation Results <span className="ml-2 text-xs font-medium uppercase tracking-wider text-amber-700 dark:text-amber-300">saved run · {documentQuery.data.document.meta.engineVersion}</span>
           </h2>
           <div className="mt-4">
             <SamVcPanel document={documentQuery.data.document} />
           </div>
-          <div className="mt-6 grid gap-6 border-t border-white/10 pt-5 lg:grid-cols-2">
+          <div className="mt-6 grid gap-6 border-t border-border pt-5 lg:grid-cols-2">
             <div>
-              <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Institutional classification</p>
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Institutional classification</p>
               <select
                 aria-label="Institutional classification"
-                className="mt-2 h-10 w-full rounded-lg border border-white/15 bg-slate-900 px-3 text-sm"
+                className="mt-2 h-10 w-full rounded-lg border border-input bg-background px-3 text-sm text-foreground"
                 value={label}
                 disabled={!canEdit || saveInstitutional.isPending}
                 onChange={event => setLabel(event.target.value)}
@@ -171,17 +171,17 @@ export default function BatchReviewPage() {
                   Save
                 </Button>
               ) : (
-                <p className="mt-2 text-xs text-slate-400">You can view this call. Saving requires interpretation permission.</p>
+                <p className="mt-2 text-xs text-muted-foreground">You can view this call. Saving requires interpretation permission.</p>
               )}
             </div>
             <div>
-              <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">ACMG logic</p>
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">ACMG logic</p>
               <div className="mt-3 flex flex-wrap gap-2">
                 {criteria.length ? criteria.map(criterion => (
-                  <span key={criterion.code} title={criterion.rationale} className={`rounded-md border px-2 py-1 font-mono text-xs font-semibold ${criterion.direction === "pathogenic" ? "border-rose-400 text-rose-300" : "border-sky-400 text-sky-300"}`}>
+                  <span key={criterion.code} title={criterion.rationale} className={`rounded-md border px-2 py-1 font-mono text-xs font-semibold ${criterion.direction === "pathogenic" ? "border-rose-500/40 text-rose-700 dark:text-rose-300" : "border-sky-500/40 text-sky-700 dark:text-sky-300"}`}>
                     {criterion.code}
                   </span>
-                )) : <span className="text-sm italic text-slate-500">No criteria met</span>}
+                )) : <span className="text-sm italic text-muted-foreground">No criteria met</span>}
               </div>
               <p className="mt-3 text-lg font-semibold">{acmg?.label || "—"}</p>
             </div>

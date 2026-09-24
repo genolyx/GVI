@@ -4,15 +4,14 @@ export function workbenchStatusLabel(status: string) {
 }
 
 export function workbenchStatusClass(status: string) {
-  if (status === "succeeded") return "border-emerald-200 bg-emerald-50 text-emerald-700";
-  if (status === "running") return "border-sky-200 bg-sky-50 text-sky-700";
-  if (status === "failed") return "border-rose-200 bg-rose-50 text-rose-700";
-  if (status === "cancelled") return "border-slate-200 bg-slate-50 text-slate-500";
-  return "border-slate-200 bg-slate-50 text-slate-600";
+  if (status === "succeeded") return "border-emerald-500/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300";
+  if (status === "running") return "border-sky-500/30 bg-sky-500/10 text-sky-800 dark:text-sky-300";
+  if (status === "failed") return "border-rose-500/30 bg-rose-500/10 text-rose-800 dark:text-rose-300";
+  return "border-border bg-muted text-muted-foreground";
 }
 
 export function classificationTone(cssClass?: string | null) {
-  if (cssClass === "pathogenic") return "border-rose-300 bg-rose-50 text-rose-700";
-  if (cssClass === "benign") return "border-sky-300 bg-sky-50 text-sky-700";
-  return "border-amber-200 bg-amber-50 text-amber-800";
+  if (cssClass === "pathogenic") return "border-rose-500/40 bg-rose-500/10 text-rose-800 dark:text-rose-300";
+  if (cssClass === "benign") return "border-sky-500/40 bg-sky-500/10 text-sky-800 dark:text-sky-300";
+  return "border-amber-500/40 bg-amber-500/10 text-amber-900 dark:text-amber-200";
 }

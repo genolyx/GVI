@@ -20,17 +20,17 @@ const LABELS: Record<string, string> = {
 };
 
 const TONES: Record<string, string> = {
-  draft: "bg-slate-100 text-slate-700 border-slate-200",
-  queued: "bg-amber-50 text-amber-800 border-amber-200",
-  running: "bg-cyan-50 text-cyan-800 border-cyan-200",
-  review_ready: "bg-violet-50 text-violet-800 border-violet-200",
-  in_review: "bg-indigo-50 text-indigo-800 border-indigo-200",
-  reported: "bg-emerald-50 text-emerald-800 border-emerald-200",
-  completed: "bg-emerald-50 text-emerald-800 border-emerald-200",
-  signed: "bg-emerald-50 text-emerald-800 border-emerald-200",
-  approved: "bg-emerald-50 text-emerald-800 border-emerald-200",
-  failed: "bg-rose-50 text-rose-800 border-rose-200",
-  flagged: "bg-rose-50 text-rose-800 border-rose-200",
+  draft: "border-border bg-muted text-muted-foreground",
+  queued: "border-amber-500/30 bg-amber-500/10 text-amber-900 dark:text-amber-200",
+  running: "border-cyan-500/30 bg-cyan-500/10 text-cyan-900 dark:text-cyan-200",
+  review_ready: "border-violet-500/30 bg-violet-500/10 text-violet-900 dark:text-violet-200",
+  in_review: "border-indigo-500/30 bg-indigo-500/10 text-indigo-900 dark:text-indigo-200",
+  reported: "border-emerald-500/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300",
+  completed: "border-emerald-500/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300",
+  signed: "border-emerald-500/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300",
+  approved: "border-emerald-500/30 bg-emerald-500/10 text-emerald-800 dark:text-emerald-300",
+  failed: "border-rose-500/30 bg-rose-500/10 text-rose-800 dark:text-rose-300",
+  flagged: "border-rose-500/30 bg-rose-500/10 text-rose-800 dark:text-rose-300",
 };
 
 export function ClinicalStatus({ status, className }: { status: string; className?: string }) {
