@@ -179,6 +179,20 @@ def analyze_run(run: ClaimedRun, settings: WorkerSettings) -> tuple[dict[str, An
     )
 
 
+def _claim_when_ready(client: EngineApiClient, settings: WorkerSettings) -> Optional[ClaimedRun]:
+    """Claim the next run, retrying while the API process restarts."""
+    deadline = time.time() + 30
+    while not _shutdown.is_set():
+        try:
+            return client.claim()
+        except EngineApiError as exc:
+            print(f"[worker] claim failed: {exc}", flush=True)
+            if time.time() >= deadline:
+                return None
+            _shutdown.wait(min(2, settings.poll_interval_seconds))
+    return None
+
+
 def _install_signal_handlers() -> None:
     def handle(signum: int, _frame: Any) -> None:
         print(f"[worker] signal {signum}; finishing current run then exiting", flush=True)
@@ -203,16 +217,45 @@ def main(argv: Optional[list[str]] = None) -> int:
         flush=True,
     )
 
+    client = EngineApiClient(settings.api_url, settings.worker_token, settings.worker_id)
+
+    # Claim before the reference mount so the row leaves Queued immediately.
+    # Heartbeats keep the lease alive while ClinVar and HGMD load.
+    startup_run = _claim_when_ready(client, settings)
+    startup_heartbeat: Optional[_Heartbeat] = None
+    if startup_run is not None:
+        print(
+            f"[worker] run {startup_run.run_id} loading: {startup_run.gene} {startup_run.hgvs_c}",
+            flush=True,
+        )
+        try:
+            client.heartbeat(startup_run.run_id)
+        except EngineApiError as exc:
+            print(f"[worker] heartbeat failed for run {startup_run.run_id}: {exc}", flush=True)
+        startup_heartbeat = _Heartbeat(client, startup_run.run_id, settings.heartbeat_interval_seconds)
+        startup_heartbeat.__enter__()
+
     try:
-        # Mount reference data before claiming anything, so a slow cold start never
-        # burns a lease.
         load_engine(settings.engine_version)
     except Exception as exc:  # noqa: BLE001
         print(f"[worker] fatal: engine failed to load: {exc}", flush=True)
+        if startup_heartbeat is not None:
+            startup_heartbeat.__exit__(None, None, None)
+        if startup_run is not None:
+            try:
+                client.fail(
+                    startup_run.run_id,
+                    message=f"Engine failed to load: {exc}",
+                    kind="engine_load",
+                    retryable=False,
+                )
+            except EngineApiError as fail_exc:
+                print(f"[worker] could not fail run {startup_run.run_id}: {fail_exc}", flush=True)
         probe_server.shutdown()
         return 1
 
-    client = EngineApiClient(settings.api_url, settings.worker_token, settings.worker_id)
+    if startup_heartbeat is not None:
+        startup_heartbeat.__exit__(None, None, None)
 
     llm_via_proxy = False
     if settings.gemini_enabled:
@@ -231,6 +274,9 @@ def main(argv: Optional[list[str]] = None) -> int:
         elif not os.environ.get("GEMINI_API_KEY", "").strip():
             os.environ["VC_DISABLE_GEMINI"] = "1"
             print("[worker] LLM disabled (proxy not configured, no Gemini key)", flush=True)
+
+    if startup_run is not None:
+        _process(client, settings, startup_run)
 
     idle_logged = False
     while not _shutdown.is_set():

@@ -9,6 +9,7 @@ import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 import { registerGatewayAuthRoutes } from "../gatewayAuth";
 import { registerEngineApiRoutes, startCurationReaper } from "../engineApi";
+import { ensureCurationWorker } from "../domain/curationWorker";
 import { registerDevAuthRoutes } from "./devAuth";
 import { ENV } from "./env";
 
@@ -29,6 +30,11 @@ async function findAvailablePort(startPort: number = 3000): Promise<number> {
     }
   }
   throw new Error(`No available port found starting from ${startPort}`);
+}
+
+if (!ENV.isProduction && ENV.engineWorkerToken.length < 32) {
+  ENV.engineWorkerToken = "local-dev-engine-worker-token-change-me!!";
+  process.env.ENGINE_WORKER_TOKEN = ENV.engineWorkerToken;
 }
 
 async function startServer() {
@@ -70,6 +76,20 @@ async function startServer() {
 
   server.listen(port, () => {
     console.log(`Server running on http://localhost:${port}/`);
+    // Mount ClinVar and HGMD now, so the first analysis does not sit in Loading.
+    // The process stays up and later variants reuse that mount.
+    if (ENV.engineWorkerToken.length >= 32) {
+      try {
+        const worker = ensureCurationWorker();
+        console.log(
+          worker.alreadyRunning
+            ? "[curation] classifier already warm"
+            : "[curation] classifier starting; reference data will mount in the background"
+        );
+      } catch (error) {
+        console.error("[curation] classifier did not start:", error instanceof Error ? error.message : error);
+      }
+    }
   });
 }
 

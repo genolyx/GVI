@@ -586,10 +586,25 @@ html:not(.dark) .samvc-review .copy-paste-textarea {
   border-color: rgb(11 21 32 / 10%);
   color: #0b1520;
 }
+html:not(.dark) .samvc-review .classifier-review-shell h2,
+html:not(.dark) .samvc-review h2,
+html:not(.dark) .samvc-review .eval-section-source,
+html:not(.dark) .samvc-review .lit-review-spec,
+html:not(.dark) .samvc-review .lit-review-spec summary,
+html:not(.dark) .samvc-review .lit-review-section .lit-review-body {
+  color: #0b1520;
+}
+html:not(.dark) .samvc-review .data-pill,
+html:not(.dark) .samvc-review .data-pill strong,
+html:not(.dark) .samvc-review .data-pill span {
+  color: #1e293b !important;
+}
+html:not(.dark) .samvc-review .data-pill a {
+  color: #1e3a8a !important;
+}
 html:not(.dark) .samvc-review .data-pill {
   background: rgb(11 21 32 / 4%);
-  border-color: rgb(11 21 32 / 10%);
-  color: #5c6f82;
+  border-color: rgb(11 21 32 / 18%);
 }
 html:not(.dark) .samvc-review .data-pill strong,
 html:not(.dark) .samvc-review .gene-profile-content,
@@ -607,3 +622,32 @@ html:not(.dark) .samvc-review .classification.benign { color: #0369a1; }
 html:not(.dark) .samvc-review .classification.vus { color: #0b1520; border-color: rgb(11 21 32 / 15%); }
 html:not(.dark) .samvc-review .banner.error { color: #9f1239; }
 html:not(.dark) .samvc-review .banner.warn { color: #92400e; }
+/* Classifier markup sets pale ink inline for a dark canvas. Light mode keeps the hue and darkens the ink. */
+html:not(.dark) .samvc-review [style*="#7dd3fc"],
+html:not(.dark) .samvc-review [style*="#38bdf8"] {
+  color: #075985 !important;
+}
+html:not(.dark) .samvc-review [style*="#c4b5fd"],
+html:not(.dark) .samvc-review [style*="#a78bfa"] {
+  color: #5b21b6 !important;
+}
+html:not(.dark) .samvc-review [style*="#e0f2fe"],
+html:not(.dark) .samvc-review [style*="#e2e8f0"],
+html:not(.dark) .samvc-review [style*="#cbd5e1"],
+html:not(.dark) .samvc-review [style*="#94a3b8"],
+html:not(.dark) .samvc-review [style*="#f8fafc"] {
+  color: #1e293b !important;
+}
+html:not(.dark) .samvc-review [style*="#6ee7b7"],
+html:not(.dark) .samvc-review [style*="#86efac"] {
+  color: #065f46 !important;
+}
+html:not(.dark) .samvc-review [style*="#fde68a"],
+html:not(.dark) .samvc-review [style*="#fbbf24"],
+html:not(.dark) .samvc-review [style*="#fcd34d"] {
+  color: #92400e !important;
+}
+html:not(.dark) .samvc-review [style*="#fca5a5"],
+html:not(.dark) .samvc-review [style*="#fecaca"] {
+  color: #9f1239 !important;
+}

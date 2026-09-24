@@ -26,7 +26,10 @@ import { requireDb } from "./tenant";
  */
 
 /** Runs still occupying a queue slot for their variant. */
-export const ACTIVE_CURATION_STATUSES = ["queued", "running"] as const;
+export const ACTIVE_CURATION_STATUSES = ["queued", "loading", "running"] as const;
+
+/** A worker holds the lease in both of these. Loading is the reference-data mount. */
+const LEASED_CURATION_STATUSES = ["loading", "running"] as const;
 
 export type EnqueueCurationRun = {
   organizationId: number;
@@ -109,7 +112,7 @@ export async function claimCurationRun(workerId: string): Promise<CurationRun | 
   const db = await requireDb();
   const result = await db.execute(sql`
     update curation_runs set
-      status = 'running',
+      status = 'loading',
       "workerId" = ${workerId},
       "leaseExpiresAt" = now() + ${`${ENV.engineLeaseSeconds} seconds`}::interval,
       "heartbeatAt" = now(),
@@ -117,7 +120,8 @@ export async function claimCurationRun(workerId: string): Promise<CurationRun | 
       "startedAt" = coalesce("startedAt", now())
     where id = (
       select id from curation_runs
-      where status = 'queued'
+      -- priority < 0 is a batch row waiting for Run batch; the worker must not claim it.
+      where status = 'queued' and priority >= 0
       order by priority desc, "queuedAt" asc
       for update skip locked
       limit 1
@@ -142,7 +146,7 @@ export async function extendCurationLease(
       and(
         eq(curationRuns.id, runId),
         eq(curationRuns.workerId, workerId),
-        eq(curationRuns.status, "running")
+        inArray(curationRuns.status, [...LEASED_CURATION_STATUSES])
       )
     )
     .returning({ leaseExpiresAt: curationRuns.leaseExpiresAt });
@@ -162,7 +166,7 @@ export async function getLeasedRun(
       and(
         eq(curationRuns.id, runId),
         eq(curationRuns.workerId, workerId),
-        eq(curationRuns.status, "running")
+        inArray(curationRuns.status, [...LEASED_CURATION_STATUSES])
       )
     )
     .limit(1);
@@ -185,7 +189,7 @@ export async function reapExpiredCurationLeases(): Promise<ReaperResult> {
       "leaseExpiresAt" = null,
       "heartbeatAt" = null,
       "queuedAt" = now()
-    where status = 'running'
+    where status in ('loading', 'running')
       and "leaseExpiresAt" < now()
       and attempt < "maxAttempts"
     returning id, "organizationId", attempt
@@ -203,7 +207,7 @@ export async function reapExpiredCurationLeases(): Promise<ReaperResult> {
         'attempt', attempt,
         'at', now()
       )
-    where status = 'running'
+    where status in ('loading', 'running')
       and "leaseExpiresAt" < now()
       and attempt >= "maxAttempts"
     returning id, "organizationId", attempt

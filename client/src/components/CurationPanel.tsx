@@ -34,7 +34,7 @@ export function CurationPanel({
       enabled: Boolean(organizationId && variantId),
       // Poll while work is outstanding so the panel fills in without a manual reload.
       refetchInterval: query =>
-        query.state.data?.some(run => run.status === "queued" || run.status === "running")
+        query.state.data?.some(run => run.status === "queued" || run.status === "loading" || run.status === "running")
           ? 4000
           : false,
     }
@@ -68,7 +68,7 @@ export function CurationPanel({
         <Button
           size="sm"
           variant="outline"
-          disabled={enqueue.isPending || latest?.status === "queued" || latest?.status === "running"}
+          disabled={enqueue.isPending || latest?.status === "queued" || latest?.status === "loading" || latest?.status === "running"}
           onClick={() => enqueue.mutate({ organizationId, variantId })}
         >
           {enqueue.isPending ? (
@@ -126,7 +126,7 @@ export function CurationPanel({
     );
   }
 
-  const inFlight = latest && (latest.status === "queued" || latest.status === "running");
+  const inFlight = latest && (latest.status === "queued" || latest.status === "loading" || latest.status === "running");
 
   return (
     <div>

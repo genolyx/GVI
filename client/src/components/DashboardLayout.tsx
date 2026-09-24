@@ -38,7 +38,6 @@ import {
   FlaskConical,
   LayoutDashboard,
   LogOut,
-  Microscope,
   PanelLeft,
   Settings,
   ShieldCheck,
@@ -136,7 +135,6 @@ const menuItems: Array<{
   { icon: LayoutDashboard, label: "Dashboard", path: "/", permission: "case:read" },
   { icon: ClipboardList, label: "Cases", path: "/cases", permission: "case:read" },
   { icon: FlaskConical, label: "Variant Workbench", path: "/workbench", permission: "variant:read" },
-  { icon: Microscope, label: "Curate Variant", path: "/curate", permission: "curation:run" },
   { icon: FileSignature, label: "Clinical Reports", path: "/reports", permission: "report:read" },
   { icon: Activity, label: "Audit Log", path: "/audit", permission: "audit:view" },
   { icon: ShieldCheck, label: "Security", path: "/security", permission: "security:view" },
@@ -224,7 +222,7 @@ function DashboardLayoutContent({ children, setSidebarWidth }: { children: React
               ) : (
                 <div className="flex min-w-0 flex-col items-center px-8 text-center">
                   <GenolyxWordmark className="object-center" />
-                  <p className="mt-1 text-[9px] font-medium uppercase tracking-[0.16em] text-sidebar-foreground/50">Variant Curation</p>
+                  <p className="mt-1 text-xs font-medium uppercase tracking-[0.16em] text-sidebar-foreground/50">Variant Curation</p>
                 </div>
               )}
               <button onClick={toggleSidebar} aria-label={isCollapsed ? "Expand navigation" : "Collapse navigation"} className={isCollapsed ? "grid size-7 shrink-0 place-items-center rounded-lg text-sidebar-foreground/60 hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-sidebar-ring" : "absolute right-0 top-0 grid size-8 shrink-0 place-items-center rounded-lg text-sidebar-foreground/60 hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-sidebar-ring"}><PanelLeft className="size-4" /></button>
@@ -234,7 +232,7 @@ function DashboardLayoutContent({ children, setSidebarWidth }: { children: React
                 <DropdownMenuTrigger asChild>
                   <button className="mt-4 flex w-full items-center gap-3 rounded-xl border border-sidebar-border/80 bg-sidebar-accent/45 px-3 py-2.5 text-left hover:bg-sidebar-accent">
                     <Building2 className="size-4 shrink-0 text-sidebar-primary" />
-                    <div className="min-w-0 flex-1"><p className="truncate text-xs font-semibold">{activeOrganization.name}</p><p className="mt-0.5 truncate text-[9px] uppercase tracking-wide text-sidebar-foreground/50">{activeOrganization.role}</p></div>
+                    <div className="min-w-0 flex-1"><p className="truncate text-[0.9375rem] font-semibold">{activeOrganization.name}</p><p className="mt-0.5 truncate text-xs uppercase tracking-wide text-sidebar-foreground/50">{activeOrganization.role}</p></div>
                     <ChevronDown className="size-3 text-sidebar-foreground/40" />
                   </button>
                 </DropdownMenuTrigger>
@@ -248,7 +246,7 @@ function DashboardLayoutContent({ children, setSidebarWidth }: { children: React
             <SidebarMenu>
               {visibleMenuItems.map(item => {
                 const active = item.path === "/" ? location === "/" : location.startsWith(item.path);
-                return <SidebarMenuItem key={item.path}><SidebarMenuButton isActive={active} onClick={() => setLocation(item.path)} tooltip={item.label} className="h-10 rounded-lg text-[13px] font-medium data-[active=true]:bg-sidebar-primary/10 data-[active=true]:text-sidebar-primary"><item.icon className="size-4" /><span>{item.label}</span></SidebarMenuButton></SidebarMenuItem>;
+                return <SidebarMenuItem key={item.path}><SidebarMenuButton isActive={active} onClick={() => setLocation(item.path)} tooltip={item.label} className="h-10 rounded-lg text-[0.9375rem] font-medium data-[active=true]:bg-sidebar-primary/10 data-[active=true]:text-sidebar-primary"><item.icon className="size-4" /><span>{item.label}</span></SidebarMenuButton></SidebarMenuItem>;
               })}
             </SidebarMenu>
           </SidebarContent>
@@ -257,7 +255,7 @@ function DashboardLayoutContent({ children, setSidebarWidth }: { children: React
               <DropdownMenuTrigger asChild>
                 <button className="flex w-full items-center gap-3 rounded-lg p-1 text-left hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-sidebar-ring">
                   <Avatar className="size-9 shrink-0 border border-sidebar-border"><AvatarFallback className="bg-sidebar-accent text-xs text-sidebar-foreground">{user?.name?.charAt(0).toUpperCase() || "U"}</AvatarFallback></Avatar>
-                  {!isCollapsed ? <div className="min-w-0 flex-1"><p className="truncate text-xs font-semibold">{user?.name || "-"}</p><div className="mt-1 flex items-center gap-2"><p className="truncate text-[9px] text-sidebar-foreground/50">{user?.email || "-"}</p>{activeOrganization ? <Badge variant="outline" className="h-4 border-sidebar-border px-1 text-[7px] uppercase text-sidebar-foreground/60">{activeOrganization.role}</Badge> : null}</div></div> : null}
+                  {!isCollapsed ? <div className="min-w-0 flex-1"><p className="truncate text-[0.9375rem] font-semibold">{user?.name || "-"}</p><div className="mt-1 flex items-center gap-2"><p className="truncate text-xs text-sidebar-foreground/50">{user?.email || "-"}</p>{activeOrganization ? <Badge variant="outline" className="h-5 border-sidebar-border px-1.5 text-xs uppercase text-sidebar-foreground/60">{activeOrganization.role}</Badge> : null}</div></div> : null}
                 </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-64">

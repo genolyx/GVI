@@ -301,7 +301,7 @@ export const curationRouter = router({
         caseId: z.number().int().positive().optional(),
         variantId: z.number().int().positive().optional(),
         status: z
-          .array(z.enum(["queued", "running", "succeeded", "failed", "cancelled"]))
+          .array(z.enum(["queued", "loading", "running", "succeeded", "failed", "cancelled"]))
           .optional(),
         limit: z.number().int().min(1).max(200).default(50),
       })

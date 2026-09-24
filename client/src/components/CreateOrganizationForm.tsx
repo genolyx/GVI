@@ -59,8 +59,14 @@ export function CreateOrganizationForm({
       <Button
         className="w-full"
         size="lg"
-        disabled={create.isPending || name.length < 2 || slug.length < 2}
-        onClick={() => create.mutate({ name, slug, dataRegion: "KR" })}
+        disabled={create.isPending}
+        onClick={() => {
+          if (name.length < 2 || slug.length < 2) {
+            toast.error("Enter an organization name and identifier.");
+            return;
+          }
+          create.mutate({ name, slug, dataRegion: "KR" });
+        }}
       >
         {create.isPending ? "Creating…" : submitLabel}
         <ArrowRight className="ml-2 size-4" />

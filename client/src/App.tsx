@@ -14,7 +14,6 @@ import WorkbenchPage from "./pages/Workbench";
 import WorkbenchHomePage from "./pages/workbench/WorkbenchHome";
 import BatchPage from "./pages/workbench/BatchPage";
 import BatchReviewPage from "./pages/workbench/BatchReviewPage";
-import CuratePage from "./pages/Curate";
 import ReportsPage from "./pages/Reports";
 import ReportEditorPage from "./pages/ReportEditor";
 import OrganizationPage from "./pages/Organization";
@@ -36,7 +35,6 @@ function Router() {
       <Route path={"/workbench/batches/:batchId/review/:runId"} component={BatchReviewPage} />
       <Route path={"/workbench/batches/:batchId"} component={BatchPage} />
       <Route path={"/workbench/:caseId"} component={WorkbenchPage} />
-      <Route path={"/curate"} component={CuratePage} />
       <Route path={"/reports"} component={ReportsPage} />
       <Route path={"/reports/:id"} component={ReportEditorPage} />
       <Route path={"/organization"} component={OrganizationPage} />

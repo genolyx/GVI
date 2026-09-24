@@ -151,8 +151,8 @@ export function registerEngineApiRoutes(app: Express) {
       await db.insert(curationRunEvents).values({
         organizationId: run.organizationId,
         runId: run.id,
-        status: "running",
-        message: `Claimed by worker ${workerId} (attempt ${run.attempt}).`,
+        status: "loading",
+        message: `Loading reference data (attempt ${run.attempt}).`,
         progressPercent: 1,
         metadata: { workerId, attempt: run.attempt },
       });
@@ -218,6 +218,18 @@ export function registerEngineApiRoutes(app: Express) {
       }
 
       const db = await requireDb();
+      if (input.status === "running" && run.status === "loading") {
+        await db
+          .update(curationRuns)
+          .set({ status: "running" })
+          .where(
+            and(
+              eq(curationRuns.id, run.id),
+              eq(curationRuns.workerId, input.workerId),
+              eq(curationRuns.status, "loading")
+            )
+          );
+      }
       await db.insert(curationRunEvents).values({
         organizationId: run.organizationId,
         runId: run.id,

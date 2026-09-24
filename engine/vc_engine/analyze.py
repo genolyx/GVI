@@ -130,6 +130,12 @@ def _collect_refseq_nm_synonyms_from_vep_tc(transcript_consequences):
         right = right.strip()
         right_l = right.lower()
         left_u = left.upper()
+        mane_sel = (t.get("mane_select") or "").strip()
+        mane_u = mane_sel.upper()
+        # VEP often puts the coding HGVS on an ENST and the RefSeq only in mane_select.
+        if mane_u.startswith(("NM_", "NR_")) and not left_u.startswith(("NM_", "NR_")):
+            left = mane_sel
+            left_u = mane_u
         if right_l.startswith("c.") and left_u.startswith("NM_"):
             pass
         elif right_l.startswith(("n.", "r.")) and left_u.startswith("NR_"):
@@ -140,7 +146,6 @@ def _collect_refseq_nm_synonyms_from_vep_tc(transcript_consequences):
         if full in seen_full:
             continue
         seen_full.add(full)
-        mane_sel = (t.get("mane_select") or "").strip()
         pairs.append(
             {
                 "refseq": left,
@@ -2707,7 +2712,7 @@ def _resolve_user_transcript_base(parsed_data, target_transcript):
     if tx:
         return tx
     for pair in parsed_data.get("refseq_nm_synonyms") or []:
-        nm = (pair.get("nm") or pair.get("accession") or "").strip()
+        nm = (pair.get("refseq") or pair.get("nm") or pair.get("accession") or "").strip()
         if nm.upper().startswith("NM_"):
             return _transcript_base_id(nm)
     return ""
@@ -4477,6 +4482,15 @@ def analyze_variant():
                                 return jsonify({"error": f"Invalid Variant Reference: {err_txt}"}), 400
                         except: pass
                     
+                if vep_response.status_code != 200:
+                    err_body = ""
+                    try:
+                        err_body = (vep_response.text or "")[:300]
+                    except Exception:
+                        err_body = ""
+                    parsed_data["debug_vep"] = f"HTTP {vep_response.status_code}: {err_body}"
+                    print(f"DEBUG: VEP HTTP {vep_response.status_code}: {err_body}", flush=True)
+
                 if vep_response.status_code == 200:
                     vep_data = vep_response.json()
                     if vep_data and len(vep_data) > 0:
@@ -5251,7 +5265,6 @@ def analyze_variant():
         # Last resort: Ensembl VEP HGVS → chr-pos-ref-alt → Broad SpliceAI (covers SNVs when ClinVar genomic missing / regex failed)
         if not parsed_data.get('spliceai_fetched', False):
             try:
-                import urllib.parse
                 hgvs_q = _vep_hgvs_query(target_transcript, c_dot, effective_gene) or f"{effective_gene}:{c_dot}"
                 vep_fb = f"https://rest.ensembl.org/vep/human/hgvs/{urllib.parse.quote(hgvs_q, safe='')}?canonical=1&vcf_string=1"
                 vresp = http_session.get(vep_fb, timeout=120)
@@ -6867,7 +6880,6 @@ def analyze_variant():
             parsed_data['hgvs_p'] = new_p
 
         # External Search Links
-        import urllib.parse
         gs_query = f'"{effective_gene}" "{c_dot}"'
         parsed_data['google_scholar_link'] = f'https://scholar.google.com/scholar?q={urllib.parse.quote(gs_query)}'
         # hgmd_link set after RefSeq synonym / HGMD resolution (prefers MANE c.)

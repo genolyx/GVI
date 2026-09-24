@@ -229,6 +229,7 @@ export const variantTriageTierEnum = pgEnum("variant_triage_tier", [
 ]);
 export const curationRunStatusEnum = pgEnum("curation_run_status", [
   "queued",
+  "loading",
   "running",
   "succeeded",
   "failed",
@@ -688,7 +689,7 @@ export const curationRuns = pgTable(
     // Drives the reaper sweep over expired leases.
     index("curation_runs_lease_idx")
       .on(table.leaseExpiresAt)
-      .where(sql`${table.status} = 'running'`),
+      .where(sql`${table.status} in ('loading', 'running')`),
     index("curation_runs_org_status_idx").on(table.organizationId, table.status, table.queuedAt),
     index("curation_runs_variant_idx").on(table.organizationId, table.variantId),
     index("curation_runs_case_idx").on(table.organizationId, table.caseId),
@@ -697,7 +698,7 @@ export const curationRuns = pgTable(
     // variantId and Postgres treats those as distinct, so they are unaffected.
     uniqueIndex("curation_runs_active_variant_uq")
       .on(table.organizationId, table.variantId)
-      .where(sql`${table.status} in ('queued', 'running')`),
+      .where(sql`${table.status} in ('queued', 'loading', 'running')`),
     index("curation_runs_summary_gin").using("gin", table.summary),
     foreignKey({
       name: "curation_runs_case_org_fk",

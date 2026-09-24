@@ -57,6 +57,13 @@
       "when": 1790100000000,
       "tag": "0007_curation_batches",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1790200000000,
+      "tag": "0008_curation_run_loading",
+      "breakpoints": true
     }
   ]
 }

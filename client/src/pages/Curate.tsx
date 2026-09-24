@@ -28,6 +28,7 @@ import { formatDateTime } from "@/lib/datetime";
 
 const STATUS_STYLES: Record<string, string> = {
   queued: "border-slate-200 bg-slate-50 text-slate-600",
+  loading: "border-amber-200 bg-amber-50 text-amber-800",
   running: "border-sky-200 bg-sky-50 text-sky-700",
   succeeded: "border-emerald-200 bg-emerald-50 text-emerald-700",
   failed: "border-rose-200 bg-rose-50 text-rose-700",
@@ -50,7 +51,7 @@ export default function CuratePage() {
     {
       enabled: Boolean(activeOrganizationId && hasPermission("variant:read")),
       refetchInterval: query =>
-        query.state.data?.some(run => run.status === "queued" || run.status === "running")
+        query.state.data?.some(run => run.status === "queued" || run.status === "loading" || run.status === "running")
           ? 4000
           : false,
     }

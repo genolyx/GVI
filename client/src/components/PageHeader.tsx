@@ -3,12 +3,14 @@ import { Badge } from "@/components/ui/badge";
 export function PageHeader({
   eyebrow,
   title,
+  heading,
   description,
   actions,
   badge,
 }: {
   eyebrow?: string;
   title: string;
+  heading?: React.ReactNode;
   description?: string;
   actions?: React.ReactNode;
   badge?: string;
@@ -18,7 +20,7 @@ export function PageHeader({
       <div className="max-w-3xl">
         {eyebrow ? <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-primary">{eyebrow}</p> : null}
         <div className="flex flex-wrap items-center gap-3">
-          <h1 className="font-display text-2xl font-semibold tracking-[-0.025em] text-foreground sm:text-3xl">{title}</h1>
+          {heading ?? <h1 className="font-display text-2xl font-semibold tracking-[-0.025em] text-foreground sm:text-3xl">{title}</h1>}
           {badge ? <Badge variant="outline" className="border-primary/20 bg-primary/5 text-primary">{badge}</Badge> : null}
         </div>
         {description ? <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">{description}</p> : null}

@@ -93,7 +93,10 @@ class EngineApiClient:
         )
 
     def health(self) -> dict[str, Any]:
-        response = self._session.get(f"{self._base}/api/engine/v1/health", timeout=self._timeout)
+        try:
+            response = self._session.get(f"{self._base}/api/engine/v1/health", timeout=self._timeout)
+        except requests.RequestException as exc:
+            raise EngineApiError(f"{type(exc).__name__}: {exc}") from exc
         try:
             payload = response.json()
         except ValueError:
@@ -123,9 +126,13 @@ class EngineApiClient:
         return str(payload.get("text") or "")
 
     def _post(self, path: str, body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
-        response = self._session.post(
-            f"{self._base}{path}", data=json.dumps(body), timeout=self._timeout
-        )
+        try:
+            response = self._session.post(
+                f"{self._base}{path}", data=json.dumps(body), timeout=self._timeout
+            )
+        except requests.RequestException as exc:
+            # A restarted API must not kill the warm worker. Callers already retry.
+            raise EngineApiError(f"{type(exc).__name__}: {exc}") from exc
         if response.status_code == 204:
             return 204, {}
         try:

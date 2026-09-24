@@ -111,30 +111,39 @@ class EnsemblCurlSession:
 
             ens_headers = self._ensembl_headers(headers)
             resp_obj = None
-            for attempt in range(2):
+            # 429/5xx used to fall through as a finished response. analyze() then
+            # stored a succeeded run with no transcript, protein change, or ClinVar.
+            transient = {429, 500, 502, 503, 504}
+            for attempt in range(4):
                 try:
                     req_resp = self._session.get(
                         url, headers=ens_headers, timeout=timeout, **kwargs
                     )
                     code = getattr(req_resp, "status_code", 500)
-                    if code == 503 and attempt < 1:
-                        time.sleep(0.25)
+                    if code in transient and attempt < 3:
+                        print(f"DEBUG Ensembl HTTP {code} attempt {attempt + 1}; retrying", flush=True)
+                        time.sleep(0.5 * (2 ** attempt))
                         continue
-                    if code == 503:
-                        print("DEBUG Ensembl requests 503 → curl fallback", flush=True)
+                    if code >= 500:
+                        print(f"DEBUG Ensembl HTTP {code} → curl fallback", flush=True)
                         resp_obj = self._curl_ensembl(url, headers=headers, timeout=timeout)
                     else:
                         resp_obj = req_resp
                     break
                 except Exception as e:
-                    if attempt < 1:
-                        time.sleep(0.25)
+                    if attempt < 3:
+                        print(f"DEBUG Ensembl requests failed ({e}); retrying", flush=True)
+                        time.sleep(0.5 * (2 ** attempt))
                         continue
                     print(f"DEBUG Ensembl requests failed ({e}) → curl fallback", flush=True)
                     resp_obj = self._curl_ensembl(url, headers=headers, timeout=timeout)
                     break
             if resp_obj is None:
                 resp_obj = self._curl_ensembl(url, headers=headers, timeout=timeout)
+            final_code = getattr(resp_obj, "status_code", 500)
+            if final_code != 200:
+                snippet = (getattr(resp_obj, "text", "") or "").replace("\n", " ")[:180]
+                print(f"DEBUG Ensembl final HTTP {final_code}: {snippet}", flush=True)
             if getattr(resp_obj, "status_code", 500) == 200:
                 cache_set(
                     url,
