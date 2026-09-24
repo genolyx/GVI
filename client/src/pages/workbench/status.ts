@@ -16,9 +16,9 @@ export function batchAnalyzedAt(entries: { status: string; completedAt: Date | s
 
 /** Shared size and radius for entry-table chips and actions. */
 export const entryChip = "h-7 rounded-md px-2.5 text-xs font-medium shadow-none";
-export const entryAction = "h-7 rounded-md border-border bg-muted/40 px-2.5 text-xs font-medium shadow-none hover:bg-muted/70";
-export const entryReview = "h-7 rounded-md border-emerald-500/30 bg-emerald-500/10 px-2.5 text-xs font-medium text-emerald-800 shadow-none hover:bg-emerald-500/20 dark:text-emerald-300";
-export const entryRun = "h-7 rounded-md border-primary/30 bg-primary/10 px-2.5 text-xs font-medium text-primary shadow-none hover:bg-primary/20";
+export const entryAction = "h-7 rounded-md border-border bg-muted/40 px-2.5 text-xs font-medium shadow-none hover:bg-muted/70 dark:border-border dark:bg-muted/40 dark:hover:bg-muted/70";
+export const entryReview = "h-7 rounded-md border-emerald-500/30 bg-emerald-500/10 px-2.5 text-xs font-medium text-emerald-800 shadow-none hover:bg-emerald-500/20 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-300 dark:hover:bg-emerald-500/20";
+export const entryRun = "h-7 rounded-md border-primary/30 bg-primary/10 px-2.5 text-xs font-medium text-primary shadow-none hover:bg-primary/20 dark:border-primary/30 dark:bg-primary/10 dark:hover:bg-primary/20";
 
 export function workbenchStatusLabel(status: string) {
   if (status === "succeeded") return "Done";
