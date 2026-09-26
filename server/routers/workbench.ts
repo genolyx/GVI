@@ -14,6 +14,7 @@ import { enqueueCurationRun } from "../domain/curationQueue";
 import { ensureCurationWorker } from "../domain/curationWorker";
 import { checkHumanGeneSymbol } from "../domain/geneSymbol";
 import { requireDb, requireOrganizationPermission } from "../domain/tenant";
+import { lookupVariantIdentity } from "../domain/variantIdentity";
 
 const orgInput = z.object({ organizationId: z.number().int().positive() });
 
@@ -692,5 +693,19 @@ export const workbenchRouter = router({
         req: ctx.req,
       });
       return { id: input.runId };
+    }),
+
+  /** rsID and genomic HGVS. ClinVar VCF first, then MyVariant, then Ensembl. */
+  variantIdentity: protectedProcedure
+    .input(orgInput.extend({
+      chrom: z.string().trim().min(1).max(32),
+      pos: z.number().int().positive(),
+      ref: z.string().trim().regex(/^[ACGTN]+$/i).max(2000),
+      alt: z.string().trim().regex(/^[ACGTN]+$/i).max(2000),
+    }))
+    .query(async ({ ctx, input }) => {
+      await requireOrganizationPermission(ctx.user.id, input.organizationId, "variant:read");
+      const hit = await lookupVariantIdentity(input.chrom, input.pos, input.ref, input.alt);
+      return { rsid: hit.rsid, hgvsG: hit.hgvsG };
     }),
 });

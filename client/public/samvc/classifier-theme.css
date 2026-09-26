@@ -49,10 +49,14 @@ body.wb-review-page .wb-main {
   letter-spacing: 0.1em;
   color: #64748b;
 }
+.logic-evidence-lead,
+.logic-evidence-body,
+.logic-evidence-body * {
+  font-size: 13px !important;
+  line-height: 1.5;
+}
 .logic-evidence-lead {
   margin: 0 0 14px;
-  font-size: 0.98rem;
-  line-height: 1.45;
   color: var(--sv-ink, #e2e8f0);
 }
 .logic-evidence-item {
@@ -63,17 +67,34 @@ body.wb-review-page .wb-main {
   border-top: 1px solid var(--line, rgba(255, 255, 255, 0.08));
 }
 .logic-evidence-label {
-  font-size: 0.68rem;
+  font-size: 11px !important;
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--primary, #3db0c7);
   padding-top: 2px;
+  line-height: 1.4;
 }
 .logic-evidence-body {
-  font-size: 0.92rem;
-  line-height: 1.5;
   color: var(--sv-ink, #e2e8f0);
+}
+/* Body copy inside a review section is one size. Titles, source tags, and the
+   splice map keep their own sizes. */
+.samvc-review .eval-section :is(p, li, .banner),
+.samvc-review .eval-section :is(p, li) :is(span, strong, a, em),
+.samvc-review .data-pill,
+.samvc-review .data-pill :is(span, strong, a, em) {
+  font-size: 13px !important;
+  line-height: 1.5;
+}
+.samvc-review .banner {
+  font-size: 13px !important;
+  line-height: 1.5;
+}
+.samvc-review .gene-profile-content,
+.samvc-review .gene-profile-content * {
+  font-size: 13px !important;
+  line-height: 1.5;
 }
 @media (max-width: 640px) {
   .logic-evidence-item {

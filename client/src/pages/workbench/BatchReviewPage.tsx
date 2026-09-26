@@ -5,10 +5,11 @@ import { INSTITUTIONAL_CLASSIFICATIONS } from "@shared/curation/institutional";
 import { useOrganization } from "@/contexts/OrganizationContext";
 import { trpc } from "@/lib/trpc";
 import { ArrowLeft, ChevronLeft, ChevronRight } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useLocation, useParams } from "wouter";
 import { criterionEvidence } from "./acmgSummary";
+import { genomicIdentity } from "./genomicIdentity";
 import { workbenchStatusLabel } from "./status";
 
 export default function BatchReviewPage() {
@@ -40,6 +41,23 @@ export default function BatchReviewPage() {
     if (!finishedAt || !activeOrganizationId || !runId) return;
     void utils.curation.document.invalidate({ organizationId: activeOrganizationId, runId });
   }, [finishedAt, activeOrganizationId, runId, utils]);
+  const saved = documentQuery.data?.document;
+  const identity = useMemo(
+    () => genomicIdentity(saved?.variant, saved?.engine.parsedData),
+    [saved],
+  );
+  const identityQuery = trpc.workbench.variantIdentity.useQuery(
+    {
+      organizationId: activeOrganizationId || 0,
+      chrom: identity.lookup?.chrom || "1",
+      pos: identity.lookup?.start || 1,
+      ref: identity.lookup?.ref || "A",
+      alt: identity.lookup?.alt || "A",
+    },
+    { enabled: Boolean(activeOrganizationId && identity.lookup && !identity.rsid), staleTime: 60 * 60 * 1000 },
+  );
+  const rsid = identity.rsid || identityQuery.data?.rsid || null;
+  const hgvsG = identityQuery.data?.hgvsG || identity.hgvsG;
   const saveInstitutional = trpc.workbench.setInstitutional.useMutation({
     onSuccess: async () => {
       await batch.refetch();
@@ -130,6 +148,8 @@ export default function BatchReviewPage() {
         <div className="mt-3 flex flex-wrap gap-2">
           <Pill label="Gene" value={input.gene} />
           <Pill label="HGVSc" value={input.hgvsC} mono />
+          {hgvsG ? <Pill label="g." value={hgvsG} mono /> : null}
+          {rsid ? <Pill label="rsID" value={rsid} mono /> : null}
           {input.transcript ? <Pill label="Transcript" value={input.transcript} mono /> : null}
           {input.hgvsP ? <Pill label="p." value={input.hgvsP} mono /> : null}
           {input.labId ? <Pill label="Lab ID" value={input.labId} /> : null}
@@ -227,13 +247,13 @@ function AcmgSummary({
   return (
     <section className="mt-6 rounded-xl border border-border bg-muted/30 p-4">
       <h3 className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Classification summary</h3>
-      <p className="mt-2 text-sm text-foreground">
+      <p className="mt-2 text-[13px] leading-normal text-foreground">
         {criteria.length
           ? <>The analysis met {criteria.length === 1 ? "one criterion" : `${criteria.length} criteria`}. Together they determine <strong>{call}</strong>.</>
           : <>No ACMG criteria were met, so the classification is <strong>{call}</strong>.</>}
       </p>
       {criteria.length ? (
-        <ul className="mt-3 list-disc space-y-2 pl-5 text-sm">
+        <ul className="mt-3 list-disc space-y-2 pl-5 text-[13px] leading-normal">
           {criteria.map(criterion => {
             const match = criterionEvidence(document, criterion.code, criterion.rationale);
             return (

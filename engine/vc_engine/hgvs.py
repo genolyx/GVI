@@ -335,6 +335,52 @@ def _protein_position_from_hgvs_label(label):
     return None
 
 
+def format_genomic_hgvs(chrom, start, end, ref, alt) -> str:
+    """GRCh38 HGVS g. from forward-strand alleles, or \"\" when coordinates are incomplete."""
+    chrom_s = str(chrom or "").strip()
+    ref_s = str(ref or "").strip().upper()
+    alt_s = str(alt or "").strip().upper()
+    if not chrom_s or start in (None, "") or not ref_s or not alt_s:
+        return ""
+    if not chrom_s.lower().startswith("chr"):
+        chrom_s = "chr" + chrom_s
+    try:
+        start_i = int(start)
+        end_i = int(end if end not in (None, "") else start)
+    except (TypeError, ValueError):
+        return ""
+    if len(ref_s) == 1 and len(alt_s) == 1:
+        body = f"{start_i}{ref_s}>{alt_s}"
+    elif alt_s == "-":
+        body = f"{start_i}del" if start_i == end_i else f"{start_i}_{end_i}del"
+    elif ref_s == "-":
+        body = f"{start_i}_{start_i + 1}ins{alt_s}"
+    else:
+        body = f"{start_i}_{end_i}delins{alt_s}"
+    return f"{chrom_s}:g.{body}"
+
+
+def rsid_from_vep_hit(vep_hit) -> str:
+    """dbSNP id from a VEP hit, preferring a colocated rs at the same start."""
+    if not isinstance(vep_hit, dict):
+        return ""
+    own = str(vep_hit.get("id") or "")
+    if own.startswith("rs") and own[2:].isdigit():
+        return own
+    start = vep_hit.get("start")
+    for item in vep_hit.get("colocated_variants") or []:
+        if not isinstance(item, dict):
+            continue
+        vid = str(item.get("id") or "")
+        if not (vid.startswith("rs") and vid[2:].isdigit()):
+            continue
+        item_start = item.get("start")
+        if start not in (None, "") and item_start not in (None, "") and int(item_start) != int(start):
+            continue
+        return vid
+    return ""
+
+
 _AA_THREE_TO_FULL = {
     'Ala': 'alanine', 'Arg': 'arginine', 'Asn': 'asparagine', 'Asp': 'aspartate',
     'Cys': 'cysteine', 'Gln': 'glutamine', 'Glu': 'glutamate', 'Gly': 'glycine',

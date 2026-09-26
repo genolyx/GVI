@@ -44,6 +44,8 @@ from vc_engine.hgvs import (
     _parse_missense_substitution_hgvs_p,
     _protein_position_from_hgvs_label,
     _vep_hgvs_query,
+    format_genomic_hgvs,
+    rsid_from_vep_hit,
 )
 from vc_engine.myvariant import (
     _MYVARIANT_LOCAL_ALLELE_FIELDS,
@@ -4549,6 +4551,9 @@ def analyze_variant():
                         _vep_vcf = vep_data[0].get('vcf_string')
                         if _vep_vcf:
                             parsed_data['vep_vcf_string'] = _vep_vcf
+                        _vep_rsid = rsid_from_vep_hit(vep_data[0])
+                        if _vep_rsid:
+                            parsed_data['rsid'] = _vep_rsid
                         _syn_pack_vep = _collect_refseq_nm_synonyms_from_vep_tc(
                             vep_data[0].get("transcript_consequences", [])
                         )
@@ -7708,6 +7713,16 @@ def analyze_variant():
             print(f"Logic Builder Error: {e}")
 
         apply_local_gnomad(parsed_data)
+        _hgvs_g = format_genomic_hgvs(
+            parsed_data.get("grch38_chrom"),
+            parsed_data.get("grch38_start"),
+            parsed_data.get("grch38_end"),
+            parsed_data.get("ref"),
+            parsed_data.get("alt"),
+        )
+        if _hgvs_g:
+            parsed_data["hgvs_g"] = _hgvs_g
+            parsed_data["alleles_are_forward"] = True
         results_custom = apply_rubric(parsed_data)
         results_acmg = apply_acmg(parsed_data)
         
