@@ -20,6 +20,12 @@ export type ParsedVariant = {
   alternateDepth: number | null;
   impact: "HIGH" | "MODERATE" | "LOW" | "MODIFIER" | "UNKNOWN";
   clinvarSignificance: string | null;
+  /** VCF QUAL column. Null when the site has no score. */
+  siteQuality: number | null;
+  /** Sample GQ when the FORMAT column includes it. */
+  genotypeQuality: number | null;
+  /** VCF FILTER column, such as PASS. */
+  callFilter: string | null;
   annotation: Record<string, unknown>;
 };
 
@@ -84,6 +90,7 @@ export function parseVcf(
     const depth = Number(sampleMap.DP || info.DP);
     const alleleDepths = sampleMap.AD?.split(",").map(Number) || [];
     const populationAf = asNumber(info.gnomAD_AF ?? info.POP_AF ?? info.AF);
+    const siteQuality = quality && quality !== "." ? Number(quality) : null;
 
     const alternateAlleles = altRaw.split(",");
     for (let altIndex = 0; altIndex < alternateAlleles.length; altIndex += 1) {
@@ -103,7 +110,7 @@ export function parseVcf(
         : "UNKNOWN";
       const gene = snpEff?.gene || (typeof info.GENE === "string" ? info.GENE : null) ||
         (typeof info.SYMBOL === "string" ? info.SYMBOL : null);
-
+      const genotypeQuality = Number(sampleMap.GQ);
       records.push({
         normalizedId: `${referenceBuild}:${chromosome}:${position}:${ref}:${alt}`,
         referenceBuild,
@@ -125,6 +132,9 @@ export function parseVcf(
         impact,
         clinvarSignificance:
           typeof info.CLNSIG === "string" ? info.CLNSIG.replaceAll("_", " ") : null,
+        siteQuality: siteQuality !== null && Number.isFinite(siteQuality) ? siteQuality : null,
+        genotypeQuality: Number.isFinite(genotypeQuality) ? genotypeQuality : null,
+        callFilter: filter && filter !== "." ? filter : null,
         annotation: { id, quality, filter, info },
       });
       if (records.length >= maxRecords) return records;

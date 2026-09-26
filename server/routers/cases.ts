@@ -18,6 +18,8 @@ import { requireDb, requireOrganizationPermission } from "../domain/tenant";
 import { runTriagePass } from "../domain/triagePass";
 import { parseVcf } from "../domain/vcf";
 import { variantReingestSet, variantReingestTarget } from "../domain/vcfIngest";
+import { loadHpoIndex, searchHpoTerms } from "../domain/hpoGenes";
+import { selectVcfRecords, variantInsertRow, vcfFilterSchema, type VcfFilterInput } from "../domain/vcfSelection";
 import { storageCreateUploadUrl, storageGetSignedUrl } from "../storage";
 
 const caseStatus = z.enum([
@@ -67,8 +69,9 @@ async function ingestVcfForJob(params: {
   jobId: number;
   vcfFile: CaseFileRow;
   referenceBuild: "GRCh37" | "GRCh38";
+  vcfFilters?: VcfFilterInput | null;
 }) {
-  const { organizationId, caseId, jobId, vcfFile, referenceBuild } = params;
+  const { organizationId, caseId, jobId, vcfFile, referenceBuild, vcfFilters } = params;
   const db = await requireDb();
   try {
     const signedUrl = await storageGetSignedUrl(vcfFile.storageKey);
@@ -78,15 +81,23 @@ async function ingestVcfForJob(params: {
     const digest = createHash("sha256").update(raw).digest("hex");
     if (digest !== vcfFile.sha256) throw new Error("VCF checksum mismatch");
     const text = vcfFile.fileName.endsWith(".gz") ? gunzipSync(raw).toString("utf8") : raw.toString("utf8");
-    const parsed = parseVcf(text, referenceBuild);
-    if (!parsed.length) throw new Error("VCF contains no readable variant records");
+    const selected = vcfFilters ? await selectVcfRecords(text, referenceBuild, vcfFilters) : null;
+    const parsed = selected ? selected.filtered.kept : parseVcf(text, referenceBuild);
+    if (!parsed.length) {
+      throw new Error(selected
+        ? "No variants passed the HPO, gene list, frequency, and quality filters."
+        : "VCF contains no readable variant records");
+    }
+    const keptNote = selected
+      ? ` Kept ${parsed.length.toLocaleString()} of ${selected.parsedCount.toLocaleString()} after HPO, gene list, frequency, and quality filters.`
+      : "";
     await db.transaction(async tx => {
       for (let offset = 0; offset < parsed.length; offset += 500) {
         await tx
           .insert(variants)
           .values(
             parsed.slice(offset, offset + 500).map(variant => ({
-              ...variant,
+              ...variantInsertRow(variant),
               organizationId,
               caseId,
             }))
@@ -103,7 +114,7 @@ async function ingestVcfForJob(params: {
         organizationId,
         jobId,
         status: "review_ready",
-        message: `Normalized ${parsed.length.toLocaleString()} variant(s) — ready for review.`,
+        message: `Normalized ${parsed.length.toLocaleString()} variant(s) — ready for review.${keptNote}`,
         progressPercent: 100,
       });
       await tx.update(cases).set({ status: "review_ready" }).where(
@@ -354,8 +365,45 @@ export const casesRouter = router({
       return { id };
     }),
 
+  searchHpo: protectedProcedure
+    .input(z.object({ q: z.string().max(80) }))
+    .query(async ({ input }) => {
+      const index = await loadHpoIndex();
+      if (!index) return [];
+      return searchHpoTerms(index, input.q);
+    }),
+
+  previewVcf: protectedProcedure
+    .input(z.object({
+      organizationId: z.number().int().positive(),
+      vcfText: z.string().min(1).max(20_000_000),
+      referenceBuild: z.enum(["GRCh37", "GRCh38"]),
+    }).merge(vcfFilterSchema))
+    .mutation(async ({ ctx, input }) => {
+      await requireOrganizationPermission(ctx.user.id, input.organizationId, "case:create");
+      const result = await selectVcfRecords(input.vcfText, input.referenceBuild, input);
+      return {
+        parsedCount: result.parsedCount,
+        truncated: result.truncated,
+        geneCount: result.geneCount,
+        panelCount: result.panelCount,
+        matches: result.matches.slice(0, 12),
+        unmatched: result.unmatched,
+        dropped: result.filtered.dropped,
+        kept: result.filtered.kept.length,
+        sample: result.filtered.kept.slice(0, 8).map(row => ({
+          gene: row.gene,
+          hgvsC: row.hgvsC,
+        })),
+      };
+    }),
+
   submit: protectedProcedure
-    .input(z.object({ organizationId: z.number().int().positive(), caseId: z.number().int().positive() }))
+    .input(z.object({
+      organizationId: z.number().int().positive(),
+      caseId: z.number().int().positive(),
+      vcfFilters: vcfFilterSchema.optional(),
+    }))
     .mutation(async ({ ctx, input }) => {
       await requireOrganizationPermission(ctx.user.id, input.organizationId, "case:edit");
       const clinicalCase = await requireCase(input.organizationId, input.caseId);
@@ -386,6 +434,7 @@ export const casesRouter = router({
         referenceBuild: clinicalCase.referenceBuild,
         panelName: clinicalCase.panelName,
         files: files.map(file => ({ id: file.id, kind: file.kind, storageKey: file.storageKey, sha256: file.sha256 })),
+        vcfFilters: clinicalCase.inputType === "vcf" ? input.vcfFilters ?? null : null,
       };
       const jobId = await db.transaction(async tx => {
         const result = await tx.insert(analysisJobs).values({
@@ -423,6 +472,7 @@ export const casesRouter = router({
           jobId,
           vcfFile,
           referenceBuild: clinicalCase.referenceBuild,
+          vcfFilters: input.vcfFilters ?? null,
         };
         if (vcfFile.byteSize <= VCF_SYNC_MAX_BYTES) {
           await ingestVcfForJob(ingestArgs);
