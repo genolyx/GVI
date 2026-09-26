@@ -64,6 +64,13 @@
       "when": 1790200000000,
       "tag": "0008_curation_run_loading",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1790300000000,
+      "tag": "0009_super_admin",
+      "breakpoints": true
     }
   ]
 }

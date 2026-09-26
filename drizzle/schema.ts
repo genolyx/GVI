@@ -67,7 +67,7 @@ const surrogateId = () => integer("id").primaryKey().generatedAlwaysAsIdentity()
 
 // ── Enum types ─────────────────────────────────────────────────────────────────
 
-export const userRoleEnum = pgEnum("user_role", ["user", "admin"]);
+export const userRoleEnum = pgEnum("user_role", ["user", "admin", "super_admin"]);
 export const organizationStatusEnum = pgEnum("organization_status", ["active", "suspended"]);
 export const isolationModeEnum = pgEnum("isolation_mode", ["shared_schema", "dedicated_database"]);
 export const organizationRoleEnum = pgEnum("organization_role", [

@@ -11,7 +11,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useOrganization } from "@/contexts/OrganizationContext";
 import { trpc } from "@/lib/trpc";
-import type { OrganizationRole } from "@shared/permissions";
+import { isPlatformAdminRole, type OrganizationRole } from "@shared/permissions";
 import { Building2, Copy, MailPlus, UserRoundCog, UsersRound, X } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -28,7 +28,7 @@ export default function OrganizationPage() {
   const { user } = useAuth();
   const { activeOrganization, activeOrganizationId, hasPermission, refetchOrganizations } = useOrganization();
   const utils = trpc.useUtils();
-  const isPlatformAdmin = user?.role === "admin";
+  const isPlatformAdmin = isPlatformAdminRole(user?.role);
   const enabled = Boolean(activeOrganizationId && hasPermission("member:manage"));
   const members = trpc.organizations.members.useQuery({ organizationId: activeOrganizationId || 0 }, { enabled });
   const invites = trpc.organizations.invites.useQuery({ organizationId: activeOrganizationId || 0 }, { enabled });

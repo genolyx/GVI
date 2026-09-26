@@ -10,16 +10,41 @@ import {
   projects,
   users,
 } from "../../drizzle/schema";
-import { ROLE_PERMISSIONS, ORGANIZATION_ROLES } from "../../shared/permissions";
+import { ROLE_PERMISSIONS, ORGANIZATION_ROLES, SUPER_ADMIN_ORGANIZATION_ROLE, isSuperAdminRole } from "../../shared/permissions";
 import { adminProcedure, protectedProcedure, publicProcedure, router } from "../_core/trpc";
 import { writeAuditEvent } from "../domain/audit";
 import { requireDb, requireOrganizationPermission } from "../domain/tenant";
 
 const roleSchema = z.enum(ORGANIZATION_ROLES);
 
+/** Standard addresses, plus the single-label host used by Dev Login (`admin@localhost`). */
+const inviteEmailSchema = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .refine(
+    value => z.string().email().safeParse(value).success || /^[a-z0-9][a-z0-9._%+\-']*@localhost$/.test(value),
+    { message: "Invalid email address" }
+  );
+
 export const organizationsRouter = router({
   list: protectedProcedure.query(async ({ ctx }) => {
     const db = await requireDb();
+    if (isSuperAdminRole(ctx.user.role)) {
+      const rows = await db
+        .select({
+          id: organizations.id,
+          name: organizations.name,
+          slug: organizations.slug,
+          status: organizations.status,
+          dataRegion: organizations.dataRegion,
+          isolationMode: organizations.isolationMode,
+        })
+        .from(organizations)
+        .where(eq(organizations.status, "active"))
+        .orderBy(organizations.id);
+      return rows.map(org => ({ ...org, role: SUPER_ADMIN_ORGANIZATION_ROLE }));
+    }
     return db
       .select({
         id: organizations.id,
@@ -38,12 +63,13 @@ export const organizationsRouter = router({
           eq(organizationMembers.status, "active"),
           eq(organizations.status, "active")
         )
-      );
+      )
+      .orderBy(organizations.id);
   }),
 
   /**
    * Provision a new organization workspace.
-   * Restricted to platform admins (users.role = admin), not org-scoped administrators.
+   * Restricted to platform admins (users.role = admin or super_admin), not org-scoped administrators.
    * The creator becomes the first organization administrator.
    */
   create: adminProcedure
@@ -165,7 +191,7 @@ export const organizationsRouter = router({
     .input(
       z.object({
         organizationId: z.number().int().positive(),
-        email: z.string().trim().toLowerCase().email(),
+        email: inviteEmailSchema,
         role: roleSchema,
       })
     )
@@ -469,6 +495,9 @@ export const organizationsRouter = router({
 
   permissionCatalog: protectedProcedure.query(() => ({
     roles: ORGANIZATION_ROLES,
-    permissions: ROLE_PERMISSIONS,
+    permissions: {
+      ...ROLE_PERMISSIONS,
+      [SUPER_ADMIN_ORGANIZATION_ROLE]: ROLE_PERMISSIONS.administrator,
+    },
   })),
 });

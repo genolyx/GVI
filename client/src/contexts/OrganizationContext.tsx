@@ -9,7 +9,7 @@ type Organization = {
   status: "active" | "suspended";
   dataRegion: string;
   isolationMode: "shared_schema" | "dedicated_database";
-  role: "administrator" | "analyst" | "clinician" | "viewer";
+  role: "administrator" | "analyst" | "clinician" | "viewer" | "super_administrator";
 };
 
 type OrganizationContextValue = {

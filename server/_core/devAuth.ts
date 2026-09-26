@@ -6,7 +6,7 @@
 
 import type { Express, Request, Response } from "express";
 import * as db from "../db";
-import { isPlatformAdminEmail } from "../domain/platformAdmin";
+import { platformRoleForEmail } from "../domain/platformAdmin";
 import { getSessionCookieOptions } from "./cookies";
 import { sdk } from "./sdk";
 import { COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
@@ -27,7 +27,8 @@ export function registerDevAuthRoutes(app: Express) {
    *
    * Issues a session cookie immediately without external OAuth.
    * Falls back to "dev_local_user" if openId is omitted.
-   * Emails listed in PLATFORM_ADMIN_EMAILS are promoted to platform admin.
+   * PLATFORM_ADMIN_EMAILS promotes platform admin.
+   * SUPER_ADMIN_EMAILS promotes super administrator (all organizations).
    */
   app.post("/api/dev/login", async (req: Request, res: Response) => {
     const openId: string = req.body?.openId ?? "dev_local_user";
@@ -35,13 +36,14 @@ export function registerDevAuthRoutes(app: Express) {
     const email: string | null = req.body?.email ?? "dev@localhost";
 
     try {
+      const platformRole = platformRoleForEmail(email);
       await db.upsertUser({
         openId,
         name,
         email,
         loginMethod: "dev",
         lastSignedIn: new Date(),
-        ...(isPlatformAdminEmail(email) ? { role: "admin" as const } : {}),
+        ...(platformRole ? { role: platformRole } : {}),
       });
 
       const sessionToken = await sdk.createSessionToken(openId, {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PERMISSIONS, ROLE_PERMISSIONS, roleHasPermission } from "./permissions";
+import { PERMISSIONS, ROLE_PERMISSIONS, ORGANIZATION_ROLES, SUPER_ADMIN_ORGANIZATION_ROLE, isPlatformAdminRole, isSuperAdminRole, roleHasPermission } from "./permissions";
 
 describe("clinical action permission matrix", () => {
   it("gives administrators full permissions including report signing", () => {
@@ -24,5 +24,14 @@ describe("clinical action permission matrix", () => {
     for (const permissions of Object.values(ROLE_PERMISSIONS)) {
       for (const permission of permissions) expect(PERMISSIONS).toContain(permission);
     }
+  });
+
+  it("treats super administrator as a platform role, not an organization role", () => {
+    expect(isSuperAdminRole("super_admin")).toBe(true);
+    expect(isSuperAdminRole("admin")).toBe(false);
+    expect(isPlatformAdminRole("admin")).toBe(true);
+    expect(isPlatformAdminRole("super_admin")).toBe(true);
+    expect(isPlatformAdminRole("user")).toBe(false);
+    expect(ORGANIZATION_ROLES).not.toContain(SUPER_ADMIN_ORGANIZATION_ROLE);
   });
 });

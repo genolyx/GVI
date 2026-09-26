@@ -7,6 +7,22 @@ export const ORGANIZATION_ROLES = [
 
 export type OrganizationRole = (typeof ORGANIZATION_ROLES)[number];
 
+/**
+ * Switcher label for a platform super administrator.
+ * This is not stored on organization_members and is not an invite role.
+ */
+export const SUPER_ADMIN_ORGANIZATION_ROLE = "super_administrator" as const;
+
+export type OrganizationAccessRole = OrganizationRole | typeof SUPER_ADMIN_ORGANIZATION_ROLE;
+
+export function isPlatformAdminRole(role: string | null | undefined): boolean {
+  return role === "admin" || role === "super_admin";
+}
+
+export function isSuperAdminRole(role: string | null | undefined): boolean {
+  return role === "super_admin";
+}
+
 export const PERMISSIONS = [
   "organization:manage",
   "member:invite",

@@ -24,6 +24,11 @@ export const ENV = {
    * Comma-separated emails; matched case-insensitively on login.
    */
   platformAdminEmails: parseEmailAllowlist(process.env.PLATFORM_ADMIN_EMAILS),
+  /**
+   * Super administrators (users.role = super_admin). They can open every
+   * organization without a membership row. Comma-separated emails.
+   */
+  superAdminEmails: parseEmailAllowlist(process.env.SUPER_ADMIN_EMAILS),
   /** Shared secret presented by curation engine workers on /api/engine/v1/*. */
   engineWorkerToken: process.env.ENGINE_WORKER_TOKEN ?? "",
   /**

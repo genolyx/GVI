@@ -1,8 +1,10 @@
 import { TRPCError } from "@trpc/server";
 import { and, eq } from "drizzle-orm";
-import { organizationMembers, organizations } from "../../drizzle/schema";
+import { organizationMembers, organizations, users } from "../../drizzle/schema";
 import {
   ROLE_PERMISSIONS,
+  SUPER_ADMIN_ORGANIZATION_ROLE,
+  isSuperAdminRole,
   roleHasPermission,
   type OrganizationRole,
   type Permission,
@@ -51,6 +53,23 @@ export async function requireOrganizationPermission(
   organizationId: number,
   permission: Permission
 ) {
+  const db = await requireDb();
+  const userRows = await db
+    .select({ role: users.role })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  if (isSuperAdminRole(userRows[0]?.role)) {
+    const elevated = await superAdminOrganizationAccess(userId, organizationId);
+    if (!elevated) {
+      throw new TRPCError({ code: "NOT_FOUND", message: "Organization resource not found" });
+    }
+    if (!ROLE_PERMISSIONS.administrator.includes(permission)) {
+      throw new TRPCError({ code: "FORBIDDEN", message: `Missing permission: ${permission}` });
+    }
+    return elevated;
+  }
+
   const membership = await getMembership(userId, organizationId);
   if (!membership) {
     throw new TRPCError({ code: "NOT_FOUND", message: "Organization resource not found" });
@@ -61,5 +80,38 @@ export async function requireOrganizationPermission(
   return {
     ...membership,
     permissions: ROLE_PERMISSIONS[membership.role as OrganizationRole],
+  };
+}
+
+/** Full organization access without inserting an organization_members row. */
+async function superAdminOrganizationAccess(userId: number, organizationId: number) {
+  const db = await requireDb();
+  const orgRows = await db
+    .select({
+      id: organizations.id,
+      name: organizations.name,
+      slug: organizations.slug,
+      status: organizations.status,
+      dataRegion: organizations.dataRegion,
+      isolationMode: organizations.isolationMode,
+    })
+    .from(organizations)
+    .where(and(eq(organizations.id, organizationId), eq(organizations.status, "active")))
+    .limit(1);
+  const org = orgRows[0];
+  if (!org) return null;
+  const membership = await getMembership(userId, organizationId);
+  return {
+    id: membership?.id ?? 0,
+    organizationId: org.id,
+    userId,
+    role: SUPER_ADMIN_ORGANIZATION_ROLE,
+    status: "active" as const,
+    organizationName: org.name,
+    organizationSlug: org.slug,
+    organizationStatus: org.status,
+    dataRegion: org.dataRegion,
+    isolationMode: org.isolationMode,
+    permissions: ROLE_PERMISSIONS.administrator,
   };
 }

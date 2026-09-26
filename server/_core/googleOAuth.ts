@@ -10,7 +10,7 @@ import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import type { Express, Request, Response } from "express";
 import { COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
 import * as db from "../db";
-import { isPlatformAdminEmail } from "../domain/platformAdmin";
+import { platformRoleForEmail } from "../domain/platformAdmin";
 import { getSessionCookieOptions } from "./cookies";
 import { ENV } from "./env";
 import { sdk } from "./sdk";
@@ -225,13 +225,14 @@ export function registerGoogleOAuthRoutes(app: Express) {
       const openId = `google_${sub}`.slice(0, 64);
       const displayName = name || email || "Google User";
 
+      const platformRole = platformRoleForEmail(email);
       await db.upsertUser({
         openId,
         name: displayName,
         email,
         loginMethod: "google",
         lastSignedIn: new Date(),
-        ...(isPlatformAdminEmail(email) ? { role: "admin" as const } : {}),
+        ...(platformRole ? { role: platformRole } : {}),
       });
 
       const sessionToken = await sdk.createSessionToken(openId, {

@@ -1,4 +1,5 @@
 import { useAuth } from "@/_core/hooks/useAuth";
+import { isPlatformAdminRole } from "@shared/permissions";
 import { CreateOrganizationForm } from "@/components/CreateOrganizationForm";
 import { ClinicalStatus } from "@/components/ClinicalStatus";
 import { MetricCard } from "@/components/MetricCard";
@@ -23,7 +24,7 @@ import { useLocation } from "wouter";
 function OrganizationOnboarding() {
   const { user } = useAuth();
   const { refetchOrganizations } = useOrganization();
-  const isPlatformAdmin = user?.role === "admin";
+  const isPlatformAdmin = isPlatformAdminRole(user?.role);
 
   return (
     <div className="mx-auto grid min-h-[72vh] max-w-5xl items-center gap-10 lg:grid-cols-[1.15fr_.85fr]">

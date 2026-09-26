@@ -1,4 +1,5 @@
 import { useAuth } from "@/_core/hooks/useAuth";
+import { isPlatformAdminRole, SUPER_ADMIN_ORGANIZATION_ROLE } from "@shared/permissions";
 import { useOrganization } from "@/contexts/OrganizationContext";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -125,6 +126,11 @@ function LoginPanel({ isDevAuth, isGoogleAuth }: { isDevAuth: boolean; isGoogleA
   );
 }
 
+function organizationRoleLabel(role: string): string {
+  if (role === SUPER_ADMIN_ORGANIZATION_ROLE) return "Super Administrator";
+  return role.toUpperCase();
+}
+
 const menuItems: Array<{
   icon: typeof LayoutDashboard;
   label: string;
@@ -181,7 +187,7 @@ function DashboardLayoutContent({ children, setSidebarWidth }: { children: React
   const [isResizing, setIsResizing] = useState(false);
   const sidebarRef = useRef<HTMLDivElement>(null);
   const { organizations, activeOrganization, setActiveOrganizationId, hasPermission, isLoading: organizationsLoading, organizationError, refetchOrganizations } = useOrganization();
-  const visibleMenuItems = menuItems.filter(item => item.platformAdmin ? user?.role === "admin" : hasPermission(item.permission || ""));
+  const visibleMenuItems = menuItems.filter(item => item.platformAdmin ? isPlatformAdminRole(user?.role) : hasPermission(item.permission || ""));
   const activeMenuItem = menuItems.find(item => item.path === "/" ? location === "/" : location.startsWith(item.path));
   const ActiveIcon = activeMenuItem?.icon;
 
@@ -232,12 +238,12 @@ function DashboardLayoutContent({ children, setSidebarWidth }: { children: React
                 <DropdownMenuTrigger asChild>
                   <button className="mt-4 flex w-full items-center gap-3 rounded-xl border border-sidebar-border/80 bg-sidebar-accent/45 px-3 py-2.5 text-left hover:bg-sidebar-accent">
                     <Building2 className="size-4 shrink-0 text-sidebar-primary" />
-                    <div className="min-w-0 flex-1"><p className="truncate text-[0.9375rem] font-semibold">{activeOrganization.name}</p><p className="mt-0.5 truncate text-xs uppercase tracking-wide text-sidebar-foreground/50">{activeOrganization.role}</p></div>
+                    <div className="min-w-0 flex-1"><p className="truncate text-[0.9375rem] font-semibold">{activeOrganization.name}</p><p className="mt-0.5 truncate text-xs tracking-wide text-sidebar-foreground/50">{organizationRoleLabel(activeOrganization.role)}</p></div>
                     <ChevronDown className="size-3 text-sidebar-foreground/40" />
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="start" className="w-64">
-                  {organizations.map(org => <DropdownMenuItem key={org.id} onClick={() => setActiveOrganizationId(org.id)} className="gap-3 py-2.5"><Building2 className="size-4 text-muted-foreground" /><div className="min-w-0"><p className="truncate text-sm font-medium">{org.name}</p><p className="text-xs text-muted-foreground">{org.dataRegion} · {org.role}</p></div></DropdownMenuItem>)}
+                  {organizations.map(org => <DropdownMenuItem key={org.id} onClick={() => setActiveOrganizationId(org.id)} className="gap-3 py-2.5"><Building2 className="size-4 text-muted-foreground" /><div className="min-w-0"><p className="truncate text-sm font-medium">{org.name}</p><p className="text-xs text-muted-foreground">{org.dataRegion} · {organizationRoleLabel(org.role)}</p></div></DropdownMenuItem>)}
                 </DropdownMenuContent>
               </DropdownMenu>
             ) : null}
@@ -255,7 +261,7 @@ function DashboardLayoutContent({ children, setSidebarWidth }: { children: React
               <DropdownMenuTrigger asChild>
                 <button className="flex w-full items-center gap-3 rounded-lg p-1 text-left hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-sidebar-ring">
                   <Avatar className="size-9 shrink-0 border border-sidebar-border"><AvatarFallback className="bg-sidebar-accent text-xs text-sidebar-foreground">{user?.name?.charAt(0).toUpperCase() || "U"}</AvatarFallback></Avatar>
-                  {!isCollapsed ? <div className="min-w-0 flex-1"><p className="truncate text-[0.9375rem] font-semibold">{user?.name || "-"}</p><div className="mt-1 flex items-center gap-2"><p className="truncate text-xs text-sidebar-foreground/50">{user?.email || "-"}</p>{activeOrganization ? <Badge variant="outline" className="h-5 border-sidebar-border px-1.5 text-xs uppercase text-sidebar-foreground/60">{activeOrganization.role}</Badge> : null}</div></div> : null}
+                  {!isCollapsed ? <div className="min-w-0 flex-1"><p className="truncate text-[0.9375rem] font-semibold">{user?.name || "-"}</p><div className="mt-1 flex items-center gap-2"><p className="truncate text-xs text-sidebar-foreground/50">{user?.email || "-"}</p>{activeOrganization ? <Badge variant="outline" className="h-5 border-sidebar-border px-1.5 text-xs text-sidebar-foreground/60">{organizationRoleLabel(activeOrganization.role)}</Badge> : null}</div></div> : null}
                 </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="w-64">

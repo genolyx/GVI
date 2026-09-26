@@ -6,6 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useAuth } from "@/_core/hooks/useAuth";
+import { isPlatformAdminRole } from "@shared/permissions";
 import { trpc } from "@/lib/trpc";
 import { toast } from "sonner";
 
@@ -34,7 +35,7 @@ function formatBytes(bytes: number): string {
 
 export default function SettingsPage() {
   const { user, loading } = useAuth();
-  const isAdmin = user?.role === "admin";
+  const isAdmin = isPlatformAdminRole(user?.role);
   const query = trpc.referenceData.status.useQuery(undefined, { enabled: isAdmin });
   const setGnomad = trpc.referenceData.setGnomadSource.useMutation({
     onSuccess: () => {

@@ -61,7 +61,7 @@ export default function SecurityConsolePage() {
               </div>
               <div className="rounded-xl border border-border bg-muted/50 p-4 dark:border-white/10 dark:bg-white/[.03]">
                 <dt className="text-[9px] uppercase text-muted-foreground">Effective role</dt>
-                <dd className="mt-2 capitalize text-foreground">{data.role}</dd>
+                <dd className="mt-2 capitalize text-foreground">{data.role === "super_administrator" ? "Super Administrator" : data.role}</dd>
               </div>
             </dl>
           </div>
