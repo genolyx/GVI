@@ -40,10 +40,18 @@ def _load_repo_env() -> None:
     load_dotenv(root / ".env.local", override=False)
 
 
-def configured_dir() -> str:
+def _env_dir() -> str:
     _load_repo_env()
     raw = (os.environ.get("VC_GNOMAD_DIR") or "").strip()
     return os.path.expanduser(raw) if raw else ""
+
+
+def release_directories() -> dict[str, str]:
+    """v3.1.2 is ``VC_GNOMAD_DIR``. v4.1 is the ``gnomad4`` directory beside it."""
+    v3 = _env_dir().rstrip("/")
+    if not v3:
+        return {"v3.1.2": "", "v4.1": ""}
+    return {"v3.1.2": v3, "v4.1": os.path.join(os.path.dirname(v3), "gnomad4")}
 
 
 def configured_path() -> str:
@@ -52,19 +60,34 @@ def configured_path() -> str:
     return os.path.expanduser(raw) if raw else ""
 
 
-def gnomad_mode() -> str:
-    """``local`` reads the configured sites VCF. ``myvariant`` leaves that file unused.
+def selected_release() -> Optional[str]:
+    """Installed release to read. ``None`` means MyVariant.
 
-    The choice is ``{VC_DATA_ROOT}/gnomad-source``. A missing file keeps the
-    local VCF when a path is configured.
+    ``gnomad-source`` may be ``myvariant``, ``v3.1.2``, ``v4.1``, or the older
+    ``local`` token, which means v3.1.2.
     """
-    from vc_engine.source_mode import read_choice
+    from vc_engine.source_mode import data_root
 
-    return read_choice(
-        "gnomad",
-        ("local", "myvariant"),
-        "local" if (configured_dir() or configured_path()) else "myvariant",
-    )
+    try:
+        value = Path(data_root(), "gnomad-source").read_text(encoding="utf-8").strip().lower()
+    except OSError:
+        value = ""
+    if value == "myvariant":
+        return None
+    if value in ("v3.1.2", "v4.1"):
+        return value
+    return "v3.1.2" if (_env_dir() or configured_path()) else None
+
+
+def configured_dir() -> str:
+    if selected_release() is None:
+        return ""
+    return release_directories().get(selected_release() or "", "")
+
+
+def gnomad_mode() -> str:
+    """``local`` reads the selected sites VCF. ``myvariant`` leaves those files unused."""
+    return "myvariant" if selected_release() is None else "local"
 
 
 def local_gnomad_configured() -> bool:

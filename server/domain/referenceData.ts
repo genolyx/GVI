@@ -8,8 +8,16 @@ import { createGunzip } from "node:zlib";
 export type ReferenceTrack = "G" | "S" | "tool";
 export type ReferenceStatus = "ready" | "missing" | "remote" | "license" | "optional" | "downloading";
 
-export type GnomadMode = "local" | "myvariant";
+export type GnomadMode = "local" | "myvariant" | "v3.1.2" | "v4.1";
+export type GnomadSelection = "myvariant" | "v3.1.2" | "v4.1";
 export type ClinvarMode = "local" | "ncbi";
+
+export type ReferenceLocalOption = {
+  value: GnomadSelection;
+  label: string;
+  ready: boolean;
+  location: string;
+};
 
 export type ReferenceSource = {
   id: string;
@@ -20,9 +28,10 @@ export type ReferenceSource = {
   version: string;
   detail: string;
   location: string;
-  choice?: GnomadMode | ClinvarMode;
+  choice?: GnomadMode | ClinvarMode | GnomadSelection;
   localReady?: boolean;
   localVersion?: string | null;
+  localOptions?: ReferenceLocalOption[];
   remoteChoice?: "myvariant" | "ncbi";
   remoteLabel?: string;
 };
@@ -76,8 +85,18 @@ export function parseClinvarMode(text: string): ClinvarMode | null {
 
 export function parseGnomadMode(text: string): GnomadMode | null {
   const value = text.trim().toLowerCase();
-  if (value === "local" || value === "myvariant") return value;
+  if (value === "local" || value === "myvariant" || value === "v3.1.2" || value === "v4.1") return value;
   return null;
+}
+
+/** Installed releases the Settings menu can choose. v4 lives beside the v3 directory. */
+export function gnomadReleaseDirectories(v3Dir: string): { release: GnomadSelection; label: string; dir: string }[] {
+  const root = v3Dir.replace(/\/+$/, "");
+  const v4 = root ? path.join(path.dirname(root), "gnomad4") : "";
+  return [
+    { release: "v3.1.2", label: "v3.1.2", dir: root },
+    { release: "v4.1", label: "v4.1", dir: v4 },
+  ];
 }
 
 export function gnomadModePath(dataRoot: string): string {
@@ -299,9 +318,30 @@ async function readGnomadMode(dataRoot: string): Promise<GnomadMode | null> {
   }
 }
 
+async function indexedRelease(dir: string, file: string): Promise<{ ready: boolean; version: string | null; count: number; countLabel: string }> {
+  let names: string[] = [];
+  if (file) {
+    const body = await fileInfo(file);
+    const indexed = (await fileInfo(`${file}.tbi`)).exists || (await fileInfo(`${file}.csi`)).exists;
+    names = body.exists && indexed ? [path.basename(file)] : [];
+  } else if (dir) {
+    names = await indexedGnomadFiles(dir);
+  }
+  const genomes = names.filter(name => /genomes/i.test(name)).length;
+  const exomes = names.filter(name => /exomes/i.test(name)).length;
+  const countLabel = [genomes ? `${genomes} genomes` : "", exomes ? `${exomes} exomes` : ""].filter(Boolean).join(" and ");
+  return {
+    ready: names.length > 0,
+    version: names.map(parseGnomadRelease).find(Boolean) ?? null,
+    count: names.length,
+    countLabel,
+  };
+}
+
 async function gnomadSource(env: EnvMap, dataRoot: string): Promise<ReferenceSource> {
-  const dir = expandHome((env.VC_GNOMAD_DIR ?? "").trim());
-  const file = expandHome((env.VC_GNOMAD_PATH ?? "").trim());
+  const v3Dir = expandHome((env.VC_GNOMAD_DIR ?? "").trim());
+  const singleFile = expandHome((env.VC_GNOMAD_PATH ?? "").trim());
+  const catalogs = gnomadReleaseDirectories(v3Dir);
   const base = {
     id: "gnomad",
     name: "gnomAD",
@@ -310,62 +350,54 @@ async function gnomadSource(env: EnvMap, dataRoot: string): Promise<ReferenceSou
     remoteChoice: "myvariant" as const,
     remoteLabel: "MyVariant",
   };
-  if (!dir && !file) {
-    return {
-      ...base,
-      status: "remote",
-      version: "MyVariant",
-      detail: "Frequency is taken from MyVariant gnomad_exomes and gnomad_genomes. Set VC_GNOMAD_DIR to offer a local sites VCF.",
-      location: "https://myvariant.info",
-      choice: "myvariant",
-      localReady: false,
-      localVersion: null,
-    };
+  const options: ReferenceLocalOption[] = [];
+  const installed = new Map<GnomadSelection, { ready: boolean; version: string | null; countLabel: string; location: string }>();
+  for (const catalog of catalogs) {
+    const useFile = catalog.release === "v3.1.2" ? singleFile : "";
+    const info = await indexedRelease(useFile ? "" : catalog.dir, useFile);
+    const location = useFile || catalog.dir;
+    const label = info.version ?? catalog.label;
+    options.push({ value: catalog.release, label, ready: info.ready, location });
+    installed.set(catalog.release, { ...info, location });
   }
-
-  const location = file || dir;
-  let names: string[] = [];
-  if (file) {
-    const body = await fileInfo(file);
-    const indexed = (await fileInfo(`${file}.tbi`)).exists || (await fileInfo(`${file}.csi`)).exists;
-    names = body.exists && indexed ? [path.basename(file)] : [];
-  } else {
-    names = await indexedGnomadFiles(dir);
-  }
-  const genomes = names.filter(name => /genomes/i.test(name)).length;
-  const exomes = names.filter(name => /exomes/i.test(name)).length;
-  const kind = [genomes ? `${genomes} genomes` : "", exomes ? `${exomes} exomes` : ""].filter(Boolean).join(" and ")
-    || String(names.length);
-  const localReady = names.length > 0;
-  const localVersion = names.map(parseGnomadRelease).find(Boolean) ?? null;
   const stored = await readGnomadMode(dataRoot);
-  const choice: GnomadMode = stored ?? (localReady ? "local" : "myvariant");
-  const fileDetail = localReady
-    ? `${kind} indexed site VCF${names.length === 1 ? "" : "s"} at ${location}.`
-    : "No indexed sites VCF is available for the local file option.";
+  const choice: GnomadSelection = stored === "v3.1.2" || stored === "v4.1" || stored === "myvariant"
+    ? stored
+    : stored === "local" || options.some(option => option.ready)
+      ? (options.find(option => option.ready)?.value ?? "myvariant")
+      : "myvariant";
+  const selected = choice === "myvariant" ? null : installed.get(choice);
+  const anyReady = options.some(option => option.ready);
+  const selectedDetail = selected?.ready
+    ? `${selected.countLabel} indexed site VCF${selected.count === 1 ? "" : "s"} at ${selected.location}.`
+    : selected
+      ? `No indexed sites VCF is in ${selected.location}.`
+      : "";
   if (choice === "myvariant") {
     return {
       ...base,
       status: "remote",
       version: "MyVariant",
-      detail: `Frequency comes from MyVariant gnomad_exomes and gnomad_genomes. ${fileDetail}`,
+      detail: `Frequency comes from MyVariant gnomad_exomes and gnomad_genomes. ${selectedDetail}`.trim(),
       location: "https://myvariant.info",
       choice,
-      localReady,
-      localVersion,
+      localReady: anyReady,
+      localVersion: options.find(option => option.ready)?.label ?? null,
+      localOptions: options,
     };
   }
   return {
     ...base,
-    status: localReady ? "ready" : "missing",
-    version: localVersion ?? "not installed",
-    detail: localReady
-      ? `${fileDetail} The engine reads INFO AF from these files.`
-      : fileDetail,
-    location,
+    status: selected?.ready ? "ready" : "missing",
+    version: selected?.version ?? selected?.location ?? "not installed",
+    detail: selected?.ready
+      ? `${selectedDetail} The engine reads INFO AF from these files.`
+      : selectedDetail,
+    location: selected?.location ?? "",
     choice,
-    localReady,
-    localVersion,
+    localReady: anyReady,
+    localVersion: selected?.version ?? null,
+    localOptions: options,
   };
 }
 
@@ -435,13 +467,14 @@ export async function setClinvarSource(mode: ClinvarMode): Promise<void> {
   await writeSourceFile(dataRoot, "clinvar", mode);
 }
 
-export async function setGnomadSource(mode: GnomadMode): Promise<void> {
+export async function setGnomadSource(mode: GnomadSelection): Promise<void> {
   const env = await loadEnv();
   const dataRoot = expandHome((env.VC_DATA_ROOT ?? "").trim() || path.join(os.homedir(), "gvi-data"));
-  if (mode === "local") {
-    const preview = await gnomadSource({ ...env, }, dataRoot);
-    if (!preview.localReady) {
-      throw new Error("No indexed gnomAD sites VCF is configured.");
+  if (mode !== "myvariant") {
+    const preview = await gnomadSource(env, dataRoot);
+    const option = preview.localOptions?.find(item => item.value === mode);
+    if (!option?.ready) {
+      throw new Error(`No indexed gnomAD ${mode} sites VCF is installed.`);
     }
   }
   await mkdir(dataRoot, { recursive: true });

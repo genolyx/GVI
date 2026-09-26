@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseClingenRelease, parseClinvarFileDate, parseClinvarMode, parseGnomadMode, parseGnomadRelease, parseHgmdRelease, parsePmid } from "./referenceData";
+import { parseClingenRelease, parseClinvarFileDate, parseClinvarMode, parseGnomadMode, parseGnomadRelease, gnomadReleaseDirectories, parseHgmdRelease, parsePmid } from "./referenceData";
 
 describe("reference data labels", () => {
   it("reads a PMID from a downloaded literature filename", () => {
@@ -23,7 +23,16 @@ describe("reference data labels", () => {
   it("reads the gnomAD source choice", () => {
     expect(parseGnomadMode("local\n")).toBe("local");
     expect(parseGnomadMode("MyVariant")).toBe("myvariant");
+    expect(parseGnomadMode("v3.1.2")).toBe("v3.1.2");
+    expect(parseGnomadMode("v4.1\n")).toBe("v4.1");
     expect(parseGnomadMode("r4")).toBeNull();
+  });
+
+  it("places gnomAD v4 beside the v3 directory", () => {
+    expect(gnomadReleaseDirectories("/data/reference/annotation/gnomad")).toEqual([
+      { release: "v3.1.2", label: "v3.1.2", dir: "/data/reference/annotation/gnomad" },
+      { release: "v4.1", label: "v4.1", dir: "/data/reference/annotation/gnomad4" },
+    ]);
   });
 
   it("reads the gnomAD release from the filename", () => {

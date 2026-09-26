@@ -2,6 +2,8 @@
 from vc_engine.gnomad_local import (
     af_for_alt,
     apply_local_gnomad,
+    configured_dir,
+    gnomad_mode,
     homozygote_count,
     homozygote_total,
     pick_file_for_chrom,
@@ -69,6 +71,14 @@ def test_absence_in_the_sites_file_is_zero(monkeypatch):
     assert parsed["gnomad_af"] == 0
     assert parsed["gnomad_af_source"] == "absent"
     assert parsed["gnomad_checked"] is True
+
+
+def test_v4_choice_uses_the_sibling_directory(tmp_path, monkeypatch):
+    monkeypatch.setenv("VC_DATA_ROOT", str(tmp_path))
+    monkeypatch.setenv("VC_GNOMAD_DIR", "/data/reference/annotation/gnomad")
+    (tmp_path / "gnomad-source").write_text("v4.1\n")
+    assert configured_dir() == "/data/reference/annotation/gnomad4"
+    assert gnomad_mode() == "local"
 
 
 def test_myvariant_mode_leaves_the_local_file_unread(tmp_path, monkeypatch):

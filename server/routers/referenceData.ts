@@ -6,7 +6,7 @@ import { inspectReferenceData, setClinvarSource, setGnomadSource } from "../doma
 export const referenceDataRouter = router({
   status: adminProcedure.query(() => inspectReferenceData()),
   setGnomadSource: adminProcedure
-    .input(z.object({ mode: z.enum(["local", "myvariant"]) }))
+    .input(z.object({ mode: z.enum(["myvariant", "v3.1.2", "v4.1"]) }))
     .mutation(async ({ input }) => {
       try {
         await setGnomadSource(input.mode);

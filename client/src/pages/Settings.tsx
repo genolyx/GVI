@@ -129,7 +129,7 @@ export default function SettingsPage() {
                         value={source.choice}
                         disabled={source.id === "gnomad" ? setGnomad.isPending : setClinvar.isPending}
                         onValueChange={value => {
-                          if (source.id === "gnomad" && (value === "local" || value === "myvariant")) {
+                          if (source.id === "gnomad" && (value === "myvariant" || value === "v3.1.2" || value === "v4.1")) {
                             setGnomad.mutate({ mode: value });
                           }
                           if (source.id === "clinvar" && (value === "local" || value === "ncbi")) {
@@ -141,9 +141,17 @@ export default function SettingsPage() {
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="local" disabled={!source.localReady}>
-                            {source.localVersion ? `Local file ${source.localVersion}` : "Local file"}
-                          </SelectItem>
+                          {source.localOptions ? (
+                            source.localOptions.map(option => (
+                              <SelectItem key={option.value} value={option.value} disabled={!option.ready}>
+                                {option.label}
+                              </SelectItem>
+                            ))
+                          ) : (
+                            <SelectItem value="local" disabled={!source.localReady}>
+                              {source.localVersion ? `Local file ${source.localVersion}` : "Local file"}
+                            </SelectItem>
+                          )}
                           <SelectItem value={source.remoteChoice}>{source.remoteLabel}</SelectItem>
                         </SelectContent>
                       </Select>
