@@ -8,11 +8,19 @@ if (!globalThis.crypto) {
 
 // Vite 7 calls crypto.hash, which Node 18 does not have (added in 20.12).
 if (typeof crypto.hash !== "function") {
-  crypto.hash = (algorithm, data, outputEncoding) => {
-    const digest = crypto.createHash(algorithm).update(data).digest();
-    if (outputEncoding) return digest.toString(outputEncoding);
-    return digest;
-  };
+  Object.defineProperty(crypto, "hash", {
+    configurable: true,
+    value: (
+      algorithm: string,
+      data: crypto.BinaryLike,
+      outputEncoding?: crypto.BinaryToTextEncoding | "buffer"
+    ) => {
+      const digest = crypto.createHash(algorithm).update(data).digest();
+      return outputEncoding && outputEncoding !== "buffer"
+        ? digest.toString(outputEncoding)
+        : digest;
+    },
+  });
 }
 
 dotenv.config();

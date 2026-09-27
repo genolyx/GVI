@@ -2,7 +2,11 @@ import { AIChatBox, type Message } from "@/components/AIChatBox";
 import { ClinicalStatus } from "@/components/ClinicalStatus";
 import { CurationPanel } from "@/components/CurationPanel";
 import { PageHeader } from "@/components/PageHeader";
-import { TriageBar, TriageTierBadge, type TriageTier } from "@/components/TriageBar";
+import {
+  TriageBar,
+  TriageTierBadge,
+  type TriageTier,
+} from "@/components/TriageBar";
 import { StatePanel } from "@/components/StatePanel";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -16,17 +20,75 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { useOrganization } from "@/contexts/OrganizationContext";
 import { trpc } from "@/lib/trpc";
-import { ACMG_CRITERIA, GERMLINE_CLASSIFICATIONS, ONCOGENICITY_CLASSIFICATIONS, SOMATIC_TIERS } from "@shared/clinical-standards";
-import { ArrowLeft, BookOpen, Bot, CheckCircle2, ChevronRight, ExternalLink, Filter, FlaskConical, Loader2, Microscope, RefreshCw, Save, Search, ShieldAlert, Sparkles } from "lucide-react";
+import {
+  ACMG_CRITERIA,
+  GERMLINE_CLASSIFICATIONS,
+  ONCOGENICITY_CLASSIFICATIONS,
+  SOMATIC_TIERS,
+} from "@shared/clinical-standards";
+import {
+  ArrowLeft,
+  BookOpen,
+  Bot,
+  CheckCircle2,
+  ChevronRight,
+  ExternalLink,
+  Filter,
+  FlaskConical,
+  Loader2,
+  Microscope,
+  RefreshCw,
+  Save,
+  Search,
+  ShieldAlert,
+  Sparkles,
+} from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useLocation, useParams } from "wouter";
 import { formatDate, formatDateTime } from "@/lib/datetime";
+import SomaticWorkbenchPage from "./SomaticWorkbench";
 
 type Impact = "HIGH" | "MODERATE" | "LOW" | "MODIFIER" | "UNKNOWN";
 type CriterionState = "met" | "not_met" | "not_applicable";
 
 export default function WorkbenchPage() {
+  const params = useParams<{ caseId: string }>();
+  const caseId = Number(params.caseId);
+  const { activeOrganizationId, hasPermission } = useOrganization();
+  const caseQuery = trpc.cases.get.useQuery(
+    { organizationId: activeOrganizationId || 0, caseId },
+    {
+      enabled: Boolean(
+        activeOrganizationId && caseId && hasPermission("variant:read")
+      ),
+    }
+  );
+  if (caseQuery.isLoading) {
+    return (
+      <StatePanel
+        type="loading"
+        title="Loading case workflow"
+        description="Selecting the Germline or Somatic review workflow."
+      />
+    );
+  }
+  if (caseQuery.isError || !caseQuery.data) {
+    return (
+      <StatePanel
+        type="error"
+        title="Unable to load case workflow"
+        description={caseQuery.error?.message || "Case not found."}
+      />
+    );
+  }
+  if (caseQuery.data.purpose === "somatic") {
+    return <SomaticWorkbenchPage caseId={caseId} />;
+  }
+  return <GermlineWorkbenchPage />;
+}
+
+function GermlineWorkbenchPage() {
   const params = useParams<{ caseId: string }>();
   const caseId = Number(params.caseId);
   const { activeOrganizationId, hasPermission } = useOrganization();
@@ -43,23 +105,74 @@ export default function WorkbenchPage() {
   const [oncogenicity, setOncogenicity] = useState<string>("");
   const [rationale, setRationale] = useState("");
   const [diseaseContext, setDiseaseContext] = useState("");
-  const [activeCriterion, setActiveCriterion] = useState<(typeof ACMG_CRITERIA)[number]>("PVS1");
-  const [criterionState, setCriterionState] = useState<CriterionState>("not_met");
+  const [activeCriterion, setActiveCriterion] =
+    useState<(typeof ACMG_CRITERIA)[number]>("PVS1");
+  const [criterionState, setCriterionState] =
+    useState<CriterionState>("not_met");
   const [criterionNote, setCriterionNote] = useState("");
   const utils = trpc.useUtils();
 
   const canReadVariants = hasPermission("variant:read");
-  const caseQuery = trpc.cases.get.useQuery({ organizationId: activeOrganizationId || 0, caseId }, { enabled: Boolean(activeOrganizationId && caseId && canReadVariants) });
-  const list = trpc.variants.list.useQuery({ organizationId: activeOrganizationId || 0, caseId, search: search || undefined, impact: impact === "all" ? undefined : impact, triageTier: tierFilter === "all" ? undefined : tierFilter, sortBy: tierFilter === "all" ? "impact" : "triageScore", sortDirection: tierFilter === "all" ? "asc" : "desc", limit: 500 }, { enabled: Boolean(activeOrganizationId && caseId && canReadVariants) });
-  useEffect(() => { if (!selectedId && list.data?.[0]) setSelectedId(list.data[0].id); }, [list.data, selectedId]);
+  const caseQuery = trpc.cases.get.useQuery(
+    { organizationId: activeOrganizationId || 0, caseId },
+    { enabled: Boolean(activeOrganizationId && caseId && canReadVariants) }
+  );
+  const list = trpc.variants.list.useQuery(
+    {
+      organizationId: activeOrganizationId || 0,
+      caseId,
+      search: search || undefined,
+      impact: impact === "all" ? undefined : impact,
+      triageTier: tierFilter === "all" ? undefined : tierFilter,
+      sortBy: tierFilter === "all" ? "impact" : "triageScore",
+      sortDirection: tierFilter === "all" ? "asc" : "desc",
+      limit: 500,
+    },
+    { enabled: Boolean(activeOrganizationId && caseId && canReadVariants) }
+  );
+  useEffect(() => {
+    if (!selectedId && list.data?.[0]) setSelectedId(list.data[0].id);
+  }, [list.data, selectedId]);
   // Counts come from a tier-agnostic query so the chips keep their totals while a
   // tier filter is narrowing the table below them.
-  const tierCountQuery = trpc.variants.triageCounts.useQuery({ organizationId: activeOrganizationId || 0, caseId }, { enabled: Boolean(activeOrganizationId && caseId && canReadVariants) });
-  const tierCounts = tierCountQuery.data ?? { t1_curate: 0, t2_review: 0, t3_filtered: 0, untriaged: 0 };
-  const detail = trpc.variants.detail.useQuery({ organizationId: activeOrganizationId || 0, variantId: selectedId || 0 }, { enabled: Boolean(activeOrganizationId && selectedId && canReadVariants) });
-  const models = trpc.copilot.models.useQuery(undefined, { staleTime: 60_000, enabled: canReadVariants });
-  const messageQuery = trpc.copilot.messages.useQuery({ organizationId: activeOrganizationId || 0, conversationId: conversationId || 0 }, { enabled: Boolean(activeOrganizationId && conversationId && canReadVariants) });
-  useEffect(() => { if (messageQuery.data) setLocalMessages(messageQuery.data.messages.map(message => ({ role: message.role, content: message.content }))); }, [messageQuery.data]);
+  const tierCountQuery = trpc.variants.triageCounts.useQuery(
+    { organizationId: activeOrganizationId || 0, caseId },
+    { enabled: Boolean(activeOrganizationId && caseId && canReadVariants) }
+  );
+  const tierCounts = tierCountQuery.data ?? {
+    t1_curate: 0,
+    t2_review: 0,
+    t3_filtered: 0,
+    untriaged: 0,
+  };
+  const detail = trpc.variants.detail.useQuery(
+    { organizationId: activeOrganizationId || 0, variantId: selectedId || 0 },
+    { enabled: Boolean(activeOrganizationId && selectedId && canReadVariants) }
+  );
+  const models = trpc.copilot.models.useQuery(undefined, {
+    staleTime: 60_000,
+    enabled: canReadVariants,
+  });
+  const messageQuery = trpc.copilot.messages.useQuery(
+    {
+      organizationId: activeOrganizationId || 0,
+      conversationId: conversationId || 0,
+    },
+    {
+      enabled: Boolean(
+        activeOrganizationId && conversationId && canReadVariants
+      ),
+    }
+  );
+  useEffect(() => {
+    if (messageQuery.data)
+      setLocalMessages(
+        messageQuery.data.messages.map(message => ({
+          role: message.role,
+          content: message.content,
+        }))
+      );
+  }, [messageQuery.data]);
   useEffect(() => {
     const current = detail.data?.interpretations[0];
     setClassification(current?.germlineClassification || "");
@@ -71,56 +184,1017 @@ export default function WorkbenchPage() {
     setLocalMessages([]);
   }, [selectedId, detail.data?.interpretations, detail.data?.conversations]);
 
-  const refresh = trpc.variants.refreshEvidence.useMutation({ onSuccess: async result => { await detail.refetch(); toast.success(`Added ${result.count} items to the Evidence Ledger.`); }, onError: error => toast.error(error.message) });
-  const setReviewStatus = trpc.variants.setReviewStatus.useMutation({ onSuccess: async () => { await Promise.all([detail.refetch(), list.refetch()]); toast.success("Review status updated."); }, onError: error => toast.error(error.message) });
-  const saveInterpretation = trpc.variants.saveInterpretation.useMutation({ onSuccess: async () => { await Promise.all([detail.refetch(), list.refetch()]); toast.success("Interpretation draft saved."); }, onError: error => toast.error(error.message) });
-  const saveCriterion = trpc.variants.saveCriterion.useMutation({ onSuccess: async () => { await detail.refetch(); toast.success(`${activeCriterion} assessment saved.`); }, onError: error => toast.error(error.message) });
-  const approve = trpc.variants.approveInterpretation.useMutation({ onSuccess: async () => { await Promise.all([detail.refetch(), list.refetch()]); toast.success("Clinician approval recorded."); }, onError: error => toast.error(error.message) });
+  const refresh = trpc.variants.refreshEvidence.useMutation({
+    onSuccess: async result => {
+      await detail.refetch();
+      toast.success(`Added ${result.count} items to the Evidence Ledger.`);
+    },
+    onError: error => toast.error(error.message),
+  });
+  const setReviewStatus = trpc.variants.setReviewStatus.useMutation({
+    onSuccess: async () => {
+      await Promise.all([detail.refetch(), list.refetch()]);
+      toast.success("Review status updated.");
+    },
+    onError: error => toast.error(error.message),
+  });
+  const saveInterpretation = trpc.variants.saveInterpretation.useMutation({
+    onSuccess: async () => {
+      await Promise.all([detail.refetch(), list.refetch()]);
+      toast.success("Interpretation draft saved.");
+    },
+    onError: error => toast.error(error.message),
+  });
+  const saveCriterion = trpc.variants.saveCriterion.useMutation({
+    onSuccess: async () => {
+      await detail.refetch();
+      toast.success(`${activeCriterion} assessment saved.`);
+    },
+    onError: error => toast.error(error.message),
+  });
+  const approve = trpc.variants.approveInterpretation.useMutation({
+    onSuccess: async () => {
+      await Promise.all([detail.refetch(), list.refetch()]);
+      toast.success("Clinician approval recorded.");
+    },
+    onError: error => toast.error(error.message),
+  });
   const ask = trpc.copilot.ask.useMutation({
-    onSuccess: result => { setConversationId(result.conversationId); setLocalMessages(current => [...current, { role: "assistant", content: result.content }]); toast.success(`Verified ${result.citationIds.length} citation(s).`); },
-    onError: error => { toast.error(error.message); setLocalMessages(current => current.slice(0, -1)); },
+    onSuccess: result => {
+      setConversationId(result.conversationId);
+      setLocalMessages(current => [
+        ...current,
+        { role: "assistant", content: result.content },
+      ]);
+      toast.success(`Verified ${result.citationIds.length} citation(s).`);
+    },
+    onError: error => {
+      toast.error(error.message);
+      setLocalMessages(current => current.slice(0, -1));
+    },
   });
   const currentInterpretation = detail.data?.interpretations[0];
-  const criteriaMap = useMemo(() => new Map(detail.data?.criteria.map(item => [item.code, item.state]) || []), [detail.data?.criteria]);
+  const criteriaMap = useMemo(
+    () =>
+      new Map(detail.data?.criteria.map(item => [item.code, item.state]) || []),
+    [detail.data?.criteria]
+  );
   const handleSave = (submitForReview: boolean) => {
     if (!selectedId || !caseQuery.data) return;
-    saveInterpretation.mutate({ organizationId: activeOrganizationId!, variantId: selectedId, germlineClassification: caseQuery.data.purpose === "germline" ? classification as (typeof GERMLINE_CLASSIFICATIONS)[number] : undefined, somaticTier: caseQuery.data.purpose === "somatic" ? somaticTier as (typeof SOMATIC_TIERS)[number] : undefined, oncogenicity: caseQuery.data.purpose === "somatic" ? oncogenicity as (typeof ONCOGENICITY_CLASSIFICATIONS)[number] : undefined, diseaseContext: diseaseContext || undefined, rationale, submitForReview });
+    saveInterpretation.mutate({
+      organizationId: activeOrganizationId!,
+      variantId: selectedId,
+      germlineClassification:
+        caseQuery.data.purpose === "germline"
+          ? (classification as (typeof GERMLINE_CLASSIFICATIONS)[number])
+          : undefined,
+      somaticTier:
+        caseQuery.data.purpose === "somatic"
+          ? (somaticTier as (typeof SOMATIC_TIERS)[number])
+          : undefined,
+      oncogenicity:
+        caseQuery.data.purpose === "somatic"
+          ? (oncogenicity as (typeof ONCOGENICITY_CLASSIFICATIONS)[number])
+          : undefined,
+      diseaseContext: diseaseContext || undefined,
+      rationale,
+      submitForReview,
+    });
   };
-  const sendMessage = (question: string) => { if (!selectedId) return; setLocalMessages(current => [...current, { role: "user", content: question }]); ask.mutate({ organizationId: activeOrganizationId!, variantId: selectedId, conversationId, modelId: conversationId ? undefined : modelId, question }); };
-  const failedMutation = refresh.error ? { title: "Failed to refresh public evidence", message: refresh.error.message, retry: () => refresh.variables && refresh.mutate(refresh.variables) }
-    : saveInterpretation.error ? { title: "Failed to save interpretation", message: saveInterpretation.error.message, retry: () => saveInterpretation.variables && saveInterpretation.mutate(saveInterpretation.variables) }
-    : saveCriterion.error ? { title: "Failed to save ACMG criterion", message: saveCriterion.error.message, retry: () => saveCriterion.variables && saveCriterion.mutate(saveCriterion.variables) }
-    : approve.error ? { title: "Failed to record clinician approval", message: approve.error.message, retry: () => approve.variables && approve.mutate(approve.variables) }
-    : ask.error ? { title: "Failed to generate Copilot response", message: ask.error.message, retry: () => { if (!ask.variables) return; setLocalMessages(current => [...current, { role: "user", content: ask.variables!.question }]); ask.mutate(ask.variables); } }
-    : null;
+  const sendMessage = (question: string) => {
+    if (!selectedId) return;
+    setLocalMessages(current => [
+      ...current,
+      { role: "user", content: question },
+    ]);
+    ask.mutate({
+      organizationId: activeOrganizationId!,
+      variantId: selectedId,
+      conversationId,
+      modelId: conversationId ? undefined : modelId,
+      question,
+    });
+  };
+  const failedMutation = refresh.error
+    ? {
+        title: "Failed to refresh public evidence",
+        message: refresh.error.message,
+        retry: () => refresh.variables && refresh.mutate(refresh.variables),
+      }
+    : saveInterpretation.error
+      ? {
+          title: "Failed to save interpretation",
+          message: saveInterpretation.error.message,
+          retry: () =>
+            saveInterpretation.variables &&
+            saveInterpretation.mutate(saveInterpretation.variables),
+        }
+      : saveCriterion.error
+        ? {
+            title: "Failed to save ACMG criterion",
+            message: saveCriterion.error.message,
+            retry: () =>
+              saveCriterion.variables &&
+              saveCriterion.mutate(saveCriterion.variables),
+          }
+        : approve.error
+          ? {
+              title: "Failed to record clinician approval",
+              message: approve.error.message,
+              retry: () =>
+                approve.variables && approve.mutate(approve.variables),
+            }
+          : ask.error
+            ? {
+                title: "Failed to generate Copilot response",
+                message: ask.error.message,
+                retry: () => {
+                  if (!ask.variables) return;
+                  setLocalMessages(current => [
+                    ...current,
+                    { role: "user", content: ask.variables!.question },
+                  ]);
+                  ask.mutate(ask.variables);
+                },
+              }
+            : null;
 
-  if (!canReadVariants) return <div className="space-y-7"><PageHeader eyebrow="Variant interpretation" title="Variant Workbench" description="Review variants and clinical evidence within the organization boundary." /><StatePanel type="forbidden" title="You do not have permission to view variants" description="Ask your organization administrator for a role that includes the variant:read action." action={<Button variant="outline" onClick={() => navigate("/")}>Dashboard</Button>} /></div>;
-  if (caseQuery.isLoading) return <div className="space-y-5"><Skeleton className="h-20" /><Skeleton className="h-[650px]" /></div>;
-  if (caseQuery.isError) return <div className="space-y-7"><PageHeader eyebrow="Variant interpretation" title="Workbench error" description="Unable to verify the requested case and organization access boundary." /><StatePanel type="error" title="Failed to load workbench" description={caseQuery.error.message} onRetry={() => { void caseQuery.refetch(); }} action={<Button variant="outline" onClick={() => navigate(`/cases/${caseId}`)}><ArrowLeft className="mr-2 size-4" />Case</Button>} /></div>;
-  if (!caseQuery.data) return <div className="space-y-7"><PageHeader eyebrow="Variant interpretation" title="Workbench not found" description="Please verify the requested case identifier." /><StatePanel type="empty" title="Case not found" description="Cases not accessible in the current organization are not shown in the workbench." action={<Button variant="outline" onClick={() => navigate("/cases")}><ArrowLeft className="mr-2 size-4" />Cases</Button>} /></div>;
+  if (!canReadVariants)
+    return (
+      <div className="space-y-7">
+        <PageHeader
+          eyebrow="Variant interpretation"
+          title="Variant Workbench"
+          description="Review variants and clinical evidence within the organization boundary."
+        />
+        <StatePanel
+          type="forbidden"
+          title="You do not have permission to view variants"
+          description="Ask your organization administrator for a role that includes the variant:read action."
+          action={
+            <Button variant="outline" onClick={() => navigate("/")}>
+              Dashboard
+            </Button>
+          }
+        />
+      </div>
+    );
+  if (caseQuery.isLoading)
+    return (
+      <div className="space-y-5">
+        <Skeleton className="h-20" />
+        <Skeleton className="h-[650px]" />
+      </div>
+    );
+  if (caseQuery.isError)
+    return (
+      <div className="space-y-7">
+        <PageHeader
+          eyebrow="Variant interpretation"
+          title="Workbench error"
+          description="Unable to verify the requested case and organization access boundary."
+        />
+        <StatePanel
+          type="error"
+          title="Failed to load workbench"
+          description={caseQuery.error.message}
+          onRetry={() => {
+            void caseQuery.refetch();
+          }}
+          action={
+            <Button
+              variant="outline"
+              onClick={() => navigate(`/cases/${caseId}`)}
+            >
+              <ArrowLeft className="mr-2 size-4" />
+              Case
+            </Button>
+          }
+        />
+      </div>
+    );
+  if (!caseQuery.data)
+    return (
+      <div className="space-y-7">
+        <PageHeader
+          eyebrow="Variant interpretation"
+          title="Workbench not found"
+          description="Please verify the requested case identifier."
+        />
+        <StatePanel
+          type="empty"
+          title="Case not found"
+          description="Cases not accessible in the current organization are not shown in the workbench."
+          action={
+            <Button variant="outline" onClick={() => navigate("/cases")}>
+              <ArrowLeft className="mr-2 size-4" />
+              Cases
+            </Button>
+          }
+        />
+      </div>
+    );
   const clinicalCase = caseQuery.data;
   const canEditInterpretation = hasPermission("interpretation:edit");
   return (
     <div className="space-y-5">
-      <PageHeader eyebrow={`${clinicalCase.purpose} interpretation`} title={`${clinicalCase.caseNumber} · Variant Workbench`} description={`${clinicalCase.patientAlias} · ${clinicalCase.referenceBuild} · ${clinicalCase.variantCount.toLocaleString()} variants`} badge={clinicalCase.status} actions={<Button variant="outline" onClick={() => navigate(`/cases/${caseId}`)}><ArrowLeft className="mr-2 size-4" />Case</Button>} />
-      <Alert className="border-amber-200 bg-amber-50/65 text-amber-950"><ShieldAlert className="size-4 text-amber-700" /><AlertTitle>Expert interpretation zone</AlertTitle><AlertDescription className="text-amber-800/80">AI drafts do not replace expert verdict and report sign-out. A qualified clinician must review the applied criteria and evidence and approve the final status.</AlertDescription></Alert>
-      {clinicalCase.referenceBuild === "GRCh37" ? <Alert className="border-sky-200 bg-sky-50/65 text-sky-950"><AlertTitle>GRCh37 case</AlertTitle><AlertDescription>Submitted coordinates are lifted to GRCh38 before engine analysis. Gene + HGVSc is unchanged.</AlertDescription></Alert> : null}
-      {failedMutation ? <StatePanel compact type="error" title={failedMutation.title} description={failedMutation.message} onRetry={failedMutation.retry} /> : null}
+      <PageHeader
+        eyebrow={`${clinicalCase.purpose} interpretation`}
+        title={`${clinicalCase.caseNumber} · Variant Workbench`}
+        description={`${clinicalCase.patientAlias} · ${clinicalCase.referenceBuild} · ${clinicalCase.variantCount.toLocaleString()} variants`}
+        badge={clinicalCase.status}
+        actions={
+          <Button
+            variant="outline"
+            onClick={() => navigate(`/cases/${caseId}`)}
+          >
+            <ArrowLeft className="mr-2 size-4" />
+            Case
+          </Button>
+        }
+      />
+      <Alert className="border-amber-200 bg-amber-50/65 text-amber-950">
+        <ShieldAlert className="size-4 text-amber-700" />
+        <AlertTitle>Expert interpretation zone</AlertTitle>
+        <AlertDescription className="text-amber-800/80">
+          AI drafts do not replace expert verdict and report sign-out. A
+          qualified clinician must review the applied criteria and evidence and
+          approve the final status.
+        </AlertDescription>
+      </Alert>
+      {clinicalCase.referenceBuild === "GRCh37" ? (
+        <Alert className="border-sky-200 bg-sky-50/65 text-sky-950">
+          <AlertTitle>GRCh37 case</AlertTitle>
+          <AlertDescription>
+            Submitted coordinates are lifted to GRCh38 before engine analysis.
+            Gene + HGVSc is unchanged.
+          </AlertDescription>
+        </Alert>
+      ) : null}
+      {failedMutation ? (
+        <StatePanel
+          compact
+          type="error"
+          title={failedMutation.title}
+          description={failedMutation.message}
+          onRetry={failedMutation.retry}
+        />
+      ) : null}
       <div className="grid min-h-[720px] overflow-hidden rounded-2xl border border-border/80 bg-card shadow-[0_18px_50px_-36px_rgba(15,23,42,.28)] xl:grid-cols-[minmax(540px,1.15fr)_minmax(470px,.85fr)]">
         <section className="min-w-0 border-b border-border/70 xl:border-b-0 xl:border-r">
-          <div className="flex flex-col gap-3 border-b border-border/70 bg-muted/20 p-4 sm:flex-row"><div className="relative flex-1"><Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" /><Input aria-label="Search by gene, HGVS, or normalized ID" value={search} onChange={event => setSearch(event.target.value)} placeholder="Gene, HGVS, normalized ID" className="pl-9" /></div><select aria-label="Filter by variant impact" value={impact} onChange={event => setImpact(event.target.value as Impact | "all")} className="h-10 rounded-lg border border-input bg-background px-3 text-xs"><option value="all">All impact</option>{["HIGH", "MODERATE", "LOW", "MODIFIER", "UNKNOWN"].map(value => <option key={value}>{value}</option>)}</select></div>
-          <TriageBar organizationId={activeOrganizationId!} caseId={caseId} tierFilter={tierFilter} onTierFilterChange={setTierFilter} counts={tierCounts} canCurate={hasPermission("curation:run")} onChanged={() => Promise.all([list.refetch(), tierCountQuery.refetch()])} />
-          <ScrollArea className="h-[655px]"><table className="w-full min-w-[690px] text-left"><thead className="sticky top-0 z-10 bg-card"><tr className="border-b border-border/70 text-[9px] uppercase tracking-[.14em] text-muted-foreground"><th className="px-4 py-3">Variant</th><th className="px-3 py-3">Triage</th><th className="px-3 py-3">Impact</th><th className="px-3 py-3">Frequency</th><th className="px-3 py-3">Classification</th><th className="w-8" /></tr></thead><tbody className="divide-y divide-border/55">{list.isError ? <tr><td colSpan={6} className="p-4"><StatePanel compact type="error" title="Failed to load variant list" description={list.error.message} onRetry={() => { void list.refetch(); }} /></td></tr> : list.isLoading ? Array.from({ length: 10 }).map((_, index) => <tr key={index}><td colSpan={6} className="p-3"><Skeleton className="h-10" /></td></tr>) : list.data?.map(variant => <tr key={variant.id} tabIndex={0} role="button" aria-pressed={selectedId === variant.id} aria-label={`Select variant ${variant.gene || "Intergenic"} ${variant.hgvsC || variant.normalizedId}`} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelectedId(variant.id); } }} onClick={() => setSelectedId(variant.id)} className={`cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary ${selectedId === variant.id ? "bg-primary/[0.055]" : "hover:bg-muted/40"}`}><td className="px-4 py-3"><div className="flex items-center gap-3"><div className={`h-8 w-1 rounded-full ${variant.reviewStatus === "flagged" ? "bg-amber-500" : variant.reviewStatus === "reviewed" ? "bg-emerald-500" : "bg-slate-200"}`} /><div><p className="font-mono text-[11px] font-semibold">{variant.gene || "Intergenic"} <span className="font-normal text-muted-foreground">{variant.hgvsC || variant.normalizedId}</span></p><p className="mt-1 max-w-[285px] truncate text-[10px] text-muted-foreground">{variant.hgvsP || variant.consequence || "—"}</p></div></div></td><td className="px-3 py-3"><TriageTierBadge tier={variant.triageTier} score={variant.triageScore} reasons={variant.triageReasons} /></td><td className="px-3 py-3"><Badge variant="outline" className={`text-[9px] ${variant.impact === "HIGH" ? "border-rose-200 bg-rose-50 text-rose-700" : variant.impact === "MODERATE" ? "border-amber-200 bg-amber-50 text-amber-700" : ""}`}>{variant.impact}</Badge></td><td className="px-3 py-3 font-mono text-[10px]">{variant.populationAf ? Number(variant.populationAf).toExponential(2) : "—"}<p className="mt-1 text-[9px] text-muted-foreground">VAF {variant.vaf ? `${(Number(variant.vaf) * 100).toFixed(1)}%` : "—"}</p></td><td className="px-3 py-3"><p className="text-[10px] font-medium">{variant.germlineClassification || variant.somaticTier || "Unclassified"}</p><p className="mt-1 text-[9px] text-muted-foreground">{variant.oncogenicity || variant.interpretationStatus || "Draft required"}</p></td><td><ChevronRight className="size-4 text-muted-foreground/50" /></td></tr>)}</tbody></table></ScrollArea>
+          <div className="flex flex-col gap-3 border-b border-border/70 bg-muted/20 p-4 sm:flex-row">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                aria-label="Search by gene, HGVS, or normalized ID"
+                value={search}
+                onChange={event => setSearch(event.target.value)}
+                placeholder="Gene, HGVS, normalized ID"
+                className="pl-9"
+              />
+            </div>
+            <select
+              aria-label="Filter by variant impact"
+              value={impact}
+              onChange={event =>
+                setImpact(event.target.value as Impact | "all")
+              }
+              className="h-10 rounded-lg border border-input bg-background px-3 text-xs"
+            >
+              <option value="all">All impact</option>
+              {["HIGH", "MODERATE", "LOW", "MODIFIER", "UNKNOWN"].map(value => (
+                <option key={value}>{value}</option>
+              ))}
+            </select>
+          </div>
+          <TriageBar
+            organizationId={activeOrganizationId!}
+            caseId={caseId}
+            tierFilter={tierFilter}
+            onTierFilterChange={setTierFilter}
+            counts={tierCounts}
+            canCurate={hasPermission("curation:run")}
+            onChanged={() =>
+              Promise.all([list.refetch(), tierCountQuery.refetch()])
+            }
+          />
+          <ScrollArea className="h-[655px]">
+            <table className="w-full min-w-[690px] text-left">
+              <thead className="sticky top-0 z-10 bg-card">
+                <tr className="border-b border-border/70 text-[9px] uppercase tracking-[.14em] text-muted-foreground">
+                  <th className="px-4 py-3">Variant</th>
+                  <th className="px-3 py-3">Triage</th>
+                  <th className="px-3 py-3">Impact</th>
+                  <th className="px-3 py-3">Frequency</th>
+                  <th className="px-3 py-3">Classification</th>
+                  <th className="w-8" />
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border/55">
+                {list.isError ? (
+                  <tr>
+                    <td colSpan={6} className="p-4">
+                      <StatePanel
+                        compact
+                        type="error"
+                        title="Failed to load variant list"
+                        description={list.error.message}
+                        onRetry={() => {
+                          void list.refetch();
+                        }}
+                      />
+                    </td>
+                  </tr>
+                ) : list.isLoading ? (
+                  Array.from({ length: 10 }).map((_, index) => (
+                    <tr key={index}>
+                      <td colSpan={6} className="p-3">
+                        <Skeleton className="h-10" />
+                      </td>
+                    </tr>
+                  ))
+                ) : (
+                  list.data?.map(variant => (
+                    <tr
+                      key={variant.id}
+                      tabIndex={0}
+                      role="button"
+                      aria-pressed={selectedId === variant.id}
+                      aria-label={`Select variant ${variant.gene || "Intergenic"} ${variant.hgvsC || variant.normalizedId}`}
+                      onKeyDown={event => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          setSelectedId(variant.id);
+                        }
+                      }}
+                      onClick={() => setSelectedId(variant.id)}
+                      className={`cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary ${selectedId === variant.id ? "bg-primary/[0.055]" : "hover:bg-muted/40"}`}
+                    >
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-3">
+                          <div
+                            className={`h-8 w-1 rounded-full ${variant.reviewStatus === "flagged" ? "bg-amber-500" : variant.reviewStatus === "reviewed" ? "bg-emerald-500" : "bg-slate-200"}`}
+                          />
+                          <div>
+                            <p className="font-mono text-[11px] font-semibold">
+                              {variant.gene || "Intergenic"}{" "}
+                              <span className="font-normal text-muted-foreground">
+                                {variant.hgvsC || variant.normalizedId}
+                              </span>
+                            </p>
+                            <p className="mt-1 max-w-[285px] truncate text-[10px] text-muted-foreground">
+                              {variant.hgvsP || variant.consequence || "—"}
+                            </p>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-3 py-3">
+                        <TriageTierBadge
+                          tier={variant.triageTier}
+                          score={variant.triageScore}
+                          reasons={variant.triageReasons}
+                        />
+                      </td>
+                      <td className="px-3 py-3">
+                        <Badge
+                          variant="outline"
+                          className={`text-[9px] ${variant.impact === "HIGH" ? "border-rose-200 bg-rose-50 text-rose-700" : variant.impact === "MODERATE" ? "border-amber-200 bg-amber-50 text-amber-700" : ""}`}
+                        >
+                          {variant.impact}
+                        </Badge>
+                      </td>
+                      <td className="px-3 py-3 font-mono text-[10px]">
+                        {variant.populationAf
+                          ? Number(variant.populationAf).toExponential(2)
+                          : "—"}
+                        <p className="mt-1 text-[9px] text-muted-foreground">
+                          VAF{" "}
+                          {variant.vaf
+                            ? `${(Number(variant.vaf) * 100).toFixed(1)}%`
+                            : "—"}
+                        </p>
+                      </td>
+                      <td className="px-3 py-3">
+                        <p className="text-[10px] font-medium">
+                          {variant.germlineClassification ||
+                            variant.somaticTier ||
+                            "Unclassified"}
+                        </p>
+                        <p className="mt-1 text-[9px] text-muted-foreground">
+                          {variant.oncogenicity ||
+                            variant.interpretationStatus ||
+                            "Draft required"}
+                        </p>
+                      </td>
+                      <td>
+                        <ChevronRight className="size-4 text-muted-foreground/50" />
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </ScrollArea>
         </section>
         <section className="min-w-0 bg-muted/[0.12]">
-          {detail.isError ? <div className="p-5"><StatePanel type="error" title="Failed to load variant details" description={detail.error.message} onRetry={() => { void detail.refetch(); }} /></div> : !selectedId || detail.isLoading ? <div className="space-y-4 p-5"><Skeleton className="h-20" /><Skeleton className="h-[560px]" /></div> : detail.data ? <div><div className="border-b border-border/70 bg-card p-5"><div className="flex items-start justify-between gap-4"><div><div className="flex items-center gap-2"><h2 className="font-display text-lg font-semibold">{detail.data.variant.gene || "Intergenic"}</h2><Badge variant="outline">{detail.data.variant.variantType}</Badge></div><p className="mt-2 font-mono text-xs text-muted-foreground">{detail.data.variant.hgvsC || detail.data.variant.normalizedId}</p><p className="mt-1 font-mono text-[11px] text-muted-foreground">{detail.data.variant.hgvsP}</p></div><div className="flex flex-col items-end gap-2"><ClinicalStatus status={detail.data.variant.reviewStatus} />{canEditInterpretation ? <select aria-label="Review status" value={detail.data.variant.reviewStatus} disabled={setReviewStatus.isPending} onChange={event => setReviewStatus.mutate({ organizationId: activeOrganizationId!, variantId: selectedId, reviewStatus: event.target.value as "unreviewed" | "reviewing" | "reviewed" | "flagged" })} className="h-8 rounded-md border border-input bg-background px-2 text-[10px]"><option value="unreviewed">Unreviewed</option><option value="reviewing">Reviewing</option><option value="reviewed">Reviewed</option><option value="flagged">Flagged</option></select> : null}</div></div></div>
-            <Tabs defaultValue="evidence" className="p-4"><TabsList className={`grid w-full ${canEditInterpretation ? "grid-cols-4" : "grid-cols-3"}`}><TabsTrigger value="evidence"><BookOpen className="mr-2 size-3.5" />Evidence</TabsTrigger><TabsTrigger value="curation"><Microscope className="mr-2 size-3.5" />Curation</TabsTrigger><TabsTrigger value="classification"><FlaskConical className="mr-2 size-3.5" />Classification</TabsTrigger>{canEditInterpretation ? <TabsTrigger value="copilot"><Sparkles className="mr-2 size-3.5" />AI Copilot</TabsTrigger> : null}</TabsList>
-              <TabsContent value="curation" className="mt-4"><CurationPanel organizationId={activeOrganizationId!} variantId={selectedId} interpretationId={currentInterpretation?.id} canCurate={hasPermission("curation:run")} canEdit={canEditInterpretation} onMerged={() => Promise.all([detail.refetch(), list.refetch()])} /></TabsContent>
-              <TabsContent value="evidence" className="mt-4"><div className="mb-3 flex items-center justify-between"><div><p className="text-sm font-semibold">Evidence Ledger</p><p className="text-[10px] text-muted-foreground">Source · access time · clinical axis preserved</p></div>{hasPermission("interpretation:edit") ? <Button size="sm" variant="outline" onClick={() => refresh.mutate({ organizationId: activeOrganizationId!, variantId: selectedId })} disabled={refresh.isPending}>{refresh.isPending ? <Loader2 className="mr-2 size-3.5 animate-spin" /> : <RefreshCw className="mr-2 size-3.5" />}Refresh public evidence</Button> : null}</div><ScrollArea className="h-[490px] pr-3"><div className="space-y-3">{detail.data.evidence.length ? detail.data.evidence.map(item => <Card key={item.id} className="shadow-none"><CardContent className="p-4"><div className="flex items-start justify-between gap-3"><div className="flex flex-wrap gap-1.5"><Badge variant="secondary">E{item.id}</Badge><Badge variant="outline">{item.source}</Badge><Badge variant="outline">{item.clinicalDomain}</Badge></div>{item.url ? <a href={item.url} target="_blank" rel="noreferrer" className="text-muted-foreground hover:text-primary"><ExternalLink className="size-3.5" /></a> : null}</div><p className="mt-3 text-xs font-semibold leading-5">{item.title}</p><p className="mt-2 text-[11px] leading-5 text-muted-foreground">{item.excerpt}</p><div className="mt-3 flex items-center justify-between border-t border-border/60 pt-2 text-[9px] text-muted-foreground"><span>{item.direction} · {item.evidenceLevel || "level not assigned"}</span><span>{formatDate(item.accessedAt)}</span></div></CardContent></Card>) : <div className="rounded-xl border border-dashed py-14 text-center"><BookOpen className="mx-auto size-7 text-muted-foreground/35" /><p className="mt-3 text-xs font-medium">No evidence stored</p><p className="mt-1 text-[10px] text-muted-foreground">Refresh public evidence, then have an expert review the sources.</p></div>}<div className="mt-5 border-t border-border/70 pt-4"><p className="mb-3 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Variant audit history</p>{detail.data.audit.length ? detail.data.audit.map(event => <div key={event.id} className="mb-2 flex items-start justify-between gap-3 rounded-lg bg-muted/50 px-3 py-2"><div><p className="text-[10px] font-medium">{event.action}</p><p className="mt-1 font-mono text-[9px] text-muted-foreground">request {event.requestId.slice(0, 12)}</p></div><span className="whitespace-nowrap text-[9px] text-muted-foreground">{formatDateTime(event.createdAt)}</span></div>) : <p className="text-[10px] text-muted-foreground">No variant change events recorded yet.</p>}</div></div></ScrollArea></TabsContent>
-              {hasPermission("interpretation:edit") ? <TabsContent value="classification" className="mt-4"><ScrollArea className="h-[540px] pr-3"><div className="space-y-5">{clinicalCase.purpose === "germline" ? <><div className="rounded-xl border border-primary/30 bg-primary/10 p-4"><p className="text-[10px] font-semibold uppercase tracking-wider text-primary">Rule-based suggestion</p><p className="mt-2 text-sm font-semibold text-foreground">{detail.data.acmgSuggestion?.classification}</p><p className="mt-1 text-[11px] leading-5 text-muted-foreground">{detail.data.acmgSuggestion?.rationale}</p></div>{detail.data.classificationDivergence?.message ? <div className={`flex items-start gap-2 rounded-xl border px-3 py-2.5 ${detail.data.classificationDivergence.diverges ? "border-rose-200 bg-rose-50/70" : "border-amber-200 bg-amber-50/70"}`}><ShieldAlert className={`mt-0.5 size-3.5 shrink-0 ${detail.data.classificationDivergence.diverges ? "text-rose-700" : "text-amber-700"}`} /><div><p className={`text-[10px] font-semibold uppercase tracking-wider ${detail.data.classificationDivergence.diverges ? "text-rose-700" : "text-amber-700"}`}>{detail.data.classificationDivergence.diverges ? `Classification mismatch (${detail.data.classificationDivergence.tierGap} tier${detail.data.classificationDivergence.tierGap === 1 ? "" : "s"} apart)` : "Review outstanding"}</p><p className={`mt-1 text-[11px] leading-5 ${detail.data.classificationDivergence.diverges ? "text-rose-900" : "text-amber-900"}`}>{detail.data.classificationDivergence.message}</p></div></div> : null}<div className="space-y-2"><Label>Final germline classification</Label><select value={classification} onChange={event => setClassification(event.target.value)} className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm"><option value="">Select classification</option>{GERMLINE_CLASSIFICATIONS.map(value => <option key={value}>{value}</option>)}</select></div><div><div className="mb-2 flex items-center justify-between"><Label>ACMG 2015 criteria</Label><span className="text-[9px] text-muted-foreground">Select a code to record assessment</span></div><div className="grid grid-cols-6 gap-1.5">{ACMG_CRITERIA.map(code => <button key={code} onClick={() => { setActiveCriterion(code); const current = detail.data.criteria.find(item => item.code === code); setCriterionState((current?.state as CriterionState) || "not_met"); setCriterionNote(current?.note || ""); }} className={`rounded-md border px-1 py-2 font-mono text-[9px] font-semibold ${activeCriterion === code ? "border-primary bg-primary text-primary-foreground" : criteriaMap.get(code) === "met" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-border bg-card text-muted-foreground"}`}>{code}</button>)}</div><div className="mt-3 rounded-xl border border-border bg-card p-3"><div className="flex items-center justify-between"><p className="font-mono text-xs font-semibold">{activeCriterion}</p><select value={criterionState} onChange={event => setCriterionState(event.target.value as CriterionState)} className="h-8 rounded-md border border-input bg-background px-2 text-[10px]"><option value="met">Met</option><option value="not_met">Not met</option><option value="not_applicable">N/A</option></select></div><Textarea value={criterionNote} onChange={event => setCriterionNote(event.target.value)} className="mt-2 min-h-20 text-xs" placeholder="Record the basis for application or reason for exclusion." /><Button size="sm" variant="outline" className="mt-2 w-full" disabled={!currentInterpretation || saveCriterion.isPending || (criterionState === "met" && criterionNote.trim().length < 2)} onClick={() => currentInterpretation && saveCriterion.mutate({ organizationId: activeOrganizationId!, interpretationId: currentInterpretation.id, code: activeCriterion, state: criterionState, evidenceIds: [], note: criterionNote || undefined })}>{currentInterpretation ? "Save criteria" : "Save an interpretation draft first"}</Button></div></div></> : <><div className="rounded-xl border border-primary/30 bg-primary/10 p-4"><p className="text-[10px] font-semibold uppercase tracking-wider text-primary">AMP/ASCO/CAP suggestion</p><p className="mt-2 text-sm font-semibold text-foreground">{detail.data.ampSuggestion?.tier || "Tier III"} · {detail.data.ampSuggestion?.oncogenicity || "VUS"}</p><p className="mt-1 text-[11px] leading-5 text-muted-foreground">{detail.data.ampSuggestion?.rationale || "Refresh public evidence to query CIViC and OncoKB."}</p>{detail.data.ampSuggestion?.sourcesDisabled?.length ? <p className="mt-1 text-[10px] text-muted-foreground">Not consulted: {detail.data.ampSuggestion.sourcesDisabled.join(", ")}. Absence of a disabled source is not evidence of absence.</p> : null}{detail.data.ampSuggestion ? <Button size="sm" variant="outline" className="mt-3" onClick={() => { setSomaticTier(detail.data.ampSuggestion!.tier); setOncogenicity(detail.data.ampSuggestion!.oncogenicity); }}>Apply suggestion</Button> : null}</div>{detail.data.classificationDivergence?.message ? <div className={`flex items-start gap-2 rounded-xl border px-3 py-2.5 ${detail.data.classificationDivergence.diverges ? "border-rose-200 bg-rose-50/70" : "border-amber-200 bg-amber-50/70"}`}><ShieldAlert className={`mt-0.5 size-3.5 shrink-0 ${detail.data.classificationDivergence.diverges ? "text-rose-700" : "text-amber-700"}`} /><p className={`text-[11px] leading-5 ${detail.data.classificationDivergence.diverges ? "text-rose-900" : "text-amber-900"}`}>{detail.data.classificationDivergence.message}</p></div> : null}<div className="grid gap-4 sm:grid-cols-2"><div className="space-y-2"><Label>AMP/ASCO/CAP Tier</Label><select value={somaticTier} onChange={event => setSomaticTier(event.target.value)} className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm"><option value="">Select tier</option>{SOMATIC_TIERS.map(value => <option key={value}>{value}</option>)}</select></div><div className="space-y-2"><Label>Oncogenicity</Label><select value={oncogenicity} onChange={event => setOncogenicity(event.target.value)} className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm"><option value="">Select classification</option>{ONCOGENICITY_CLASSIFICATIONS.map(value => <option key={value}>{value}</option>)}</select></div></div><div className="space-y-2"><Label>Disease context</Label><Input value={diseaseContext} onChange={event => setDiseaseContext(event.target.value)} placeholder="Cancer type, stage, line of therapy" /></div><div className="grid grid-cols-3 gap-2">{["Predictive", "Diagnostic", "Prognostic"].map(domain => <div key={domain} className="rounded-xl border border-border bg-card p-3 text-center"><p className="text-[10px] font-semibold">{domain}</p><p className="mt-1 text-[9px] text-muted-foreground">Linked independently from evidence panel</p></div>)}</div></>}
-                <div className="space-y-2"><Label>Expert interpretation rationale</Label><Textarea value={rationale} onChange={event => setRationale(event.target.value)} className="min-h-32" placeholder="Describe evidence application, conflicting information, disease context, and limitations." /></div><div className="grid gap-2 sm:grid-cols-2"><Button variant="outline" disabled={saveInterpretation.isPending || rationale.trim().length < 20} onClick={() => handleSave(false)}><Save className="mr-2 size-4" />Save draft</Button><Button disabled={saveInterpretation.isPending || rationale.trim().length < 20} onClick={() => handleSave(true)}><CheckCircle2 className="mr-2 size-4" />Submit for review</Button></div>{currentInterpretation?.status === "in_review" && hasPermission("interpretation:approve") ? <Button className="w-full" variant="secondary" disabled={approve.isPending} onClick={() => approve.mutate({ organizationId: activeOrganizationId!, interpretationId: currentInterpretation.id })}>Clinician approval</Button> : null}</div></ScrollArea></TabsContent> : null}
-              {canEditInterpretation ? <TabsContent value="copilot" className="mt-4"><div className="mb-3 flex items-center justify-between gap-3"><div><p className="text-sm font-semibold">Evidence Copilot</p><p className="text-[10px] text-muted-foreground">Ledger-only · cited draft · no sign-out</p></div><select aria-label="Copilot model" value={modelId} onChange={event => setModelId(event.target.value)} disabled={Boolean(conversationId) || models.isError} className="h-8 max-w-44 rounded-md border border-input bg-background px-2 text-[10px]">{models.data?.map(model => <option key={model.id} value={model.id}>{model.id}</option>) || <option value="gpt-5-mini">gpt-5-mini</option>}</select></div>{models.isError ? <StatePanel compact type="error" title="Failed to load AI model catalog" description={models.error.message} onRetry={() => { void models.refetch(); }} /> : messageQuery.isError ? <StatePanel compact type="error" title="Failed to load Copilot conversation history" description={messageQuery.error.message} onRetry={() => { void messageQuery.refetch(); }} /> : <AIChatBox messages={localMessages} onSendMessage={sendMessage} isLoading={ask.isPending || messageQuery.isLoading} height={500} placeholder="Ask a question about the current variant and stored evidence…" emptyStateMessage="Generates citable drafts using only the reviewed Evidence Ledger." suggestedPrompts={["Summarize and separate the pathogenic and benign evidence for this variant.", "What evidence gaps remain for further review?", "Draft an interpretation for the report with evidence IDs."]} />}</TabsContent> : null}
-            </Tabs></div> : null}
+          {detail.isError ? (
+            <div className="p-5">
+              <StatePanel
+                type="error"
+                title="Failed to load variant details"
+                description={detail.error.message}
+                onRetry={() => {
+                  void detail.refetch();
+                }}
+              />
+            </div>
+          ) : !selectedId || detail.isLoading ? (
+            <div className="space-y-4 p-5">
+              <Skeleton className="h-20" />
+              <Skeleton className="h-[560px]" />
+            </div>
+          ) : detail.data ? (
+            <div>
+              <div className="border-b border-border/70 bg-card p-5">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h2 className="font-display text-lg font-semibold">
+                        {detail.data.variant.gene || "Intergenic"}
+                      </h2>
+                      <Badge variant="outline">
+                        {detail.data.variant.variantType}
+                      </Badge>
+                    </div>
+                    <p className="mt-2 font-mono text-xs text-muted-foreground">
+                      {detail.data.variant.hgvsC ||
+                        detail.data.variant.normalizedId}
+                    </p>
+                    <p className="mt-1 font-mono text-[11px] text-muted-foreground">
+                      {detail.data.variant.hgvsP}
+                    </p>
+                  </div>
+                  <div className="flex flex-col items-end gap-2">
+                    <ClinicalStatus status={detail.data.variant.reviewStatus} />
+                    {canEditInterpretation ? (
+                      <select
+                        aria-label="Review status"
+                        value={detail.data.variant.reviewStatus}
+                        disabled={setReviewStatus.isPending}
+                        onChange={event =>
+                          setReviewStatus.mutate({
+                            organizationId: activeOrganizationId!,
+                            variantId: selectedId,
+                            reviewStatus: event.target.value as
+                              | "unreviewed"
+                              | "reviewing"
+                              | "reviewed"
+                              | "flagged",
+                          })
+                        }
+                        className="h-8 rounded-md border border-input bg-background px-2 text-[10px]"
+                      >
+                        <option value="unreviewed">Unreviewed</option>
+                        <option value="reviewing">Reviewing</option>
+                        <option value="reviewed">Reviewed</option>
+                        <option value="flagged">Flagged</option>
+                      </select>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+              <Tabs defaultValue="evidence" className="p-4">
+                <TabsList
+                  className={`grid w-full ${canEditInterpretation ? "grid-cols-4" : "grid-cols-3"}`}
+                >
+                  <TabsTrigger value="evidence">
+                    <BookOpen className="mr-2 size-3.5" />
+                    Evidence
+                  </TabsTrigger>
+                  <TabsTrigger value="curation">
+                    <Microscope className="mr-2 size-3.5" />
+                    Curation
+                  </TabsTrigger>
+                  <TabsTrigger value="classification">
+                    <FlaskConical className="mr-2 size-3.5" />
+                    Classification
+                  </TabsTrigger>
+                  {canEditInterpretation ? (
+                    <TabsTrigger value="copilot">
+                      <Sparkles className="mr-2 size-3.5" />
+                      AI Copilot
+                    </TabsTrigger>
+                  ) : null}
+                </TabsList>
+                <TabsContent value="curation" className="mt-4">
+                  <CurationPanel
+                    organizationId={activeOrganizationId!}
+                    variantId={selectedId}
+                    interpretationId={currentInterpretation?.id}
+                    canCurate={hasPermission("curation:run")}
+                    canEdit={canEditInterpretation}
+                    onMerged={() =>
+                      Promise.all([detail.refetch(), list.refetch()])
+                    }
+                  />
+                </TabsContent>
+                <TabsContent value="evidence" className="mt-4">
+                  <div className="mb-3 flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-semibold">Evidence Ledger</p>
+                      <p className="text-[10px] text-muted-foreground">
+                        Source · access time · clinical axis preserved
+                      </p>
+                    </div>
+                    {hasPermission("interpretation:edit") ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() =>
+                          refresh.mutate({
+                            organizationId: activeOrganizationId!,
+                            variantId: selectedId,
+                          })
+                        }
+                        disabled={refresh.isPending}
+                      >
+                        {refresh.isPending ? (
+                          <Loader2 className="mr-2 size-3.5 animate-spin" />
+                        ) : (
+                          <RefreshCw className="mr-2 size-3.5" />
+                        )}
+                        Refresh public evidence
+                      </Button>
+                    ) : null}
+                  </div>
+                  <ScrollArea className="h-[490px] pr-3">
+                    <div className="space-y-3">
+                      {detail.data.evidence.length ? (
+                        detail.data.evidence.map(item => (
+                          <Card key={item.id} className="shadow-none">
+                            <CardContent className="p-4">
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="flex flex-wrap gap-1.5">
+                                  <Badge variant="secondary">E{item.id}</Badge>
+                                  <Badge variant="outline">{item.source}</Badge>
+                                  <Badge variant="outline">
+                                    {item.clinicalDomain}
+                                  </Badge>
+                                </div>
+                                {item.url ? (
+                                  <a
+                                    href={item.url}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="text-muted-foreground hover:text-primary"
+                                  >
+                                    <ExternalLink className="size-3.5" />
+                                  </a>
+                                ) : null}
+                              </div>
+                              <p className="mt-3 text-xs font-semibold leading-5">
+                                {item.title}
+                              </p>
+                              <p className="mt-2 text-[11px] leading-5 text-muted-foreground">
+                                {item.excerpt}
+                              </p>
+                              <div className="mt-3 flex items-center justify-between border-t border-border/60 pt-2 text-[9px] text-muted-foreground">
+                                <span>
+                                  {item.direction} ·{" "}
+                                  {item.evidenceLevel || "level not assigned"}
+                                </span>
+                                <span>{formatDate(item.accessedAt)}</span>
+                              </div>
+                            </CardContent>
+                          </Card>
+                        ))
+                      ) : (
+                        <div className="rounded-xl border border-dashed py-14 text-center">
+                          <BookOpen className="mx-auto size-7 text-muted-foreground/35" />
+                          <p className="mt-3 text-xs font-medium">
+                            No evidence stored
+                          </p>
+                          <p className="mt-1 text-[10px] text-muted-foreground">
+                            Refresh public evidence, then have an expert review
+                            the sources.
+                          </p>
+                        </div>
+                      )}
+                      <div className="mt-5 border-t border-border/70 pt-4">
+                        <p className="mb-3 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                          Variant audit history
+                        </p>
+                        {detail.data.audit.length ? (
+                          detail.data.audit.map(event => (
+                            <div
+                              key={event.id}
+                              className="mb-2 flex items-start justify-between gap-3 rounded-lg bg-muted/50 px-3 py-2"
+                            >
+                              <div>
+                                <p className="text-[10px] font-medium">
+                                  {event.action}
+                                </p>
+                                <p className="mt-1 font-mono text-[9px] text-muted-foreground">
+                                  request {event.requestId.slice(0, 12)}
+                                </p>
+                              </div>
+                              <span className="whitespace-nowrap text-[9px] text-muted-foreground">
+                                {formatDateTime(event.createdAt)}
+                              </span>
+                            </div>
+                          ))
+                        ) : (
+                          <p className="text-[10px] text-muted-foreground">
+                            No variant change events recorded yet.
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  </ScrollArea>
+                </TabsContent>
+                {hasPermission("interpretation:edit") ? (
+                  <TabsContent value="classification" className="mt-4">
+                    <ScrollArea className="h-[540px] pr-3">
+                      <div className="space-y-5">
+                        {clinicalCase.purpose === "germline" ? (
+                          <>
+                            <div className="rounded-xl border border-primary/30 bg-primary/10 p-4">
+                              <p className="text-[10px] font-semibold uppercase tracking-wider text-primary">
+                                Rule-based suggestion
+                              </p>
+                              <p className="mt-2 text-sm font-semibold text-foreground">
+                                {detail.data.acmgSuggestion?.classification}
+                              </p>
+                              <p className="mt-1 text-[11px] leading-5 text-muted-foreground">
+                                {detail.data.acmgSuggestion?.rationale}
+                              </p>
+                            </div>
+                            {detail.data.classificationDivergence?.message ? (
+                              <div
+                                className={`flex items-start gap-2 rounded-xl border px-3 py-2.5 ${detail.data.classificationDivergence.diverges ? "border-rose-200 bg-rose-50/70" : "border-amber-200 bg-amber-50/70"}`}
+                              >
+                                <ShieldAlert
+                                  className={`mt-0.5 size-3.5 shrink-0 ${detail.data.classificationDivergence.diverges ? "text-rose-700" : "text-amber-700"}`}
+                                />
+                                <div>
+                                  <p
+                                    className={`text-[10px] font-semibold uppercase tracking-wider ${detail.data.classificationDivergence.diverges ? "text-rose-700" : "text-amber-700"}`}
+                                  >
+                                    {detail.data.classificationDivergence
+                                      .diverges
+                                      ? `Classification mismatch (${detail.data.classificationDivergence.tierGap} tier${detail.data.classificationDivergence.tierGap === 1 ? "" : "s"} apart)`
+                                      : "Review outstanding"}
+                                  </p>
+                                  <p
+                                    className={`mt-1 text-[11px] leading-5 ${detail.data.classificationDivergence.diverges ? "text-rose-900" : "text-amber-900"}`}
+                                  >
+                                    {
+                                      detail.data.classificationDivergence
+                                        .message
+                                    }
+                                  </p>
+                                </div>
+                              </div>
+                            ) : null}
+                            <div className="space-y-2">
+                              <Label>Final germline classification</Label>
+                              <select
+                                value={classification}
+                                onChange={event =>
+                                  setClassification(event.target.value)
+                                }
+                                className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm"
+                              >
+                                <option value="">Select classification</option>
+                                {GERMLINE_CLASSIFICATIONS.map(value => (
+                                  <option key={value}>{value}</option>
+                                ))}
+                              </select>
+                            </div>
+                            <div>
+                              <div className="mb-2 flex items-center justify-between">
+                                <Label>ACMG 2015 criteria</Label>
+                                <span className="text-[9px] text-muted-foreground">
+                                  Select a code to record assessment
+                                </span>
+                              </div>
+                              <div className="grid grid-cols-6 gap-1.5">
+                                {ACMG_CRITERIA.map(code => (
+                                  <button
+                                    key={code}
+                                    onClick={() => {
+                                      setActiveCriterion(code);
+                                      const current = detail.data.criteria.find(
+                                        item => item.code === code
+                                      );
+                                      setCriterionState(
+                                        (current?.state as CriterionState) ||
+                                          "not_met"
+                                      );
+                                      setCriterionNote(current?.note || "");
+                                    }}
+                                    className={`rounded-md border px-1 py-2 font-mono text-[9px] font-semibold ${activeCriterion === code ? "border-primary bg-primary text-primary-foreground" : criteriaMap.get(code) === "met" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-border bg-card text-muted-foreground"}`}
+                                  >
+                                    {code}
+                                  </button>
+                                ))}
+                              </div>
+                              <div className="mt-3 rounded-xl border border-border bg-card p-3">
+                                <div className="flex items-center justify-between">
+                                  <p className="font-mono text-xs font-semibold">
+                                    {activeCriterion}
+                                  </p>
+                                  <select
+                                    value={criterionState}
+                                    onChange={event =>
+                                      setCriterionState(
+                                        event.target.value as CriterionState
+                                      )
+                                    }
+                                    className="h-8 rounded-md border border-input bg-background px-2 text-[10px]"
+                                  >
+                                    <option value="met">Met</option>
+                                    <option value="not_met">Not met</option>
+                                    <option value="not_applicable">N/A</option>
+                                  </select>
+                                </div>
+                                <Textarea
+                                  value={criterionNote}
+                                  onChange={event =>
+                                    setCriterionNote(event.target.value)
+                                  }
+                                  className="mt-2 min-h-20 text-xs"
+                                  placeholder="Record the basis for application or reason for exclusion."
+                                />
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="mt-2 w-full"
+                                  disabled={
+                                    !currentInterpretation ||
+                                    saveCriterion.isPending ||
+                                    (criterionState === "met" &&
+                                      criterionNote.trim().length < 2)
+                                  }
+                                  onClick={() =>
+                                    currentInterpretation &&
+                                    saveCriterion.mutate({
+                                      organizationId: activeOrganizationId!,
+                                      interpretationId:
+                                        currentInterpretation.id,
+                                      code: activeCriterion,
+                                      state: criterionState,
+                                      evidenceIds: [],
+                                      note: criterionNote || undefined,
+                                    })
+                                  }
+                                >
+                                  {currentInterpretation
+                                    ? "Save criteria"
+                                    : "Save an interpretation draft first"}
+                                </Button>
+                              </div>
+                            </div>
+                          </>
+                        ) : (
+                          <>
+                            <div className="rounded-xl border border-primary/30 bg-primary/10 p-4">
+                              <p className="text-[10px] font-semibold uppercase tracking-wider text-primary">
+                                AMP/ASCO/CAP suggestion
+                              </p>
+                              <p className="mt-2 text-sm font-semibold text-foreground">
+                                {detail.data.ampSuggestion?.tier || "Tier III"}{" "}
+                                ·{" "}
+                                {detail.data.ampSuggestion?.oncogenicity ||
+                                  "VUS"}
+                              </p>
+                              <p className="mt-1 text-[11px] leading-5 text-muted-foreground">
+                                {detail.data.ampSuggestion?.rationale ||
+                                  "Refresh public evidence to query CIViC and OncoKB."}
+                              </p>
+                              {detail.data.ampSuggestion?.sourcesDisabled
+                                ?.length ? (
+                                <p className="mt-1 text-[10px] text-muted-foreground">
+                                  Not consulted:{" "}
+                                  {detail.data.ampSuggestion.sourcesDisabled.join(
+                                    ", "
+                                  )}
+                                  . Absence of a disabled source is not evidence
+                                  of absence.
+                                </p>
+                              ) : null}
+                              {detail.data.ampSuggestion ? (
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="mt-3"
+                                  onClick={() => {
+                                    setSomaticTier(
+                                      detail.data.ampSuggestion!.tier
+                                    );
+                                    setOncogenicity(
+                                      detail.data.ampSuggestion!.oncogenicity
+                                    );
+                                  }}
+                                >
+                                  Apply suggestion
+                                </Button>
+                              ) : null}
+                            </div>
+                            {detail.data.classificationDivergence?.message ? (
+                              <div
+                                className={`flex items-start gap-2 rounded-xl border px-3 py-2.5 ${detail.data.classificationDivergence.diverges ? "border-rose-200 bg-rose-50/70" : "border-amber-200 bg-amber-50/70"}`}
+                              >
+                                <ShieldAlert
+                                  className={`mt-0.5 size-3.5 shrink-0 ${detail.data.classificationDivergence.diverges ? "text-rose-700" : "text-amber-700"}`}
+                                />
+                                <p
+                                  className={`text-[11px] leading-5 ${detail.data.classificationDivergence.diverges ? "text-rose-900" : "text-amber-900"}`}
+                                >
+                                  {detail.data.classificationDivergence.message}
+                                </p>
+                              </div>
+                            ) : null}
+                            <div className="grid gap-4 sm:grid-cols-2">
+                              <div className="space-y-2">
+                                <Label>AMP/ASCO/CAP Tier</Label>
+                                <select
+                                  value={somaticTier}
+                                  onChange={event =>
+                                    setSomaticTier(event.target.value)
+                                  }
+                                  className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm"
+                                >
+                                  <option value="">Select tier</option>
+                                  {SOMATIC_TIERS.map(value => (
+                                    <option key={value}>{value}</option>
+                                  ))}
+                                </select>
+                              </div>
+                              <div className="space-y-2">
+                                <Label>Oncogenicity</Label>
+                                <select
+                                  value={oncogenicity}
+                                  onChange={event =>
+                                    setOncogenicity(event.target.value)
+                                  }
+                                  className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm"
+                                >
+                                  <option value="">
+                                    Select classification
+                                  </option>
+                                  {ONCOGENICITY_CLASSIFICATIONS.map(value => (
+                                    <option key={value}>{value}</option>
+                                  ))}
+                                </select>
+                              </div>
+                            </div>
+                            <div className="space-y-2">
+                              <Label>Disease context</Label>
+                              <Input
+                                value={diseaseContext}
+                                onChange={event =>
+                                  setDiseaseContext(event.target.value)
+                                }
+                                placeholder="Cancer type, stage, line of therapy"
+                              />
+                            </div>
+                            <div className="grid grid-cols-3 gap-2">
+                              {["Predictive", "Diagnostic", "Prognostic"].map(
+                                domain => (
+                                  <div
+                                    key={domain}
+                                    className="rounded-xl border border-border bg-card p-3 text-center"
+                                  >
+                                    <p className="text-[10px] font-semibold">
+                                      {domain}
+                                    </p>
+                                    <p className="mt-1 text-[9px] text-muted-foreground">
+                                      Linked independently from evidence panel
+                                    </p>
+                                  </div>
+                                )
+                              )}
+                            </div>
+                          </>
+                        )}
+                        <div className="space-y-2">
+                          <Label>Expert interpretation rationale</Label>
+                          <Textarea
+                            value={rationale}
+                            onChange={event => setRationale(event.target.value)}
+                            className="min-h-32"
+                            placeholder="Describe evidence application, conflicting information, disease context, and limitations."
+                          />
+                        </div>
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          <Button
+                            variant="outline"
+                            disabled={
+                              saveInterpretation.isPending ||
+                              rationale.trim().length < 20
+                            }
+                            onClick={() => handleSave(false)}
+                          >
+                            <Save className="mr-2 size-4" />
+                            Save draft
+                          </Button>
+                          <Button
+                            disabled={
+                              saveInterpretation.isPending ||
+                              rationale.trim().length < 20
+                            }
+                            onClick={() => handleSave(true)}
+                          >
+                            <CheckCircle2 className="mr-2 size-4" />
+                            Submit for review
+                          </Button>
+                        </div>
+                        {currentInterpretation?.status === "in_review" &&
+                        hasPermission("interpretation:approve") ? (
+                          <Button
+                            className="w-full"
+                            variant="secondary"
+                            disabled={approve.isPending}
+                            onClick={() =>
+                              approve.mutate({
+                                organizationId: activeOrganizationId!,
+                                interpretationId: currentInterpretation.id,
+                              })
+                            }
+                          >
+                            Clinician approval
+                          </Button>
+                        ) : null}
+                      </div>
+                    </ScrollArea>
+                  </TabsContent>
+                ) : null}
+                {canEditInterpretation ? (
+                  <TabsContent value="copilot" className="mt-4">
+                    <div className="mb-3 flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold">
+                          Evidence Copilot
+                        </p>
+                        <p className="text-[10px] text-muted-foreground">
+                          Ledger-only · cited draft · no sign-out
+                        </p>
+                      </div>
+                      <select
+                        aria-label="Copilot model"
+                        value={modelId}
+                        onChange={event => setModelId(event.target.value)}
+                        disabled={Boolean(conversationId) || models.isError}
+                        className="h-8 max-w-44 rounded-md border border-input bg-background px-2 text-[10px]"
+                      >
+                        {models.data?.map(model => (
+                          <option key={model.id} value={model.id}>
+                            {model.id}
+                          </option>
+                        )) || <option value="gpt-5-mini">gpt-5-mini</option>}
+                      </select>
+                    </div>
+                    {models.isError ? (
+                      <StatePanel
+                        compact
+                        type="error"
+                        title="Failed to load AI model catalog"
+                        description={models.error.message}
+                        onRetry={() => {
+                          void models.refetch();
+                        }}
+                      />
+                    ) : messageQuery.isError ? (
+                      <StatePanel
+                        compact
+                        type="error"
+                        title="Failed to load Copilot conversation history"
+                        description={messageQuery.error.message}
+                        onRetry={() => {
+                          void messageQuery.refetch();
+                        }}
+                      />
+                    ) : (
+                      <AIChatBox
+                        messages={localMessages}
+                        onSendMessage={sendMessage}
+                        isLoading={ask.isPending || messageQuery.isLoading}
+                        height={500}
+                        placeholder="Ask a question about the current variant and stored evidence…"
+                        emptyStateMessage="Generates citable drafts using only the reviewed Evidence Ledger."
+                        suggestedPrompts={[
+                          "Summarize and separate the pathogenic and benign evidence for this variant.",
+                          "What evidence gaps remain for further review?",
+                          "Draft an interpretation for the report with evidence IDs.",
+                        ]}
+                      />
+                    )}
+                  </TabsContent>
+                ) : null}
+              </Tabs>
+            </div>
+          ) : null}
         </section>
       </div>
     </div>

@@ -26,7 +26,10 @@ function expandHome(value: string): string {
 export function hpoTablePath(): string {
   const override = (process.env.VC_HPO_PATH || "").trim();
   if (override) return expandHome(override);
-  const root = expandHome((process.env.VC_DATA_ROOT || "").trim() || path.join(os.homedir(), "gvi-data"));
+  const root = expandHome(
+    (process.env.VC_DATA_ROOT || "").trim() ||
+      path.join(os.homedir(), "gvi-data")
+  );
   return path.join(root, "reference", "hpo", "phenotype_to_genes.txt");
 }
 
@@ -56,7 +59,12 @@ export function indexPhenotypeToGenes(text: string): HpoIndex {
 }
 
 function normalizeLabel(value: string): string {
-  return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 export async function loadHpoIndex(): Promise<HpoIndex | null> {
@@ -74,7 +82,10 @@ export async function loadHpoIndex(): Promise<HpoIndex | null> {
   return index;
 }
 
-export function genesForTerms(index: HpoIndex, raw: string): { matches: HpoMatch[]; unmatched: string[] } {
+export function genesForTerms(
+  index: HpoIndex,
+  raw: string
+): { matches: HpoMatch[]; unmatched: string[] } {
   const matches: HpoMatch[] = [];
   const unmatched: string[] = [];
   const seen = new Set<string>();
@@ -84,12 +95,17 @@ export function genesForTerms(index: HpoIndex, raw: string): { matches: HpoMatch
     seen.add(query.toLowerCase());
     const idQuery = query.toUpperCase().replace(/\s+/g, "");
     const directId = /^HP:\d+$/.test(idQuery) ? idQuery : null;
-    const exactId = directId && index.byId.has(directId) ? directId : index.labelToId.get(normalizeLabel(query)) || null;
+    const exactId =
+      directId && index.byId.has(directId)
+        ? directId
+        : index.labelToId.get(normalizeLabel(query)) || null;
     const ids = new Set<string>();
     if (exactId) ids.add(exactId);
     if (!directId && normalizeLabel(query).length >= 4) {
       const needle = normalizeLabel(query);
-      const pattern = new RegExp(`(?:^| )${needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?: |$)`);
+      const pattern = new RegExp(
+        `(?:^| )${needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?: |$)`
+      );
       for (const label of index.labels) {
         if (pattern.test(normalizeLabel(label.name))) ids.add(label.id);
       }
@@ -98,9 +114,14 @@ export function genesForTerms(index: HpoIndex, raw: string): { matches: HpoMatch
       unmatched.push(query);
       continue;
     }
-    for (const id of ids) {
+    for (const id of Array.from(ids)) {
       const label = index.labels.find(item => item.id === id)?.name || id;
-      matches.push({ query, id, label, genes: [...(index.byId.get(id) || [])].sort() });
+      matches.push({
+        query,
+        id,
+        label,
+        genes: Array.from(index.byId.get(id) || []).sort(),
+      });
     }
   }
   return { matches, unmatched };
@@ -120,7 +141,11 @@ function editDistance(left: string, right: string, max: number): number {
     let rowMin = i;
     for (let j = 1; j <= right.length; j += 1) {
       const cost = left[i - 1] === right[j - 1] ? 0 : 1;
-      const value = Math.min(current[j - 1] + 1, previous[j] + 1, previous[j - 1] + cost);
+      const value = Math.min(
+        current[j - 1] + 1,
+        previous[j] + 1,
+        previous[j - 1] + cost
+      );
       current.push(value);
       if (value < rowMin) rowMin = value;
     }
@@ -131,10 +156,21 @@ function editDistance(left: string, right: string, max: number): number {
 }
 
 /** Rank HPO labels by how close they are to what the user has typed. */
-export function searchHpoTerms(index: HpoIndex, raw: string, limit = 8): HpoSuggestion[] {
+export function searchHpoTerms(
+  index: HpoIndex,
+  raw: string,
+  limit = 8
+): HpoSuggestion[] {
   const query = normalizeLabel(raw);
-  const compact = raw.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
-  const idDigits = compact.startsWith("HP") ? compact.slice(2) : /^\d+$/.test(compact) ? compact : "";
+  const compact = raw
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+  const idDigits = compact.startsWith("HP")
+    ? compact.slice(2)
+    : /^\d+$/.test(compact)
+      ? compact
+      : "";
   if (query.length < 2 && idDigits.length < 3) return [];
 
   const ranked: { id: string; name: string; score: number }[] = [];
@@ -146,18 +182,29 @@ export function searchHpoTerms(index: HpoIndex, raw: string, limit = 8): HpoSugg
     else if (idDigits.length >= 3 && digits.startsWith(idDigits)) score = 1;
     else if (query.length >= 2 && name === query) score = 2;
     else if (query.length >= 2 && name.startsWith(query)) score = 3;
-    else if (query.length >= 2 && name.split(" ").some(word => word.startsWith(query))) score = 4;
+    else if (
+      query.length >= 2 &&
+      name.split(" ").some(word => word.startsWith(query))
+    )
+      score = 4;
     else if (query.length >= 4 && name.includes(query)) score = 5;
     else if (query.length >= 5) {
       const max = query.length >= 6 ? 2 : 1;
       let best = max + 1;
-      for (const word of name.split(" ")) best = Math.min(best, editDistance(query, word, max));
-      if (Math.abs(name.length - query.length) <= max) best = Math.min(best, editDistance(query, name, max));
+      for (const word of name.split(" "))
+        best = Math.min(best, editDistance(query, word, max));
+      if (Math.abs(name.length - query.length) <= max)
+        best = Math.min(best, editDistance(query, name, max));
       if (best <= max) score = 10 + best;
     }
     if (score < 100) ranked.push({ id: label.id, name: label.name, score });
   }
-  ranked.sort((left, right) => left.score - right.score || left.name.length - right.name.length || left.name.localeCompare(right.name));
+  ranked.sort(
+    (left, right) =>
+      left.score - right.score ||
+      left.name.length - right.name.length ||
+      left.name.localeCompare(right.name)
+  );
   return ranked.slice(0, limit).map(item => ({
     id: item.id,
     name: item.name,

@@ -2,12 +2,41 @@ import { describe, expect, it } from "vitest";
 import { defaultStrengthForCode, suggestAcmgClassification } from "./acmg";
 
 describe("ACMG 2015 combination helper", () => {
+  it.each([
+    [["PVS1", "PS1"], "Pathogenic"],
+    [["PVS1", "PM1", "PM2"], "Pathogenic"],
+    [["PVS1", "PM2", "PP3"], "Pathogenic"],
+    [["PVS1", "PP1", "PP3"], "Pathogenic"],
+    [["PS1", "PS2"], "Pathogenic"],
+    [["PS1", "PM1", "PM2", "PM3"], "Pathogenic"],
+    [["PVS1", "PM2"], "Likely Pathogenic"],
+    [["PS1", "PM2"], "Likely Pathogenic"],
+    [["PS1", "PP1", "PP3"], "Likely Pathogenic"],
+    [["PM1", "PM2", "PM3"], "Likely Pathogenic"],
+    [["BA1"], "Benign"],
+    [["BS1", "BS2"], "Benign"],
+    [["BS1", "BP4"], "Likely Benign"],
+    [["BP4", "BP7"], "Likely Benign"],
+    [["PP3"], "VUS"],
+  ] as const)(
+    "keeps the golden ACMG combination %j at %s",
+    (criteria, classification) => {
+      expect(suggestAcmgClassification(criteria).classification).toBe(
+        classification
+      );
+    }
+  );
+
   it("suggests Pathogenic for PVS1 plus a strong criterion", () => {
-    expect(suggestAcmgClassification(["PVS1", "PS1"]).classification).toBe("Pathogenic");
+    expect(suggestAcmgClassification(["PVS1", "PS1"]).classification).toBe(
+      "Pathogenic"
+    );
   });
 
   it("suggests Likely Pathogenic for PVS1 plus a moderate criterion", () => {
-    expect(suggestAcmgClassification(["PVS1", "PM2"]).classification).toBe("Likely Pathogenic");
+    expect(suggestAcmgClassification(["PVS1", "PM2"]).classification).toBe(
+      "Likely Pathogenic"
+    );
   });
 
   it("suggests Benign for BA1", () => {
@@ -15,7 +44,9 @@ describe("ACMG 2015 combination helper", () => {
   });
 
   it("suggests Likely Benign for one strong plus one supporting benign criterion", () => {
-    expect(suggestAcmgClassification(["BS1", "BP4"]).classification).toBe("Likely Benign");
+    expect(suggestAcmgClassification(["BS1", "BP4"]).classification).toBe(
+      "Likely Benign"
+    );
   });
 
   it("returns VUS and flags conflicting pathogenic and benign evidence", () => {
@@ -58,10 +89,14 @@ describe("strength adjustments", () => {
   });
 
   it("honours an upgrade of a supporting criterion", () => {
-    expect(suggestAcmgClassification(["PP1", "PP3"]).classification).toBe("VUS");
+    expect(suggestAcmgClassification(["PP1", "PP3"]).classification).toBe(
+      "VUS"
+    );
     expect(
-      suggestAcmgClassification([{ code: "PP1", strength: "strong" }, { code: "PP3" }])
-        .classification
+      suggestAcmgClassification([
+        { code: "PP1", strength: "strong" },
+        { code: "PP3" },
+      ]).classification
     ).toBe("VUS");
     expect(
       suggestAcmgClassification([
@@ -81,7 +116,9 @@ describe("strength adjustments", () => {
   });
 
   it("treats a strengthened benign criterion as strong benign evidence", () => {
-    expect(suggestAcmgClassification(["BP4", "BP7"]).classification).toBe("Likely Benign");
+    expect(suggestAcmgClassification(["BP4", "BP7"]).classification).toBe(
+      "Likely Benign"
+    );
     expect(
       suggestAcmgClassification([
         { code: "BP4", strength: "strong" },

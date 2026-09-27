@@ -85,6 +85,17 @@ export const reportsRouter = router({
       const caseRows = await db.select().from(cases).where(and(eq(cases.id, input.caseId), eq(cases.organizationId, input.organizationId))).limit(1);
       const clinicalCase = caseRows[0];
       if (!clinicalCase) throw new TRPCError({ code: "NOT_FOUND", message: "Case not found" });
+      throw new TRPCError({
+        code: "BAD_REQUEST",
+        message:
+          clinicalCase.purpose === "somatic"
+            ? "Use the Somatic Clinical Report workflow for somatic cases."
+            : "Germline Clinical Reports are not enabled yet.",
+      });
+      /*
+       * Legacy draft generation remains below for historical migration context.
+       * New report creation is purpose-routed and never enters this path.
+       */
       const existing = await db.select().from(reports).where(and(eq(reports.organizationId, input.organizationId), eq(reports.caseId, input.caseId))).orderBy(desc(reports.version)).limit(1);
       if (existing[0] && !["signed", "amended"].includes(existing[0].status)) return { id: existing[0].id };
       const approved = await db.select({ interpretation: interpretations, variant: variants }).from(interpretations)

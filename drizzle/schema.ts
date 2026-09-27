@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import {
   bigint,
   boolean,
+  check,
   foreignKey,
   index,
   integer,
@@ -16,6 +17,7 @@ import {
   varchar,
 } from "drizzle-orm/pg-core";
 import type { CurationSummary } from "../shared/curation/document";
+import type { NormalizedVariantContext } from "../server/domain/somatic/civic/types";
 
 /** Engine request recorded on `curation_runs.input`. */
 export type CurationRunInput = {
@@ -57,27 +59,46 @@ export type CurationRunError = {
  * layers: `$onUpdate` covers every Drizzle-issued update, and a `set_updated_at`
  * trigger (see the 0000 migration) covers raw SQL that bypasses the ORM.
  */
-const createdAt = () => timestamp("createdAt", { withTimezone: true }).defaultNow().notNull();
+const createdAt = () =>
+  timestamp("createdAt", { withTimezone: true }).defaultNow().notNull();
 const updatedAt = () =>
   timestamp("updatedAt", { withTimezone: true })
     .defaultNow()
     .notNull()
     .$onUpdate(() => new Date());
-const surrogateId = () => integer("id").primaryKey().generatedAlwaysAsIdentity();
+const surrogateId = () =>
+  integer("id").primaryKey().generatedAlwaysAsIdentity();
 
 // ── Enum types ─────────────────────────────────────────────────────────────────
 
-export const userRoleEnum = pgEnum("user_role", ["user", "admin", "super_admin"]);
-export const organizationStatusEnum = pgEnum("organization_status", ["active", "suspended"]);
-export const isolationModeEnum = pgEnum("isolation_mode", ["shared_schema", "dedicated_database"]);
+export const userRoleEnum = pgEnum("user_role", [
+  "user",
+  "admin",
+  "super_admin",
+]);
+export const organizationStatusEnum = pgEnum("organization_status", [
+  "active",
+  "suspended",
+]);
+export const isolationModeEnum = pgEnum("isolation_mode", [
+  "shared_schema",
+  "dedicated_database",
+]);
 export const organizationRoleEnum = pgEnum("organization_role", [
   "administrator",
   "analyst",
   "clinician",
   "viewer",
 ]);
-export const membershipStatusEnum = pgEnum("membership_status", ["invited", "active", "suspended"]);
-export const projectStatusEnum = pgEnum("project_status", ["active", "archived"]);
+export const membershipStatusEnum = pgEnum("membership_status", [
+  "invited",
+  "active",
+  "suspended",
+]);
+export const projectStatusEnum = pgEnum("project_status", [
+  "active",
+  "archived",
+]);
 export const casePurposeEnum = pgEnum("case_purpose", ["germline", "somatic"]);
 export const caseInputTypeEnum = pgEnum("case_input_type", ["vcf", "fastq"]);
 export const caseStatusEnum = pgEnum("case_status", [
@@ -89,7 +110,10 @@ export const caseStatusEnum = pgEnum("case_status", [
   "reported",
   "failed",
 ]);
-export const referenceBuildEnum = pgEnum("reference_build", ["GRCh37", "GRCh38"]);
+export const referenceBuildEnum = pgEnum("reference_build", [
+  "GRCh37",
+  "GRCh38",
+]);
 export const sampleRoleEnum = pgEnum("sample_role", [
   "proband",
   "mother",
@@ -105,9 +129,16 @@ export const caseFileKindEnum = pgEnum("case_file_kind", [
   "bam",
   "bai",
   "report",
+  "panel_bed",
+  "coverage",
+  "assay_result",
   "other",
 ]);
-export const caseFileStatusEnum = pgEnum("case_file_status", ["uploaded", "verified", "rejected"]);
+export const caseFileStatusEnum = pgEnum("case_file_status", [
+  "uploaded",
+  "verified",
+  "rejected",
+]);
 export const analysisPipelineEnum = pgEnum("analysis_pipeline", [
   "vcf_ingest",
   "gx_exome",
@@ -188,7 +219,10 @@ export const evidenceDirectionEnum = pgEnum("evidence_direction", [
   "contradicting",
   "neutral",
 ]);
-export const interpretationModeEnum = pgEnum("interpretation_mode", ["germline", "somatic"]);
+export const interpretationModeEnum = pgEnum("interpretation_mode", [
+  "germline",
+  "somatic",
+]);
 export const germlineClassificationEnum = pgEnum("germline_classification", [
   "Pathogenic",
   "Likely Pathogenic",
@@ -208,13 +242,18 @@ export const oncogenicityEnum = pgEnum("oncogenicity_classification", [
   "VUS",
   "Likely Benign",
   "Benign",
+  "Not Evaluated",
 ]);
 export const interpretationStatusEnum = pgEnum("interpretation_status", [
   "draft",
   "in_review",
   "approved",
 ]);
-export const criterionStateEnum = pgEnum("criterion_state", ["met", "not_met", "not_applicable"]);
+export const criterionStateEnum = pgEnum("criterion_state", [
+  "met",
+  "not_met",
+  "not_applicable",
+]);
 /**
  * Triage outcome for a variant.
  *
@@ -235,13 +274,113 @@ export const curationRunStatusEnum = pgEnum("curation_run_status", [
   "failed",
   "cancelled",
 ]);
-export const aiMessageRoleEnum = pgEnum("ai_message_role", ["user", "assistant"]);
+export const aiMessageRoleEnum = pgEnum("ai_message_role", [
+  "user",
+  "assistant",
+]);
 export const reportStatusEnum = pgEnum("report_status", [
   "draft",
   "in_review",
   "signed",
   "amended",
 ]);
+export const somaticRunStatusEnum = pgEnum("somatic_run_status", [
+  "queued",
+  "validating",
+  "normalizing",
+  "annotating",
+  "ready_for_review",
+  "partial",
+  "failed",
+]);
+export const somaticNormalizationStatusEnum = pgEnum(
+  "somatic_normalization_status",
+  ["pending", "normalized", "failed"]
+);
+export const somaticQcStatusEnum = pgEnum("somatic_qc_status", [
+  "pass",
+  "low_depth",
+  "low_vaf",
+  "filtered",
+  "manual_review_required",
+  "indeterminate",
+]);
+export const diseaseMatchEnum = pgEnum("disease_match", [
+  "exact",
+  "broader",
+  "narrower",
+  "manual",
+  "none",
+  "unknown",
+]);
+export const somaticClinicalEffectEnum = pgEnum("somatic_clinical_effect", [
+  "sensitivity",
+  "resistance",
+  "no_response",
+  "unknown",
+]);
+export const ampLevelEnum = pgEnum("amp_level", ["A", "B", "C", "D"]);
+export const somaticAssertionStatusEnum = pgEnum("somatic_assertion_status", [
+  "proposed",
+  "in_review",
+  "approved",
+  "rejected",
+  "superseded",
+]);
+export const somaticReportTemplateStatusEnum = pgEnum(
+  "somatic_report_template_status",
+  ["draft", "published", "retired"]
+);
+export const somaticLifecycleStatusEnum = pgEnum("somatic_lifecycle_status", [
+  "draft",
+  "active",
+  "retired",
+]);
+export const somaticValidationStatusEnum = pgEnum("somatic_validation_status", [
+  "pending",
+  "passed",
+  "failed",
+]);
+export const somaticLicenseStatusEnum = pgEnum("somatic_license_status", [
+  "unconfigured",
+  "approved",
+  "restricted",
+  "expired",
+]);
+export const somaticRegionTypeEnum = pgEnum("somatic_region_type", [
+  "gene",
+  "exon",
+  "interval",
+  "fusion_pair",
+  "signature",
+]);
+export const somaticFindingTypeEnum = pgEnum("somatic_finding_type", [
+  "CNV",
+  "FUSION",
+  "MSI",
+  "TMB",
+  "HRD",
+]);
+export const somaticFindingStatusEnum = pgEnum("somatic_finding_status", [
+  "detected",
+  "not_detected",
+  "not_tested",
+  "indeterminate",
+]);
+export const somaticTaskStatusEnum = pgEnum("somatic_task_status", [
+  "open",
+  "in_review",
+  "completed",
+  "dismissed",
+]);
+export const somaticCivicImportStatusEnum = pgEnum(
+  "somatic_civic_import_status",
+  ["queued", "running", "partial", "complete", "failed", "cancelled"]
+);
+export const somaticCivicCheckpointStatusEnum = pgEnum(
+  "somatic_civic_checkpoint_status",
+  ["started", "complete", "partial", "failed"]
+);
 
 // ── Identity ───────────────────────────────────────────────────────────────────
 
@@ -254,7 +393,9 @@ export const users = pgTable("users", {
   role: userRoleEnum("role").default("user").notNull(),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
-  lastSignedIn: timestamp("lastSignedIn", { withTimezone: true }).defaultNow().notNull(),
+  lastSignedIn: timestamp("lastSignedIn", { withTimezone: true })
+    .defaultNow()
+    .notNull(),
 });
 
 export const organizations = pgTable(
@@ -265,7 +406,9 @@ export const organizations = pgTable(
     slug: varchar("slug", { length: 80 }).notNull(),
     status: organizationStatusEnum("status").default("active").notNull(),
     dataRegion: varchar("dataRegion", { length: 32 }).default("KR").notNull(),
-    isolationMode: isolationModeEnum("isolationMode").default("shared_schema").notNull(),
+    isolationMode: isolationModeEnum("isolationMode")
+      .default("shared_schema")
+      .notNull(),
     createdBy: integer("createdBy")
       .notNull()
       .references(() => users.id),
@@ -288,12 +431,17 @@ export const organizationMembers = pgTable(
     role: organizationRoleEnum("role").notNull(),
     status: membershipStatusEnum("status").default("active").notNull(),
     invitedBy: integer("invitedBy").references(() => users.id),
-    joinedAt: timestamp("joinedAt", { withTimezone: true }).defaultNow().notNull(),
+    joinedAt: timestamp("joinedAt", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
   table => [
-    uniqueIndex("organization_members_org_user_uq").on(table.organizationId, table.userId),
+    uniqueIndex("organization_members_org_user_uq").on(
+      table.organizationId,
+      table.userId
+    ),
     index("organization_members_user_idx").on(table.userId, table.status),
   ]
 );
@@ -318,7 +466,10 @@ export const organizationInvites = pgTable(
   },
   table => [
     uniqueIndex("organization_invites_token_uq").on(table.tokenHash),
-    index("organization_invites_org_email_idx").on(table.organizationId, table.email),
+    index("organization_invites_org_email_idx").on(
+      table.organizationId,
+      table.email
+    ),
   ]
 );
 
@@ -349,6 +500,127 @@ export const projects = pgTable(
   ]
 );
 
+// ── Somatic reference masters ─────────────────────────────────────────────────
+
+/**
+ * Version-pinned disease concepts used only by the somatic workflow.
+ *
+ * Parentage is navigational metadata, never permission to inherit evidence. Each
+ * clinical assertion records its explicit disease match separately.
+ */
+export const somaticTumorTypes = pgTable(
+  "somatic_tumor_types",
+  {
+    id: surrogateId(),
+    ontologySystem: varchar("ontologySystem", { length: 40 }).notNull(),
+    ontologyVersion: varchar("ontologyVersion", { length: 80 }).notNull(),
+    code: varchar("code", { length: 80 }).notNull(),
+    label: varchar("label", { length: 255 }).notNull(),
+    primarySite: varchar("primarySite", { length: 160 }),
+    histology: varchar("histology", { length: 160 }),
+    parentId: integer("parentId"),
+    active: boolean("active").default(true).notNull(),
+    createdAt: createdAt(),
+  },
+  table => [
+    unique("somatic_tumor_types_system_version_code_uq").on(
+      table.ontologySystem,
+      table.ontologyVersion,
+      table.code
+    ),
+    foreignKey({
+      name: "somatic_tumor_types_parent_fk",
+      columns: [table.parentId],
+      foreignColumns: [table.id],
+    }).onDelete("restrict"),
+  ]
+);
+
+export const somaticPanels = pgTable(
+  "somatic_panels",
+  {
+    id: surrogateId(),
+    organizationId: integer("organizationId")
+      .notNull()
+      .references(() => organizations.id),
+    manufacturer: varchar("manufacturer", { length: 160 }).notNull(),
+    name: varchar("name", { length: 200 }).notNull(),
+    createdBy: integer("createdBy")
+      .notNull()
+      .references(() => users.id),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  table => [
+    unique("somatic_panels_id_org_uq").on(table.id, table.organizationId),
+    unique("somatic_panels_org_manufacturer_name_uq").on(
+      table.organizationId,
+      table.manufacturer,
+      table.name
+    ),
+  ]
+);
+
+export const somaticPanelVersions = pgTable(
+  "somatic_panel_versions",
+  {
+    id: surrogateId(),
+    organizationId: integer("organizationId")
+      .notNull()
+      .references(() => organizations.id),
+    panelId: integer("panelId").notNull(),
+    version: varchar("version", { length: 80 }).notNull(),
+    genomeBuild: referenceBuildEnum("genomeBuild").notNull(),
+    assayType: varchar("assayType", { length: 120 }).notNull(),
+    capabilities: jsonb("capabilities")
+      .$type<{
+        snvIndel: boolean;
+        cnv: boolean;
+        fusion: boolean;
+        msi: boolean;
+        tmb: boolean;
+        hrd: boolean;
+      }>()
+      .notNull(),
+    limitations: text("limitations"),
+    regionArtifactName: varchar("regionArtifactName", { length: 255 }),
+    regionArtifactHash: varchar("regionArtifactHash", { length: 64 }),
+    regionValidationStatus: somaticValidationStatusEnum(
+      "regionValidationStatus"
+    )
+      .default("pending")
+      .notNull(),
+    regionValidatedBy: integer("regionValidatedBy").references(() => users.id),
+    regionValidatedAt: timestamp("regionValidatedAt", {
+      withTimezone: true,
+    }),
+    activeFrom: timestamp("activeFrom", { withTimezone: true }),
+    activeTo: timestamp("activeTo", { withTimezone: true }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  table => [
+    unique("somatic_panel_versions_id_org_uq").on(
+      table.id,
+      table.organizationId
+    ),
+    unique("somatic_panel_versions_panel_version_uq").on(
+      table.organizationId,
+      table.panelId,
+      table.version
+    ),
+    foreignKey({
+      name: "somatic_panel_versions_panel_org_fk",
+      columns: [table.panelId, table.organizationId],
+      foreignColumns: [somaticPanels.id, somaticPanels.organizationId],
+    }).onDelete("restrict"),
+    check(
+      "somatic_panel_versions_region_validation_ck",
+      sql`${table.regionValidationStatus} <> 'passed' OR (${table.regionArtifactHash} ~ '^[0-9a-f]{64}$' AND ${table.regionValidatedBy} IS NOT NULL AND ${table.regionValidatedAt} IS NOT NULL)`
+    ),
+  ]
+);
+
 export const cases = pgTable(
   "cases",
   {
@@ -367,7 +639,9 @@ export const cases = pgTable(
     indication: text("indication"),
     phenotypeText: text("phenotypeText"),
     consentClinicalAnalysis: boolean("consentClinicalAnalysis").notNull(),
-    consentSecondaryFindings: boolean("consentSecondaryFindings").default(false).notNull(),
+    consentSecondaryFindings: boolean("consentSecondaryFindings")
+      .default(false)
+      .notNull(),
     consentDataUse: boolean("consentDataUse").default(false).notNull(),
     createdBy: integer("createdBy")
       .notNull()
@@ -376,7 +650,10 @@ export const cases = pgTable(
     updatedAt: updatedAt(),
   },
   table => [
-    uniqueIndex("cases_org_number_uq").on(table.organizationId, table.caseNumber),
+    uniqueIndex("cases_org_number_uq").on(
+      table.organizationId,
+      table.caseNumber
+    ),
     unique("cases_id_org_uq").on(table.id, table.organizationId),
     index("cases_org_status_idx").on(table.organizationId, table.status),
     index("cases_project_idx").on(table.organizationId, table.projectId),
@@ -399,7 +676,10 @@ export const samples = pgTable(
     sampleCode: varchar("sampleCode", { length: 80 }).notNull(),
     role: sampleRoleEnum("role").notNull(),
     specimenType: varchar("specimenType", { length: 100 }).notNull(),
-    tumorContentPercent: numeric("tumorContentPercent", { precision: 5, scale: 2 }),
+    tumorContentPercent: numeric("tumorContentPercent", {
+      precision: 5,
+      scale: 2,
+    }),
     collectedAt: timestamp("collectedAt", { withTimezone: true }),
     createdAt: createdAt(),
   },
@@ -415,6 +695,60 @@ export const samples = pgTable(
       columns: [table.caseId, table.organizationId],
       foreignColumns: [cases.id, cases.organizationId],
     }).onDelete("cascade"),
+  ]
+);
+
+/**
+ * One-to-one somatic-only clinical context. Germline cases never receive a row.
+ */
+export const somaticCaseContexts = pgTable(
+  "somatic_case_contexts",
+  {
+    id: surrogateId(),
+    organizationId: integer("organizationId")
+      .notNull()
+      .references(() => organizations.id),
+    caseId: integer("caseId").notNull(),
+    primaryTumorTypeId: integer("primaryTumorTypeId").notNull(),
+    panelVersionId: integer("panelVersionId").notNull(),
+    histologyText: varchar("histologyText", { length: 255 }),
+    diseaseStatus: varchar("diseaseStatus", { length: 80 }),
+    specimenCollectionSite: varchar("specimenCollectionSite", {
+      length: 160,
+    }).notNull(),
+    pairedNormal: boolean("pairedNormal").default(false).notNull(),
+    mappingProvenance:
+      jsonb("mappingProvenance").$type<Record<string, unknown>>(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  table => [
+    unique("somatic_case_contexts_id_org_uq").on(
+      table.id,
+      table.organizationId
+    ),
+    unique("somatic_case_contexts_case_uq").on(
+      table.organizationId,
+      table.caseId
+    ),
+    foreignKey({
+      name: "somatic_case_contexts_case_org_fk",
+      columns: [table.caseId, table.organizationId],
+      foreignColumns: [cases.id, cases.organizationId],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "somatic_case_contexts_tumor_type_fk",
+      columns: [table.primaryTumorTypeId],
+      foreignColumns: [somaticTumorTypes.id],
+    }).onDelete("restrict"),
+    foreignKey({
+      name: "somatic_case_contexts_panel_version_org_fk",
+      columns: [table.panelVersionId, table.organizationId],
+      foreignColumns: [
+        somaticPanelVersions.id,
+        somaticPanelVersions.organizationId,
+      ],
+    }).onDelete("restrict"),
   ]
 );
 
@@ -441,7 +775,15 @@ export const caseFiles = pgTable(
     createdAt: createdAt(),
   },
   table => [
-    uniqueIndex("case_files_org_storage_uq").on(table.organizationId, table.storageKey),
+    unique("case_files_id_org_case_uq").on(
+      table.id,
+      table.organizationId,
+      table.caseId
+    ),
+    uniqueIndex("case_files_org_storage_uq").on(
+      table.organizationId,
+      table.storageKey
+    ),
     index("case_files_case_idx").on(table.organizationId, table.caseId),
     foreignKey({
       name: "case_files_case_org_fk",
@@ -485,7 +827,10 @@ export const analysisJobs = pgTable(
   table => [
     uniqueIndex("analysis_jobs_idempotency_uq").on(table.idempotencyKey),
     unique("analysis_jobs_id_org_uq").on(table.id, table.organizationId),
-    index("analysis_jobs_org_status_idx").on(table.organizationId, table.status),
+    index("analysis_jobs_org_status_idx").on(
+      table.organizationId,
+      table.status
+    ),
     foreignKey({
       name: "analysis_jobs_case_org_fk",
       columns: [table.caseId, table.organizationId],
@@ -509,7 +854,11 @@ export const analysisEvents = pgTable(
     createdAt: createdAt(),
   },
   table => [
-    index("analysis_events_job_idx").on(table.organizationId, table.jobId, table.createdAt),
+    index("analysis_events_job_idx").on(
+      table.organizationId,
+      table.jobId,
+      table.createdAt
+    ),
     foreignKey({
       name: "analysis_events_job_org_fk",
       columns: [table.jobId, table.organizationId],
@@ -547,7 +896,9 @@ export const variants = pgTable(
     alternateDepth: integer("alternateDepth"),
     impact: variantImpactEnum("impact").default("UNKNOWN").notNull(),
     clinvarSignificance: varchar("clinvarSignificance", { length: 160 }),
-    reviewStatus: variantReviewStatusEnum("reviewStatus").default("unreviewed").notNull(),
+    reviewStatus: variantReviewStatusEnum("reviewStatus")
+      .default("unreviewed")
+      .notNull(),
     annotation: jsonb("annotation").$type<Record<string, unknown>>(),
     /**
      * Cheap pre-screen deciding which variants are worth engine time.
@@ -589,6 +940,1165 @@ export const variants = pgTable(
       columns: [table.caseId, table.organizationId],
       foreignColumns: [cases.id, cases.organizationId],
     }).onDelete("cascade"),
+  ]
+);
+
+// ── Somatic interpretation (isolated from germline ACMG/SAM-VC) ───────────────
+
+export const somaticInterpretationRuns = pgTable(
+  "somatic_interpretation_runs",
+  {
+    id: surrogateId(),
+    organizationId: integer("organizationId")
+      .notNull()
+      .references(() => organizations.id),
+    caseId: integer("caseId").notNull(),
+    contextId: integer("contextId").notNull(),
+    status: somaticRunStatusEnum("status").default("queued").notNull(),
+    pipelineVersion: varchar("pipelineVersion", { length: 80 }).notNull(),
+    rulesetVersion: varchar("rulesetVersion", { length: 80 }).notNull(),
+    knowledgeVersions: jsonb("knowledgeVersions")
+      .$type<Record<string, string>>()
+      .notNull(),
+    error: jsonb("error").$type<Record<string, unknown>>(),
+    attemptCount: integer("attemptCount").default(0).notNull(),
+    maxAttempts: integer("maxAttempts").default(3).notNull(),
+    availableAt: timestamp("availableAt", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    leaseOwner: varchar("leaseOwner", { length: 160 }),
+    leaseExpiresAt: timestamp("leaseExpiresAt", { withTimezone: true }),
+    lastError: text("lastError"),
+    requestedBy: integer("requestedBy")
+      .notNull()
+      .references(() => users.id),
+    startedAt: timestamp("startedAt", { withTimezone: true }),
+    completedAt: timestamp("completedAt", { withTimezone: true }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  table => [
+    unique("somatic_interpretation_runs_id_org_uq").on(
+      table.id,
+      table.organizationId
+    ),
+    index("somatic_interpretation_runs_case_idx").on(
+      table.organizationId,
+      table.caseId,
+      table.createdAt
+    ),
+    index("somatic_interpretation_runs_worker_idx").on(
+      table.status,
+      table.availableAt,
+      table.leaseExpiresAt
+    ),
+    uniqueIndex("somatic_interpretation_runs_one_active_case_uq")
+      .on(table.organizationId, table.caseId)
+      .where(
+        sql`${table.status} IN ('queued', 'validating', 'normalizing', 'annotating')`
+      ),
+    check(
+      "somatic_interpretation_runs_attempts_ck",
+      sql`${table.attemptCount} >= 0 AND ${table.maxAttempts} BETWEEN 1 AND 10 AND ${table.attemptCount} <= ${table.maxAttempts}`
+    ),
+    foreignKey({
+      name: "somatic_interpretation_runs_case_org_fk",
+      columns: [table.caseId, table.organizationId],
+      foreignColumns: [cases.id, cases.organizationId],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "somatic_interpretation_runs_context_org_fk",
+      columns: [table.contextId, table.organizationId],
+      foreignColumns: [
+        somaticCaseContexts.id,
+        somaticCaseContexts.organizationId,
+      ],
+    }).onDelete("restrict"),
+  ]
+);
+
+export const somaticInterpretationRunEvents = pgTable(
+  "somatic_interpretation_run_events",
+  {
+    id: surrogateId(),
+    organizationId: integer("organizationId")
+      .notNull()
+      .references(() => organizations.id),
+    runId: integer("runId").notNull(),
+    status: somaticRunStatusEnum("status").notNull(),
+    message: text("message").notNull(),
+    progressPercent: integer("progressPercent").notNull(),
+    metadata: jsonb("metadata").$type<Record<string, unknown>>(),
+    createdAt: createdAt(),
+  },
+  table => [
+    index("somatic_interpretation_run_events_run_idx").on(
+      table.organizationId,
+      table.runId,
+      table.createdAt
+    ),
+    foreignKey({
+      name: "somatic_interpretation_run_events_run_org_fk",
+      columns: [table.runId, table.organizationId],
+      foreignColumns: [
+        somaticInterpretationRuns.id,
+        somaticInterpretationRuns.organizationId,
+      ],
+    }).onDelete("cascade"),
+  ]
+);
+
+export const somaticVariantAnalyses = pgTable(
+  "somatic_variant_analyses",
+  {
+    id: surrogateId(),
+    organizationId: integer("organizationId")
+      .notNull()
+      .references(() => organizations.id),
+    runId: integer("runId").notNull(),
+    variantId: integer("variantId").notNull(),
+    normalizationStatus: somaticNormalizationStatusEnum("normalizationStatus")
+      .default("pending")
+      .notNull(),
+    normalizationError: text("normalizationError"),
+    originalRepresentation: jsonb("originalRepresentation").$type<
+      Record<string, unknown>
+    >(),
+    normalizedRepresentation: jsonb("normalizedRepresentation").$type<
+      Record<string, unknown>
+    >(),
+    transcriptPolicy: varchar("transcriptPolicy", { length: 80 }),
+    qcStatus: somaticQcStatusEnum("qcStatus")
+      .default("indeterminate")
+      .notNull(),
+    qcReasons: jsonb("qcReasons").$type<string[]>().notNull(),
+    candidate: boolean("candidate").default(false).notNull(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  table => [
+    unique("somatic_variant_analyses_id_org_uq").on(
+      table.id,
+      table.organizationId
+    ),
+    unique("somatic_variant_analyses_run_variant_uq").on(
+      table.organizationId,
+      table.runId,
+      table.variantId
+    ),
+    foreignKey({
+      name: "somatic_variant_analyses_run_org_fk",
+      columns: [table.runId, table.organizationId],
+      foreignColumns: [
+        somaticInterpretationRuns.id,
+        somaticInterpretationRuns.organizationId,
+      ],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "somatic_variant_analyses_variant_org_fk",
+      columns: [table.variantId, table.organizationId],
+      foreignColumns: [variants.id, variants.organizationId],
+    }).onDelete("cascade"),
+  ]
+);
+
+export const somaticTherapies = pgTable(
+  "somatic_therapies",
+  {
+    id: surrogateId(),
+    genericName: varchar("genericName", { length: 200 }).notNull(),
+    brandName: varchar("brandName", { length: 200 }),
+    drugClass: varchar("drugClass", { length: 160 }),
+    externalIdentifiers: jsonb("externalIdentifiers").$type<
+      Record<string, string>
+    >(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  table => [unique("somatic_therapies_generic_name_uq").on(table.genericName)]
+);
+
+export const somaticRegimens = pgTable("somatic_regimens", {
+  id: surrogateId(),
+  name: varchar("name", { length: 320 }).notNull().unique(),
+  createdAt: createdAt(),
+  updatedAt: updatedAt(),
+});
+
+export const somaticRegimenTherapies = pgTable(
+  "somatic_regimen_therapies",
+  {
+    regimenId: integer("regimenId")
+      .notNull()
+      .references(() => somaticRegimens.id, { onDelete: "cascade" }),
+    therapyId: integer("therapyId")
+      .notNull()
+      .references(() => somaticTherapies.id, { onDelete: "restrict" }),
+    position: integer("position").notNull(),
+  },
+  table => [
+    unique("somatic_regimen_therapies_regimen_therapy_uq").on(
+      table.regimenId,
+      table.therapyId
+    ),
+  ]
+);
+
+/**
+ * Provider records are immutable evidence, not AMP classifications.
+ */
+export const somaticEvidenceRecords = pgTable(
+  "somatic_evidence_records",
+  {
+    id: surrogateId(),
+    organizationId: integer("organizationId")
+      .notNull()
+      .references(() => organizations.id),
+    runId: integer("runId").notNull(),
+    variantId: integer("variantId").notNull(),
+    tumorTypeId: integer("tumorTypeId"),
+    regimenId: integer("regimenId").references(() => somaticRegimens.id, {
+      onDelete: "restrict",
+    }),
+    sourceName: varchar("sourceName", { length: 80 }).notNull(),
+    sourceVersion: varchar("sourceVersion", { length: 120 }).notNull(),
+    sourceRecordId: varchar("sourceRecordId", { length: 200 }).notNull(),
+    sourceNativeLevel: varchar("sourceNativeLevel", { length: 80 }),
+    clinicalDomain: evidenceClinicalDomainEnum("clinicalDomain").notNull(),
+    clinicalEffect: somaticClinicalEffectEnum("clinicalEffect"),
+    direction: evidenceDirectionEnum("direction").default("neutral").notNull(),
+    diseaseMatch: diseaseMatchEnum("diseaseMatch").default("unknown").notNull(),
+    summary: text("summary").notNull(),
+    sourceUrl: varchar("sourceUrl", { length: 1000 }),
+    citation: varchar("citation", { length: 500 }),
+    rawResponseHash: varchar("rawResponseHash", { length: 64 }).notNull(),
+    retrievedAt: timestamp("retrievedAt", { withTimezone: true }).notNull(),
+    payload: jsonb("payload").$type<Record<string, unknown>>(),
+    createdAt: createdAt(),
+  },
+  table => [
+    unique("somatic_evidence_records_id_org_uq").on(
+      table.id,
+      table.organizationId
+    ),
+    unique("somatic_evidence_records_source_record_uq").on(
+      table.organizationId,
+      table.runId,
+      table.sourceName,
+      table.sourceVersion,
+      table.sourceRecordId
+    ),
+    index("somatic_evidence_records_variant_idx").on(
+      table.organizationId,
+      table.variantId,
+      table.clinicalDomain
+    ),
+    foreignKey({
+      name: "somatic_evidence_records_run_org_fk",
+      columns: [table.runId, table.organizationId],
+      foreignColumns: [
+        somaticInterpretationRuns.id,
+        somaticInterpretationRuns.organizationId,
+      ],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "somatic_evidence_records_variant_org_fk",
+      columns: [table.variantId, table.organizationId],
+      foreignColumns: [variants.id, variants.organizationId],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "somatic_evidence_records_tumor_type_fk",
+      columns: [table.tumorTypeId],
+      foreignColumns: [somaticTumorTypes.id],
+    }).onDelete("restrict"),
+  ]
+);
+
+/**
+ * A variant may carry multiple simultaneous assertions (predictive, diagnostic,
+ * prognostic, sensitivity, resistance). The overall display tier is a projection.
+ */
+export type SomaticProposalFlags = {
+  conflict: boolean;
+  reasonCodes: string[];
+  diseaseMatches: string[];
+  appliedRule: {
+    recordId: number;
+    recordKey: string;
+    releaseId: number;
+    releaseVersion: string;
+    providerCode: string;
+    sourceCitation: string;
+  } | null;
+};
+
+export const somaticClinicalAssertions = pgTable(
+  "somatic_clinical_assertions",
+  {
+    id: surrogateId(),
+    organizationId: integer("organizationId")
+      .notNull()
+      .references(() => organizations.id),
+    runId: integer("runId").notNull(),
+    variantId: integer("variantId").notNull(),
+    tumorTypeId: integer("tumorTypeId").notNull(),
+    regimenId: integer("regimenId").references(() => somaticRegimens.id, {
+      onDelete: "restrict",
+    }),
+    clinicalDomain: evidenceClinicalDomainEnum("clinicalDomain").notNull(),
+    clinicalEffect: somaticClinicalEffectEnum("clinicalEffect"),
+    systemTier: somaticTierEnum("systemTier"),
+    systemLevel: ampLevelEnum("systemLevel"),
+    finalTier: somaticTierEnum("finalTier"),
+    finalLevel: ampLevelEnum("finalLevel"),
+    oncogenicity: oncogenicityEnum("oncogenicity"),
+    status: somaticAssertionStatusEnum("status").default("proposed").notNull(),
+    rulesetVersion: varchar("rulesetVersion", { length: 80 }).notNull(),
+    rationale: text("rationale").notNull(),
+    evidenceIds: jsonb("evidenceIds").$type<number[]>().notNull(),
+    proposalFlags: jsonb("proposalFlags")
+      .$type<SomaticProposalFlags>()
+      .default(
+        sql`'{"conflict":false,"reasonCodes":[],"diseaseMatches":[],"appliedRule":null}'::jsonb`
+      )
+      .notNull(),
+    overrideReason: text("overrideReason"),
+    reviewedBy: integer("reviewedBy").references(() => users.id),
+    reviewedAt: timestamp("reviewedAt", { withTimezone: true }),
+    supersedesAssertionId: integer("supersedesAssertionId"),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  table => [
+    unique("somatic_clinical_assertions_id_org_uq").on(
+      table.id,
+      table.organizationId
+    ),
+    index("somatic_clinical_assertions_variant_idx").on(
+      table.organizationId,
+      table.variantId,
+      table.status
+    ),
+    foreignKey({
+      name: "somatic_clinical_assertions_run_org_fk",
+      columns: [table.runId, table.organizationId],
+      foreignColumns: [
+        somaticInterpretationRuns.id,
+        somaticInterpretationRuns.organizationId,
+      ],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "somatic_clinical_assertions_variant_org_fk",
+      columns: [table.variantId, table.organizationId],
+      foreignColumns: [variants.id, variants.organizationId],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "somatic_clinical_assertions_tumor_type_fk",
+      columns: [table.tumorTypeId],
+      foreignColumns: [somaticTumorTypes.id],
+    }).onDelete("restrict"),
+    foreignKey({
+      name: "somatic_clinical_assertions_supersedes_org_fk",
+      columns: [table.supersedesAssertionId, table.organizationId],
+      foreignColumns: [table.id, table.organizationId],
+    }).onDelete("restrict"),
+  ]
+);
+
+// ── Somatic Phase 2–4 safety foundation ──────────────────────────────────────
+
+export type SomaticAssayFindingResult =
+  | {
+      type: "CNV";
+      gene: string;
+      copyNumber?: number;
+      log2Ratio?: number;
+      call: "amplification" | "gain" | "loss" | "deletion";
+    }
+  | {
+      type: "FUSION";
+      fivePrimeGene: string;
+      threePrimeGene: string;
+      inFrame?: boolean;
+      supportingReads?: number;
+    }
+  | {
+      type: "MSI";
+      score?: number;
+      category: "stable" | "low" | "high" | "indeterminate";
+    }
+  | {
+      type: "TMB";
+      mutationsPerMb: number;
+      category?: "low" | "intermediate" | "high";
+    }
+  | {
+      type: "HRD";
+      score?: number;
+      category: "negative" | "positive" | "indeterminate";
+      method: string;
+    };
+
+/**
+ * A provider is organization-scoped because license rights and enabled sources
+ * vary by tenant. Disabled/unconfigured is the safe initial state, including
+ * for OncoKB.
+ */
+export const somaticKnowledgeProviders = pgTable(
+  "somatic_knowledge_providers",
+  {
+    id: surrogateId(),
+    organizationId: integer("organizationId")
+      .notNull()
+      .references(() => organizations.id),
+    code: varchar("code", { length: 80 }).notNull(),
+    name: varchar("name", { length: 200 }).notNull(),
+    enabled: boolean("enabled").default(false).notNull(),
+    licenseStatus: somaticLicenseStatusEnum("licenseStatus")
+      .default("unconfigured")
+      .notNull(),
+    licenseReference: varchar("licenseReference", { length: 500 }),
+    licenseValidFrom: timestamp("licenseValidFrom", { withTimezone: true }),
+    licenseValidTo: timestamp("licenseValidTo", { withTimezone: true }),
+    licenseApprovedBy: integer("licenseApprovedBy").references(() => users.id),
+    licenseApprovedAt: timestamp("licenseApprovedAt", { withTimezone: true }),
+    createdBy: integer("createdBy")
+      .notNull()
+      .references(() => users.id),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  table => [
+    unique("somatic_knowledge_providers_id_org_uq").on(
+      table.id,
+      table.organizationId
+    ),
+    unique("somatic_knowledge_providers_org_code_uq").on(
+      table.organizationId,
+      table.code
+    ),
+    index("somatic_knowledge_providers_org_enabled_idx").on(
+      table.organizationId,
+      table.enabled
+    ),
+  ]
+);
+
+export const somaticKnowledgeReleases = pgTable(
+  "somatic_knowledge_releases",
+  {
+    id: surrogateId(),
+    organizationId: integer("organizationId")
+      .notNull()
+      .references(() => organizations.id),
+    providerId: integer("providerId").notNull(),
+    version: varchar("version", { length: 120 }).notNull(),
+    status: somaticLifecycleStatusEnum("status").default("draft").notNull(),
+    validationStatus: somaticValidationStatusEnum("validationStatus")
+      .default("pending")
+      .notNull(),
+    validationSummary:
+      jsonb("validationSummary").$type<Record<string, unknown>>(),
+    contentHash: varchar("contentHash", { length: 64 }).notNull(),
+    sourcePublishedAt: timestamp("sourcePublishedAt", { withTimezone: true }),
+    importedAt: timestamp("importedAt", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    validatedBy: integer("validatedBy").references(() => users.id),
+    validatedAt: timestamp("validatedAt", { withTimezone: true }),
+    activatedBy: integer("activatedBy").references(() => users.id),
+    activatedAt: timestamp("activatedAt", { withTimezone: true }),
+    retiredBy: integer("retiredBy").references(() => users.id),
+    retiredAt: timestamp("retiredAt", { withTimezone: true }),
+    changeControlId: varchar("changeControlId", { length: 120 }).notNull(),
+    changeSummary: text("changeSummary").notNull(),
+    createdBy: integer("createdBy")
+      .notNull()
+      .references(() => users.id),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  table => [
+    unique("somatic_knowledge_releases_id_org_uq").on(
+      table.id,
+      table.organizationId
+    ),
+    unique("somatic_knowledge_releases_provider_version_uq").on(
+      table.organizationId,
+      table.providerId,
+      table.version
+    ),
+    index("somatic_knowledge_releases_org_status_idx").on(
+      table.organizationId,
+      table.status
+    ),
+    uniqueIndex("somatic_knowledge_releases_one_active_uq")
+      .on(table.organizationId, table.providerId)
+      .where(sql`${table.status} = 'active'`),
+    foreignKey({
+      name: "somatic_knowledge_releases_provider_org_fk",
+      columns: [table.providerId, table.organizationId],
+      foreignColumns: [
+        somaticKnowledgeProviders.id,
+        somaticKnowledgeProviders.organizationId,
+      ],
+    }).onDelete("restrict"),
+    check(
+      "somatic_knowledge_releases_activation_ck",
+      sql`${table.status} <> 'active' OR (${table.validationStatus} = 'passed' AND ${table.validatedBy} IS NOT NULL AND ${table.validatedAt} IS NOT NULL AND ${table.activatedBy} IS NOT NULL AND ${table.activatedAt} IS NOT NULL)`
+    ),
+  ]
+);
+
+export const somaticGuidelineRecords = pgTable(
+  "somatic_guideline_records",
+  {
+    id: surrogateId(),
+    organizationId: integer("organizationId")
+      .notNull()
+      .references(() => organizations.id),
+    releaseId: integer("releaseId").notNull(),
+    recordKey: varchar("recordKey", { length: 200 }).notNull(),
+    recordVersion: integer("recordVersion").default(1).notNull(),
+    title: varchar("title", { length: 500 }).notNull(),
+    guideline: jsonb("guideline").$type<Record<string, unknown>>().notNull(),
+    sourceCitation: varchar("sourceCitation", { length: 1000 }).notNull(),
+    effectiveFrom: timestamp("effectiveFrom", { withTimezone: true }),
+    effectiveTo: timestamp("effectiveTo", { withTimezone: true }),
+    createdBy: integer("createdBy")
+      .notNull()
+      .references(() => users.id),
+    createdAt: createdAt(),
+  },
+  table => [
+    unique("somatic_guideline_records_release_key_version_uq").on(
+      table.organizationId,
+      table.releaseId,
+      table.recordKey,
+      table.recordVersion
+    ),
+    foreignKey({
+      name: "somatic_guideline_records_release_org_fk",
+      columns: [table.releaseId, table.organizationId],
+      foreignColumns: [
+        somaticKnowledgeReleases.id,
+        somaticKnowledgeReleases.organizationId,
+      ],
+    }).onDelete("cascade"),
+  ]
+);
+
+/**
+ * Normalized, immutable evidence imported into a versioned offline release.
+ * These rows are never final AMP classifications.
+ */
+export const somaticKnowledgeEvidenceRecords = pgTable(
+  "somatic_knowledge_evidence_records",
+  {
+    id: surrogateId(),
+    organizationId: integer("organizationId")
+      .notNull()
+      .references(() => organizations.id),
+    releaseId: integer("releaseId").notNull(),
+    normalizedVariantId: varchar("normalizedVariantId", {
+      length: 240,
+    }).notNull(),
+    sourceRecordId: varchar("sourceRecordId", { length: 200 }).notNull(),
+    sourceNativeLevel: varchar("sourceNativeLevel", { length: 80 }),
+    clinicalDomain: evidenceClinicalDomainEnum("clinicalDomain").notNull(),
+    direction: evidenceDirectionEnum("direction").default("neutral").notNull(),
+    summary: text("summary").notNull(),
+    sourceUrl: varchar("sourceUrl", { length: 1000 }),
+    rawResponseHash: varchar("rawResponseHash", { length: 64 }).notNull(),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+    createdAt: createdAt(),
+  },
+  table => [
+    unique("somatic_knowledge_evidence_records_id_org_uq").on(
+      table.id,
+      table.organizationId
+    ),
+    unique("somatic_knowledge_evidence_records_release_source_uq").on(
+      table.organizationId,
+      table.releaseId,
+      table.sourceRecordId
+    ),
+    index("somatic_knowledge_evidence_records_variant_idx").on(
+      table.organizationId,
+      table.releaseId,
+      table.normalizedVariantId
+    ),
+    foreignKey({
+      name: "somatic_knowledge_evidence_records_release_org_fk",
+      columns: [table.releaseId, table.organizationId],
+      foreignColumns: [
+        somaticKnowledgeReleases.id,
+        somaticKnowledgeReleases.organizationId,
+      ],
+    }).onDelete("cascade"),
+    check(
+      "somatic_knowledge_evidence_records_hash_ck",
+      sql`${table.rawResponseHash} ~ '^[0-9a-f]{64}$'`
+    ),
+  ]
+);
+
+/**
+ * Durable, tenant-scoped CIViC ingestion queue. scopeConfig contains only
+ * normalized variant coordinates/identifiers; clinical case data is forbidden.
+ */
+export const somaticCivicImportJobs = pgTable(
+  "somatic_civic_import_jobs",
+  {
+    id: surrogateId(),
+    organizationId: integer("organizationId")
+      .notNull()
+      .references(() => organizations.id),
+    releaseId: integer("releaseId").notNull(),
+    status: somaticCivicImportStatusEnum("status").default("queued").notNull(),
+    scopeConfig: jsonb("scopeConfig").$type<NormalizedVariantContext[]>().notNull(),
+    snapshotHash: varchar("snapshotHash", { length: 64 }).notNull(),
+    queryHash: varchar("queryHash", { length: 64 }).notNull(),
+    schemaHash: varchar("schemaHash", { length: 64 }).notNull(),
+    adapterHash: varchar("adapterHash", { length: 64 }).notNull(),
+    attemptCount: integer("attemptCount").default(0).notNull(),
+    maxAttempts: integer("maxAttempts").default(3).notNull(),
+    availableAt: timestamp("availableAt", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
+    leaseOwner: varchar("leaseOwner", { length: 160 }),
+    leaseExpiresAt: timestamp("leaseExpiresAt", { withTimezone: true }),
+    stats: jsonb("stats").$type<Record<string, number>>().notNull(),
+    warnings: jsonb("warnings").$type<string[]>().notNull(),
+    error: jsonb("error").$type<Record<string, unknown>>(),
+    cancelRequestedAt: timestamp("cancelRequestedAt", { withTimezone: true }),
+    cancelRequestedBy: integer("cancelRequestedBy").references(() => users.id),
+    requestedBy: integer("requestedBy")
+      .notNull()
+      .references(() => users.id),
+    startedAt: timestamp("startedAt", { withTimezone: true }),
+    completedAt: timestamp("completedAt", { withTimezone: true }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  table => [
+    unique("somatic_civic_import_jobs_id_org_release_uq").on(
+      table.id,
+      table.organizationId,
+      table.releaseId
+    ),
+    index("somatic_civic_import_jobs_org_release_idx").on(
+      table.organizationId,
+      table.releaseId,
+      table.createdAt
+    ),
+    index("somatic_civic_import_jobs_worker_idx").on(
+      table.status,
+      table.availableAt,
+      table.leaseExpiresAt
+    ),
+    uniqueIndex("somatic_civic_import_jobs_one_active_release_uq")
+      .on(table.organizationId, table.releaseId)
+      .where(sql`${table.status} IN ('queued', 'running')`),
+    foreignKey({
+      name: "somatic_civic_import_jobs_release_org_fk",
+      columns: [table.releaseId, table.organizationId],
+      foreignColumns: [
+        somaticKnowledgeReleases.id,
+        somaticKnowledgeReleases.organizationId,
+      ],
+    }).onDelete("cascade"),
+    check(
+      "somatic_civic_import_jobs_hashes_ck",
+      sql`${table.snapshotHash} ~ '^[0-9a-f]{64}$' AND ${table.queryHash} ~ '^[0-9a-f]{64}$' AND ${table.schemaHash} ~ '^[0-9a-f]{64}$' AND ${table.adapterHash} ~ '^[0-9a-f]{64}$'`
+    ),
+    check(
+      "somatic_civic_import_jobs_attempts_ck",
+      sql`${table.attemptCount} >= 0 AND ${table.maxAttempts} BETWEEN 1 AND 10 AND ${table.attemptCount} <= ${table.maxAttempts}`
+    ),
+    check(
+      "somatic_civic_import_jobs_scope_array_ck",
+      sql`jsonb_typeof(${table.scopeConfig}) = 'array'`
+    ),
+    check(
+      "somatic_civic_import_jobs_scope_no_phi_ck",
+      sql`NOT jsonb_path_exists(${table.scopeConfig}, '$[*].keyvalue() ? (@.key like_regex "(patient|case|sample|name|email|phone|address|dob|birth|mrn|clinical)" flag "i")')`
+    ),
+    check(
+      "somatic_civic_import_jobs_lease_ck",
+      sql`(${table.leaseOwner} IS NULL) = (${table.leaseExpiresAt} IS NULL)`
+    ),
+  ]
+);
+
+export const somaticCivicImportCheckpoints = pgTable(
+  "somatic_civic_import_checkpoints",
+  {
+    id: surrogateId(),
+    organizationId: integer("organizationId")
+      .notNull()
+      .references(() => organizations.id),
+    releaseId: integer("releaseId").notNull(),
+    jobId: integer("jobId").notNull(),
+    scopeIndex: integer("scopeIndex").notNull(),
+    operationName: varchar("operationName", { length: 80 }).notNull(),
+    pageNumber: integer("pageNumber").default(0).notNull(),
+    cursor: varchar("cursor", { length: 1000 }),
+    status: somaticCivicCheckpointStatusEnum("status").notNull(),
+    details: jsonb("details").$type<Record<string, unknown>>().notNull(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  table => [
+    unique("somatic_civic_import_checkpoints_operation_uq").on(
+      table.organizationId,
+      table.jobId,
+      table.scopeIndex,
+      table.operationName,
+      table.pageNumber
+    ),
+    index("somatic_civic_import_checkpoints_job_idx").on(
+      table.organizationId,
+      table.jobId,
+      table.scopeIndex
+    ),
+    foreignKey({
+      name: "somatic_civic_import_checkpoints_job_org_release_fk",
+      columns: [table.jobId, table.organizationId, table.releaseId],
+      foreignColumns: [
+        somaticCivicImportJobs.id,
+        somaticCivicImportJobs.organizationId,
+        somaticCivicImportJobs.releaseId,
+      ],
+    }).onDelete("cascade"),
+    check(
+      "somatic_civic_import_checkpoints_position_ck",
+      sql`${table.scopeIndex} >= 0 AND ${table.pageNumber} >= 0`
+    ),
+  ]
+);
+
+export const somaticCivicRawArchives = pgTable(
+  "somatic_civic_raw_archives",
+  {
+    id: surrogateId(),
+    organizationId: integer("organizationId")
+      .notNull()
+      .references(() => organizations.id),
+    releaseId: integer("releaseId").notNull(),
+    jobId: integer("jobId").notNull(),
+    scopeIndex: integer("scopeIndex").notNull(),
+    operationName: varchar("operationName", { length: 80 }).notNull(),
+    pageNumber: integer("pageNumber").default(0).notNull(),
+    requestId: varchar("requestId", { length: 80 }).notNull(),
+    rawBodyHash: varchar("rawBodyHash", { length: 64 }).notNull(),
+    storageKey: varchar("storageKey", { length: 512 }).notNull(),
+    storageUrl: varchar("storageUrl", { length: 768 }).notNull(),
+    envelopeStorageKey: varchar("envelopeStorageKey", { length: 512 }).notNull(),
+    envelopeStorageUrl: varchar("envelopeStorageUrl", { length: 768 }).notNull(),
+    byteSize: bigint("byteSize", { mode: "number" }).notNull(),
+    envelope: jsonb("envelope").$type<Record<string, unknown>>().notNull(),
+    createdAt: createdAt(),
+  },
+  table => [
+    unique("somatic_civic_raw_archives_request_uq").on(
+      table.organizationId,
+      table.jobId,
+      table.requestId
+    ),
+    index("somatic_civic_raw_archives_job_operation_idx").on(
+      table.organizationId,
+      table.jobId,
+      table.scopeIndex,
+      table.operationName,
+      table.pageNumber
+    ),
+    foreignKey({
+      name: "somatic_civic_raw_archives_job_org_release_fk",
+      columns: [table.jobId, table.organizationId, table.releaseId],
+      foreignColumns: [
+        somaticCivicImportJobs.id,
+        somaticCivicImportJobs.organizationId,
+        somaticCivicImportJobs.releaseId,
+      ],
+    }).onDelete("cascade"),
+    check(
+      "somatic_civic_raw_archives_hash_ck",
+      sql`${table.rawBodyHash} ~ '^[0-9a-f]{64}$'`
+    ),
+    check(
+      "somatic_civic_raw_archives_position_ck",
+      sql`${table.scopeIndex} >= 0 AND ${table.pageNumber} >= 0 AND ${table.byteSize} >= 0`
+    ),
+  ]
+);
+
+export const somaticPanelReportableRegions = pgTable(
+  "somatic_panel_reportable_regions",
+  {
+    id: surrogateId(),
+    organizationId: integer("organizationId")
+      .notNull()
+      .references(() => organizations.id),
+    panelVersionId: integer("panelVersionId").notNull(),
+    regionKey: varchar("regionKey", { length: 240 }).notNull(),
+    regionType: somaticRegionTypeEnum("regionType").notNull(),
+    findingType: somaticFindingTypeEnum("findingType"),
+    gene: varchar("gene", { length: 80 }),
+    transcript: varchar("transcript", { length: 120 }),
+    chromosome: varchar("chromosome", { length: 16 }),
+    start: integer("start"),
+    end: integer("end"),
+    target: jsonb("target").$type<Record<string, unknown>>(),
+    minimumDepth: integer("minimumDepth"),
+    minimumCoveragePercent: numeric("minimumCoveragePercent", {
+      precision: 5,
+      scale: 2,
+    }),
+    reportable: boolean("reportable").default(true).notNull(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  table => [
+    unique("somatic_panel_regions_id_org_uq").on(
+      table.id,
+      table.organizationId
+    ),
+    unique("somatic_panel_regions_version_key_uq").on(
+      table.organizationId,
+      table.panelVersionId,
+      table.regionKey
+    ),
+    foreignKey({
+      name: "somatic_panel_regions_version_org_fk",
+      columns: [table.panelVersionId, table.organizationId],
+      foreignColumns: [
+        somaticPanelVersions.id,
+        somaticPanelVersions.organizationId,
+      ],
+    }).onDelete("cascade"),
+  ]
+);
+
+export const somaticCaseCoverageSummaries = pgTable(
+  "somatic_case_coverage_summaries",
+  {
+    id: surrogateId(),
+    organizationId: integer("organizationId")
+      .notNull()
+      .references(() => organizations.id),
+    caseId: integer("caseId").notNull(),
+    panelVersionId: integer("panelVersionId").notNull(),
+    validationStatus: somaticValidationStatusEnum("validationStatus")
+      .default("pending")
+      .notNull(),
+    completeRegionCount: integer("completeRegionCount").default(0).notNull(),
+    expectedRegionCount: integer("expectedRegionCount").default(0).notNull(),
+    qcMetrics: jsonb("qcMetrics").$type<Record<string, unknown>>().notNull(),
+    sourceArtifactHash: varchar("sourceArtifactHash", { length: 64 }),
+    validationHash: varchar("validationHash", { length: 64 }),
+    validatedBy: integer("validatedBy").references(() => users.id),
+    validatedAt: timestamp("validatedAt", { withTimezone: true }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  table => [
+    unique("somatic_case_coverage_id_org_uq").on(
+      table.id,
+      table.organizationId
+    ),
+    unique("somatic_case_coverage_identity_uq").on(
+      table.id,
+      table.organizationId,
+      table.caseId,
+      table.panelVersionId
+    ),
+    unique("somatic_case_coverage_case_panel_uq").on(
+      table.organizationId,
+      table.caseId,
+      table.panelVersionId
+    ),
+    foreignKey({
+      name: "somatic_case_coverage_case_org_fk",
+      columns: [table.caseId, table.organizationId],
+      foreignColumns: [cases.id, cases.organizationId],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "somatic_case_coverage_panel_org_fk",
+      columns: [table.panelVersionId, table.organizationId],
+      foreignColumns: [
+        somaticPanelVersions.id,
+        somaticPanelVersions.organizationId,
+      ],
+    }).onDelete("restrict"),
+    check(
+      "somatic_case_coverage_validation_ck",
+      sql`${table.validationStatus} <> 'passed' OR (${table.expectedRegionCount} > 0 AND ${table.completeRegionCount} = ${table.expectedRegionCount} AND ${table.validationHash} IS NOT NULL AND ${table.validatedBy} IS NOT NULL AND ${table.validatedAt} IS NOT NULL)`
+    ),
+    check(
+      "somatic_case_coverage_source_hash_ck",
+      sql`${table.sourceArtifactHash} IS NULL OR ${table.sourceArtifactHash} ~ '^[0-9a-f]{64}$'`
+    ),
+  ]
+);
+
+export const somaticCaseRegionCoverage = pgTable(
+  "somatic_case_region_coverage",
+  {
+    id: surrogateId(),
+    organizationId: integer("organizationId")
+      .notNull()
+      .references(() => organizations.id),
+    coverageSummaryId: integer("coverageSummaryId").notNull(),
+    panelRegionId: integer("panelRegionId").notNull(),
+    meanDepth: numeric("meanDepth", { precision: 12, scale: 2 }),
+    coveredPercent: numeric("coveredPercent", { precision: 5, scale: 2 }),
+    qcPassed: boolean("qcPassed").notNull(),
+    qcReasons: jsonb("qcReasons").$type<string[]>().notNull(),
+    createdAt: createdAt(),
+  },
+  table => [
+    unique("somatic_case_region_coverage_summary_region_uq").on(
+      table.organizationId,
+      table.coverageSummaryId,
+      table.panelRegionId
+    ),
+    foreignKey({
+      name: "somatic_case_region_coverage_summary_org_fk",
+      columns: [table.coverageSummaryId, table.organizationId],
+      foreignColumns: [
+        somaticCaseCoverageSummaries.id,
+        somaticCaseCoverageSummaries.organizationId,
+      ],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "somatic_case_region_coverage_region_org_fk",
+      columns: [table.panelRegionId, table.organizationId],
+      foreignColumns: [
+        somaticPanelReportableRegions.id,
+        somaticPanelReportableRegions.organizationId,
+      ],
+    }).onDelete("restrict"),
+  ]
+);
+
+export const somaticAssayFindings = pgTable(
+  "somatic_assay_findings",
+  {
+    id: surrogateId(),
+    organizationId: integer("organizationId")
+      .notNull()
+      .references(() => organizations.id),
+    caseId: integer("caseId").notNull(),
+    panelVersionId: integer("panelVersionId").notNull(),
+    coverageSummaryId: integer("coverageSummaryId"),
+    findingType: somaticFindingTypeEnum("findingType").notNull(),
+    status: somaticFindingStatusEnum("status").notNull(),
+    result: jsonb("result").$type<SomaticAssayFindingResult>(),
+    reportable: boolean("reportable").default(false).notNull(),
+    reportabilityReasons: jsonb("reportabilityReasons")
+      .$type<string[]>()
+      .notNull(),
+    sourceRunId: varchar("sourceRunId", { length: 160 }),
+    sourceArtifactFileId: integer("sourceArtifactFileId"),
+    sourceArtifactHash: varchar("sourceArtifactHash", { length: 64 }),
+    reviewedBy: integer("reviewedBy").references(() => users.id),
+    reviewedAt: timestamp("reviewedAt", { withTimezone: true }),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  table => [
+    unique("somatic_assay_findings_id_org_uq").on(
+      table.id,
+      table.organizationId
+    ),
+    index("somatic_assay_findings_case_type_idx").on(
+      table.organizationId,
+      table.caseId,
+      table.findingType
+    ),
+    foreignKey({
+      name: "somatic_assay_findings_artifact_org_case_fk",
+      columns: [
+        table.sourceArtifactFileId,
+        table.organizationId,
+        table.caseId,
+      ],
+      foreignColumns: [
+        caseFiles.id,
+        caseFiles.organizationId,
+        caseFiles.caseId,
+      ],
+    }).onDelete("restrict"),
+    foreignKey({
+      name: "somatic_assay_findings_case_org_fk",
+      columns: [table.caseId, table.organizationId],
+      foreignColumns: [cases.id, cases.organizationId],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "somatic_assay_findings_panel_org_fk",
+      columns: [table.panelVersionId, table.organizationId],
+      foreignColumns: [
+        somaticPanelVersions.id,
+        somaticPanelVersions.organizationId,
+      ],
+    }).onDelete("restrict"),
+    foreignKey({
+      name: "somatic_assay_findings_coverage_org_fk",
+      columns: [
+        table.coverageSummaryId,
+        table.organizationId,
+        table.caseId,
+        table.panelVersionId,
+      ],
+      foreignColumns: [
+        somaticCaseCoverageSummaries.id,
+        somaticCaseCoverageSummaries.organizationId,
+        somaticCaseCoverageSummaries.caseId,
+        somaticCaseCoverageSummaries.panelVersionId,
+      ],
+    }).onDelete("restrict"),
+    check(
+      "somatic_assay_findings_negative_reportable_ck",
+      sql`NOT ${table.reportable} OR ${table.status} NOT IN ('not_detected', 'not_tested') OR ${table.coverageSummaryId} IS NOT NULL`
+    ),
+    check(
+      "somatic_assay_findings_result_type_ck",
+      sql`${table.result} IS NULL OR ${table.result}->>'type' = ${table.findingType}::text`
+    ),
+    check(
+      "somatic_assay_findings_artifact_hash_ck",
+      sql`(${table.sourceArtifactFileId} IS NULL AND ${table.sourceArtifactHash} IS NULL) OR (${table.sourceArtifactFileId} IS NOT NULL AND ${table.sourceArtifactHash} ~ '^[0-9a-f]{64}$')`
+    ),
+  ]
+);
+
+export const somaticOrganizationPolicyProfiles = pgTable(
+  "somatic_organization_policy_profiles",
+  {
+    id: surrogateId(),
+    organizationId: integer("organizationId")
+      .notNull()
+      .references(() => organizations.id),
+    name: varchar("name", { length: 160 }).notNull(),
+    version: integer("version").notNull(),
+    status: somaticLifecycleStatusEnum("status").default("draft").notNull(),
+    allowNegativeReporting: boolean("allowNegativeReporting")
+      .default(false)
+      .notNull(),
+    enableOncoKb: boolean("enableOncoKb").default(false).notNull(),
+    policy: jsonb("policy").$type<Record<string, unknown>>().notNull(),
+    contentHash: varchar("contentHash", { length: 64 }).notNull(),
+    changeControlId: varchar("changeControlId", { length: 120 }).notNull(),
+    approvedBy: integer("approvedBy").references(() => users.id),
+    approvedAt: timestamp("approvedAt", { withTimezone: true }),
+    activatedBy: integer("activatedBy").references(() => users.id),
+    activatedAt: timestamp("activatedAt", { withTimezone: true }),
+    createdBy: integer("createdBy")
+      .notNull()
+      .references(() => users.id),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  table => [
+    unique("somatic_policy_profiles_id_org_uq").on(
+      table.id,
+      table.organizationId
+    ),
+    unique("somatic_policy_profiles_org_name_version_uq").on(
+      table.organizationId,
+      table.name,
+      table.version
+    ),
+    uniqueIndex("somatic_policy_profiles_one_active_uq")
+      .on(table.organizationId)
+      .where(sql`${table.status} = 'active'`),
+    check(
+      "somatic_policy_profiles_activation_ck",
+      sql`${table.status} <> 'active' OR (${table.approvedBy} IS NOT NULL AND ${table.approvedAt} IS NOT NULL AND ${table.activatedBy} IS NOT NULL AND ${table.activatedAt} IS NOT NULL)`
+    ),
+  ]
+);
+
+export const somaticReinterpretationTasks = pgTable(
+  "somatic_reinterpretation_tasks",
+  {
+    id: surrogateId(),
+    organizationId: integer("organizationId")
+      .notNull()
+      .references(() => organizations.id),
+    caseId: integer("caseId").notNull(),
+    releaseId: integer("releaseId").notNull(),
+    findingId: integer("findingId"),
+    changeKind: varchar("changeKind", { length: 40 })
+      .default("knowledge_release")
+      .notNull(),
+    changeKey: varchar("changeKey", { length: 200 }),
+    status: somaticTaskStatusEnum("status").default("open").notNull(),
+    reason: text("reason").notNull(),
+    impact: jsonb("impact").$type<Record<string, unknown>>().notNull(),
+    previousReleaseVersion: varchar("previousReleaseVersion", { length: 120 }),
+    targetReleaseVersion: varchar("targetReleaseVersion", {
+      length: 120,
+    }).notNull(),
+    interpretationRunId: integer("interpretationRunId"),
+    enqueuedBy: integer("enqueuedBy").references(() => users.id),
+    enqueuedAt: timestamp("enqueuedAt", { withTimezone: true }),
+    assignedTo: integer("assignedTo").references(() => users.id),
+    completedBy: integer("completedBy").references(() => users.id),
+    completedAt: timestamp("completedAt", { withTimezone: true }),
+    createdBy: integer("createdBy")
+      .notNull()
+      .references(() => users.id),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  table => [
+    unique("somatic_reinterpretation_tasks_id_org_uq").on(
+      table.id,
+      table.organizationId
+    ),
+    index("somatic_reinterpretation_tasks_queue_idx").on(
+      table.organizationId,
+      table.status,
+      table.createdAt
+    ),
+    uniqueIndex("somatic_reinterpretation_tasks_one_open_change_uq")
+      .on(
+        table.organizationId,
+        table.caseId,
+        sql`COALESCE(${table.changeKey}, 'release:' || ${table.releaseId}::text)`
+      )
+      .where(sql`${table.status} IN ('open', 'in_review')`),
+    foreignKey({
+      name: "somatic_reinterpretation_tasks_case_org_fk",
+      columns: [table.caseId, table.organizationId],
+      foreignColumns: [cases.id, cases.organizationId],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "somatic_reinterpretation_tasks_release_org_fk",
+      columns: [table.releaseId, table.organizationId],
+      foreignColumns: [
+        somaticKnowledgeReleases.id,
+        somaticKnowledgeReleases.organizationId,
+      ],
+    }).onDelete("restrict"),
+    foreignKey({
+      name: "somatic_reinterpretation_tasks_finding_org_fk",
+      columns: [table.findingId, table.organizationId],
+      foreignColumns: [
+        somaticAssayFindings.id,
+        somaticAssayFindings.organizationId,
+      ],
+    }).onDelete("restrict"),
+    foreignKey({
+      name: "somatic_reinterpretation_tasks_run_org_fk",
+      columns: [table.interpretationRunId, table.organizationId],
+      foreignColumns: [
+        somaticInterpretationRuns.id,
+        somaticInterpretationRuns.organizationId,
+      ],
+    }).onDelete("restrict"),
   ]
 );
 
@@ -674,7 +2184,9 @@ export const curationRuns = pgTable(
 
     /** Null when the run was queued by a system pass rather than a person. */
     requestedBy: integer("requestedBy").references(() => users.id),
-    queuedAt: timestamp("queuedAt", { withTimezone: true }).defaultNow().notNull(),
+    queuedAt: timestamp("queuedAt", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
     startedAt: timestamp("startedAt", { withTimezone: true }),
     completedAt: timestamp("completedAt", { withTimezone: true }),
     createdAt: createdAt(),
@@ -690,8 +2202,15 @@ export const curationRuns = pgTable(
     index("curation_runs_lease_idx")
       .on(table.leaseExpiresAt)
       .where(sql`${table.status} in ('loading', 'running')`),
-    index("curation_runs_org_status_idx").on(table.organizationId, table.status, table.queuedAt),
-    index("curation_runs_variant_idx").on(table.organizationId, table.variantId),
+    index("curation_runs_org_status_idx").on(
+      table.organizationId,
+      table.status,
+      table.queuedAt
+    ),
+    index("curation_runs_variant_idx").on(
+      table.organizationId,
+      table.variantId
+    ),
     index("curation_runs_case_idx").on(table.organizationId, table.caseId),
     index("curation_runs_batch_idx").on(table.organizationId, table.batchId),
     // One variant cannot sit in the queue twice. Ad-hoc runs have a null
@@ -755,7 +2274,9 @@ export const evidenceItems = pgTable(
       .references(() => organizations.id),
     variantId: integer("variantId").notNull(),
     source: evidenceSourceEnum("source").notNull(),
-    clinicalDomain: evidenceClinicalDomainEnum("clinicalDomain").default("other").notNull(),
+    clinicalDomain: evidenceClinicalDomainEnum("clinicalDomain")
+      .default("other")
+      .notNull(),
     sourceRecordId: varchar("sourceRecordId", { length: 160 }),
     title: text("title").notNull(),
     url: varchar("url", { length: 1000 }),
@@ -766,7 +2287,9 @@ export const evidenceItems = pgTable(
     origin: evidenceOriginEnum("origin").default("human").notNull(),
     /** Curation run that produced this row; null for human-entered evidence. */
     curationRunId: integer("curationRunId"),
-    accessedAt: timestamp("accessedAt", { withTimezone: true }).defaultNow().notNull(),
+    accessedAt: timestamp("accessedAt", { withTimezone: true })
+      .defaultNow()
+      .notNull(),
     /** Null when the engine wrote the row — see `evidenceOriginEnum`. */
     createdBy: integer("createdBy").references(() => users.id),
     createdAt: createdAt(),
@@ -774,7 +2297,10 @@ export const evidenceItems = pgTable(
   table => [
     index("evidence_variant_idx").on(table.organizationId, table.variantId),
     // Lets a re-run replace exactly the rows its predecessor wrote.
-    index("evidence_curation_run_idx").on(table.organizationId, table.curationRunId),
+    index("evidence_curation_run_idx").on(
+      table.organizationId,
+      table.curationRunId
+    ),
     foreignKey({
       name: "evidence_variant_org_fk",
       columns: [table.variantId, table.organizationId],
@@ -804,7 +2330,9 @@ export const interpretations = pgTable(
       .references(() => organizations.id),
     variantId: integer("variantId").notNull(),
     mode: interpretationModeEnum("mode").notNull(),
-    germlineClassification: germlineClassificationEnum("germlineClassification"),
+    germlineClassification: germlineClassificationEnum(
+      "germlineClassification"
+    ),
     somaticTier: somaticTierEnum("somaticTier"),
     oncogenicity: oncogenicityEnum("oncogenicity"),
     clinicalSignificance: varchar("clinicalSignificance", { length: 160 }),
@@ -939,6 +2467,105 @@ export const aiMessages = pgTable(
 
 // ── Reporting and audit ────────────────────────────────────────────────────────
 
+export type SomaticReportTemplateSchema = {
+  schemaVersion: "1";
+  name: string;
+  locale: string;
+  sections: Array<{
+    id:
+      | "case_summary"
+      | "significant_findings"
+      | "genomic_signatures"
+      | "vus"
+      | "variant_details"
+      | "methodology"
+      | "limitations"
+      | "references"
+      | "signatures";
+    visible: boolean;
+    title: string;
+    editableIntro?: string;
+  }>;
+  includeTierIV: boolean;
+  header?: string;
+  footer?: string;
+  disclaimer: string;
+  negativeResult?: {
+    title: string;
+    summary: string;
+    interpretation: string;
+    limitations: string;
+  };
+};
+
+export const somaticReportTemplates = pgTable(
+  "somatic_report_templates",
+  {
+    id: surrogateId(),
+    organizationId: integer("organizationId")
+      .notNull()
+      .references(() => organizations.id),
+    name: varchar("name", { length: 200 }).notNull(),
+    activeVersionId: integer("activeVersionId"),
+    createdBy: integer("createdBy")
+      .notNull()
+      .references(() => users.id),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  table => [
+    unique("somatic_report_templates_id_org_uq").on(
+      table.id,
+      table.organizationId
+    ),
+    unique("somatic_report_templates_org_name_uq").on(
+      table.organizationId,
+      table.name
+    ),
+  ]
+);
+
+export const somaticReportTemplateVersions = pgTable(
+  "somatic_report_template_versions",
+  {
+    id: surrogateId(),
+    organizationId: integer("organizationId")
+      .notNull()
+      .references(() => organizations.id),
+    templateId: integer("templateId").notNull(),
+    version: integer("version").notNull(),
+    status: somaticReportTemplateStatusEnum("status")
+      .default("draft")
+      .notNull(),
+    schema: jsonb("schema").$type<SomaticReportTemplateSchema>().notNull(),
+    createdBy: integer("createdBy")
+      .notNull()
+      .references(() => users.id),
+    publishedBy: integer("publishedBy").references(() => users.id),
+    publishedAt: timestamp("publishedAt", { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  table => [
+    unique("somatic_report_template_versions_id_org_uq").on(
+      table.id,
+      table.organizationId
+    ),
+    unique("somatic_report_template_versions_template_version_uq").on(
+      table.organizationId,
+      table.templateId,
+      table.version
+    ),
+    foreignKey({
+      name: "somatic_report_template_versions_template_org_fk",
+      columns: [table.templateId, table.organizationId],
+      foreignColumns: [
+        somaticReportTemplates.id,
+        somaticReportTemplates.organizationId,
+      ],
+    }).onDelete("cascade"),
+  ]
+);
+
 export const reports = pgTable(
   "reports",
   {
@@ -951,6 +2578,7 @@ export const reports = pgTable(
     status: reportStatusEnum("status").default("draft").notNull(),
     title: varchar("title", { length: 255 }).notNull(),
     content: jsonb("content").$type<Record<string, unknown>>().notNull(),
+    somaticTemplateVersionId: integer("somaticTemplateVersionId"),
     snapshot: jsonb("snapshot").$type<Record<string, unknown>>(),
     snapshotHash: varchar("snapshotHash", { length: 64 }),
     parentReportId: integer("parentReportId"),
@@ -979,13 +2607,23 @@ export const reports = pgTable(
       columns: [table.parentReportId, table.organizationId],
       foreignColumns: [table.id, table.organizationId],
     }).onDelete("restrict"),
+    foreignKey({
+      name: "reports_somatic_template_version_org_fk",
+      columns: [table.somaticTemplateVersionId, table.organizationId],
+      foreignColumns: [
+        somaticReportTemplateVersions.id,
+        somaticReportTemplateVersions.organizationId,
+      ],
+    }).onDelete("restrict"),
   ]
 );
 
 export const auditEvents = pgTable(
   "audit_events",
   {
-    id: bigint("id", { mode: "number" }).primaryKey().generatedAlwaysAsIdentity(),
+    id: bigint("id", { mode: "number" })
+      .primaryKey()
+      .generatedAlwaysAsIdentity(),
     organizationId: integer("organizationId")
       .notNull()
       .references(() => organizations.id),
@@ -1001,8 +2639,15 @@ export const auditEvents = pgTable(
     createdAt: createdAt(),
   },
   table => [
-    index("audit_events_org_time_idx").on(table.organizationId, table.createdAt),
-    index("audit_events_entity_idx").on(table.organizationId, table.entityType, table.entityId),
+    index("audit_events_org_time_idx").on(
+      table.organizationId,
+      table.createdAt
+    ),
+    index("audit_events_entity_idx").on(
+      table.organizationId,
+      table.entityType,
+      table.entityId
+    ),
   ]
 );
 
@@ -1018,3 +2663,11 @@ export type Report = typeof reports.$inferSelect;
 export type AuditEvent = typeof auditEvents.$inferSelect;
 export type CurationRun = typeof curationRuns.$inferSelect;
 export type CurationRunEvent = typeof curationRunEvents.$inferSelect;
+export type SomaticCaseContext = typeof somaticCaseContexts.$inferSelect;
+export type SomaticInterpretationRun =
+  typeof somaticInterpretationRuns.$inferSelect;
+export type SomaticClinicalAssertion =
+  typeof somaticClinicalAssertions.$inferSelect;
+export type SomaticReportTemplate = typeof somaticReportTemplates.$inferSelect;
+export type SomaticReportTemplateVersion =
+  typeof somaticReportTemplateVersions.$inferSelect;

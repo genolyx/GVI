@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 1,
+  "packVersion": "somatic-public-synthetic-v1",
+  "generatedAt": "2026-01-15T00:00:00.000Z",
+  "license": "CC0-1.0",
+  "description": "Synthetic Phase 1 somatic fixtures. CIViC-shaped records are minimal public-data examples and are not clinical truth.",
+  "vcf": "cases.vcf",
+  "civic": "civic.json",
+  "cases": [
+    {
+      "id": "egfr-l858r-sensitivity",
+      "variantId": "GRCh38:7:55259515:T:G",
+      "tumorLabel": "Non-small cell lung cancer",
+      "reviewerGold": null
+    },
+    {
+      "id": "braf-v600e",
+      "variantId": "GRCh38:7:140753336:A:T",
+      "tumorLabel": "Melanoma",
+      "reviewerGold": null
+    },
+    {
+      "id": "prognostic-only",
+      "variantId": "GRCh38:17:7674220:C:T",
+      "tumorLabel": "Myelodysplastic syndrome",
+      "reviewerGold": null
+    },
+    {
+      "id": "other-tumor-unknown",
+      "variantId": "GRCh38:12:25245350:C:T",
+      "tumorLabel": "Pancreatic adenocarcinoma",
+      "reviewerGold": null
+    },
+    {
+      "id": "conflict",
+      "variantId": "GRCh38:3:179234297:A:G",
+      "tumorLabel": "Breast carcinoma",
+      "reviewerGold": null
+    },
+    {
+      "id": "no-evidence",
+      "variantId": "GRCh38:1:114716127:T:C",
+      "tumorLabel": "Melanoma",
+      "reviewerGold": null
+    },
+    {
+      "id": "low-vaf",
+      "variantId": "GRCh38:2:29443657:G:A",
+      "tumorLabel": "Lung adenocarcinoma",
+      "reviewerGold": null
+    },
+    {
+      "id": "low-depth",
+      "variantId": "GRCh38:7:116771993:T:C",
+      "tumorLabel": "Lung adenocarcinoma",
+      "reviewerGold": null
+    },
+    {
+      "id": "build-mismatch",
+      "variantId": "GRCh37:7:55249071:T:G",
+      "tumorLabel": "Non-small cell lung cancer",
+      "reviewerGold": null
+    },
+    {
+      "id": "indel-manual-review",
+      "variantId": "GRCh38:4:54727415:AT:A",
+      "tumorLabel": "Gastrointestinal stromal tumor",
+      "reviewerGold": null
+    },
+    {
+      "id": "provider-outage",
+      "variantId": "GRCh38:17:39723965:G:A",
+      "tumorLabel": "Breast carcinoma",
+      "providerOutage": true,
+      "reviewerGold": null
+    }
+  ]
+}

@@ -14,6 +14,49 @@ describe("report immutability policy", () => {
   it("changes the digest when signed content changes", () => {
     expect(createReportDigest({ content: "A" }).sha256).not.toBe(createReportDigest({ content: "B" }).sha256);
   });
+  it("canonicalizes a somatic report snapshot while preserving array order", () => {
+    const digest = createReportDigest({
+      template: {
+        schema: {
+          sections: [
+            { title: "Findings", id: "significant_findings" },
+            { title: "Limitations", id: "limitations" },
+          ],
+          schemaVersion: "1",
+        },
+        versionId: 8,
+      },
+      schemaVersion: "somatic-report-snapshot-2",
+      assertions: [
+        { tier: "Tier I", assertionId: 21 },
+        { tier: "Tier III", assertionId: 34 },
+      ],
+    });
+
+    expect(digest.canonicalJson).toMatchInlineSnapshot(
+      `"{"assertions":[{"assertionId":21,"tier":"Tier I"},{"assertionId":34,"tier":"Tier III"}],"schemaVersion":"somatic-report-snapshot-2","template":{"schema":{"schemaVersion":"1","sections":[{"id":"significant_findings","title":"Findings"},{"id":"limitations","title":"Limitations"}]},"versionId":8}}"`
+    );
+    expect(digest.sha256).toMatch(/^[a-f0-9]{64}$/);
+  });
+  it("binds the digest to the template version and signature", () => {
+    const snapshot = {
+      template: { versionId: 3, schema: { schemaVersion: "1" } },
+      signature: { userId: 7, signedAt: "2026-09-27T08:00:00.000Z" },
+    };
+
+    expect(createReportDigest(snapshot).sha256).not.toBe(
+      createReportDigest({
+        ...snapshot,
+        template: { ...snapshot.template, versionId: 4 },
+      }).sha256
+    );
+    expect(createReportDigest(snapshot).sha256).not.toBe(
+      createReportDigest({
+        ...snapshot,
+        signature: { ...snapshot.signature, userId: 9 },
+      }).sha256
+    );
+  });
   it("makes every reviewed or signed version immutable", () => {
     expect(isReportMutable("draft")).toBe(true);
     expect(isReportMutable("in_review")).toBe(false);

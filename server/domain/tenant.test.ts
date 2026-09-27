@@ -1,12 +1,16 @@
 import { TRPCError } from "@trpc/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const state = vi.hoisted(() => ({ rows: [] as Record<string, unknown>[] }));
+const state = vi.hoisted(() => ({
+  rows: [] as Record<string, unknown>[],
+  userRows: [{ role: "user" }] as Record<string, unknown>[],
+}));
 
 vi.mock("../db", () => ({
   getDb: vi.fn(async () => ({
     select: () => ({
       from: () => ({
+        where: () => ({ limit: async () => state.userRows }),
         innerJoin: () => ({
           where: () => ({ limit: async () => state.rows }),
         }),
@@ -18,7 +22,10 @@ vi.mock("../db", () => ({
 import { requireOrganizationPermission } from "./tenant";
 
 describe("tenant and RBAC boundary", () => {
-  beforeEach(() => { state.rows = []; });
+  beforeEach(() => {
+    state.rows = [];
+    state.userRows = [{ role: "user" }];
+  });
 
   it("conceals an organization for a user without membership", async () => {
     await expect(requireOrganizationPermission(101, 999, "case:read")).rejects.toMatchObject({

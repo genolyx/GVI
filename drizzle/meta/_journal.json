@@ -71,6 +71,76 @@
       "when": 1790300000000,
       "tag": "0009_super_admin",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1790494257064,
+      "tag": "0010_somatic_cds_phase1",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1790494257065,
+      "tag": "0011_somatic_phase2_4_foundation",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1790494257066,
+      "tag": "0012_somatic_phase2a_proposals",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1790494257067,
+      "tag": "0013_somatic_offline_knowledge",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1790494257068,
+      "tag": "0014_somatic_panel_coverage_artifacts",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1790494257069,
+      "tag": "0015_somatic_artifacts_and_durable_jobs",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1790494257070,
+      "tag": "0016_somatic_phase4_operations",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1790494257071,
+      "tag": "0017_somatic_civic_import",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1790494257072,
+      "tag": "0018_somatic_assay_bulk_provenance",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1790494257073,
+      "tag": "0019_somatic_policy_impact",
+      "breakpoints": true
     }
   ]
 }

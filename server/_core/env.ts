@@ -7,6 +7,15 @@ function parseEmailAllowlist(raw: string | undefined): Set<string> {
   );
 }
 
+function parseOncoKbMode(
+  raw: string | undefined
+): "disabled" | "demo" | "research" | "commercial" {
+  const value = raw?.trim().toLowerCase();
+  return value === "demo" || value === "research" || value === "commercial"
+    ? value
+    : "disabled";
+}
+
 export const ENV = {
   appId: process.env.VITE_APP_ID ?? "",
   cookieSecret: process.env.JWT_SECRET ?? "",
@@ -37,11 +46,26 @@ export const ENV = {
    * worker can strand a variant.
    */
   engineLeaseSeconds: parsePositiveInt(process.env.ENGINE_LEASE_SECONDS, 900),
-  /**
-   * OncoKB API bearer token (academic registration at oncokb.org/api-access).
-   * Without it, somatic refresh still runs CIViC and records `oncokb` as disabled.
-   */
+  oncokbMode: parseOncoKbMode(process.env.ONCOKB_API_MODE),
+  oncokbApiToken: process.env.ONCOKB_API_TOKEN ?? "",
+  /** Legacy non-CDS path only; do not configure for the Somatic API adapter. */
   oncokbToken: process.env.ONCOKB_TOKEN ?? "",
+  oncokbBaseUrl:
+    process.env.ONCOKB_BASE_URL?.replace(/\/+$/, "") ||
+    (process.env.ONCOKB_API_MODE?.trim().toLowerCase() === "demo"
+      ? "https://demo.oncokb.org"
+      : "https://www.oncokb.org"),
+  oncokbBatchSize: parsePositiveInt(process.env.ONCOKB_BATCH_SIZE, 100),
+  oncokbMaxConcurrency: parsePositiveInt(process.env.ONCOKB_MAX_CONCURRENCY, 3),
+  oncokbRequestTimeoutSeconds: parsePositiveInt(
+    process.env.ONCOKB_REQUEST_TIMEOUT_SECONDS,
+    60
+  ),
+  oncokbRetryCount: parsePositiveInt(process.env.ONCOKB_RETRY_COUNT, 3),
+  oncokbCacheTtlSeconds: parsePositiveInt(
+    process.env.ONCOKB_CACHE_TTL_SECONDS,
+    86400
+  ),
   /** Optional CIViC GraphQL key — lifts the anonymous 3 req/s cap. */
   civicApiKey: process.env.CIVIC_API_KEY ?? "",
 };

@@ -12,6 +12,8 @@ import { registerEngineApiRoutes, startCurationReaper } from "../engineApi";
 import { ensureCurationWorker } from "../domain/curationWorker";
 import { registerDevAuthRoutes } from "./devAuth";
 import { ENV } from "./env";
+import { startSomaticWorker } from "../domain/somatic/runWorker";
+import { startCivicImportWorker } from "../domain/somatic/civic/importWorker";
 
 function isPortAvailable(port: number): Promise<boolean> {
   return new Promise(resolve => {
@@ -52,6 +54,8 @@ async function startServer() {
   } else {
     console.log("[CurationReaper] disabled — ENGINE_WORKER_TOKEN is not configured");
   }
+  startSomaticWorker();
+  startCivicImportWorker();
   // tRPC API
   app.use(
     "/api/trpc",

@@ -1,0 +1,107 @@
+{
+  "schemaVersion": 1,
+  "sourceVersion": "synthetic-civic-v1",
+  "records": [
+    {
+      "variantId": "GRCh38:7:55259515:T:G",
+      "sourceRecordId": "CIVIC-SYN-EGFR-L858R-1",
+      "sourceNativeLevel": "A",
+      "clinicalDomain": "therapeutic",
+      "direction": "supporting",
+      "diseaseMatch": "exact",
+      "summary": "Synthetic sensitivity evidence for EGFR L858R in non-small cell lung cancer.",
+      "sourceUrl": "https://civicdb.org/",
+      "payload": {
+        "variant": "EGFR L858R",
+        "clinicalEffect": "sensitivity",
+        "synthetic": true
+      }
+    },
+    {
+      "variantId": "GRCh38:7:140753336:A:T",
+      "sourceRecordId": "CIVIC-SYN-BRAF-V600E-1",
+      "sourceNativeLevel": "B",
+      "clinicalDomain": "therapeutic",
+      "direction": "supporting",
+      "diseaseMatch": "exact",
+      "summary": "Synthetic therapeutic evidence for BRAF V600E in melanoma.",
+      "sourceUrl": "https://civicdb.org/",
+      "payload": {
+        "variant": "BRAF V600E",
+        "clinicalEffect": "sensitivity",
+        "synthetic": true
+      }
+    },
+    {
+      "variantId": "GRCh38:17:7674220:C:T",
+      "sourceRecordId": "CIVIC-SYN-TP53-PROGNOSTIC-1",
+      "sourceNativeLevel": "C",
+      "clinicalDomain": "prognostic",
+      "direction": "supporting",
+      "diseaseMatch": "exact",
+      "summary": "Synthetic prognostic-only TP53 evidence.",
+      "sourceUrl": "https://civicdb.org/",
+      "payload": {
+        "variant": "TP53 synthetic missense",
+        "synthetic": true
+      }
+    },
+    {
+      "variantId": "GRCh38:12:25245350:C:T",
+      "sourceRecordId": "CIVIC-SYN-KRAS-OTHER-1",
+      "sourceNativeLevel": "D",
+      "clinicalDomain": "therapeutic",
+      "direction": "supporting",
+      "diseaseMatch": "none",
+      "summary": "Synthetic KRAS evidence from a different tumor context.",
+      "sourceUrl": "https://civicdb.org/",
+      "payload": {
+        "variant": "KRAS G12D",
+        "evidenceTumor": "Colorectal carcinoma",
+        "synthetic": true
+      }
+    },
+    {
+      "variantId": "GRCh38:12:25245350:C:T",
+      "sourceRecordId": "CIVIC-SYN-KRAS-UNKNOWN-2",
+      "sourceNativeLevel": "E",
+      "clinicalDomain": "diagnostic",
+      "direction": "neutral",
+      "diseaseMatch": "unknown",
+      "summary": "Synthetic KRAS evidence with unresolved disease matching.",
+      "sourceUrl": "https://civicdb.org/",
+      "payload": {
+        "variant": "KRAS G12D",
+        "synthetic": true
+      }
+    },
+    {
+      "variantId": "GRCh38:3:179234297:A:G",
+      "sourceRecordId": "CIVIC-SYN-PIK3CA-CONFLICT-SUPPORT",
+      "sourceNativeLevel": "B",
+      "clinicalDomain": "therapeutic",
+      "direction": "supporting",
+      "diseaseMatch": "exact",
+      "summary": "Synthetic supporting PIK3CA evidence.",
+      "sourceUrl": "https://civicdb.org/",
+      "payload": {
+        "variant": "PIK3CA synthetic missense",
+        "synthetic": true
+      }
+    },
+    {
+      "variantId": "GRCh38:3:179234297:A:G",
+      "sourceRecordId": "CIVIC-SYN-PIK3CA-CONFLICT-CONTRADICT",
+      "sourceNativeLevel": "C",
+      "clinicalDomain": "therapeutic",
+      "direction": "contradicting",
+      "diseaseMatch": "exact",
+      "summary": "Synthetic contradicting PIK3CA evidence.",
+      "sourceUrl": "https://civicdb.org/",
+      "payload": {
+        "variant": "PIK3CA synthetic missense",
+        "synthetic": true
+      }
+    }
+  ]
+}

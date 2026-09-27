@@ -7,30 +7,328 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useOrganization } from "@/contexts/OrganizationContext";
 import { trpc } from "@/lib/trpc";
-import { ArrowLeft, CheckCircle2, Clock3, Database, Dna, FileArchive, FlaskConical, Server } from "lucide-react";
+import {
+  ArrowLeft,
+  CheckCircle2,
+  Clock3,
+  Database,
+  Dna,
+  FileArchive,
+  FlaskConical,
+  Server,
+} from "lucide-react";
 import { useLocation, useParams } from "wouter";
 import { toast } from "sonner";
 import { formatDateTime } from "@/lib/datetime";
 
 export default function CaseDetailPage() {
-  const params = useParams<{ id: string }>(); const caseId = Number(params.id); const { activeOrganizationId, hasPermission } = useOrganization(); const [, navigate] = useLocation();
-  const query = trpc.cases.get.useQuery({ organizationId: activeOrganizationId || 0, caseId }, { enabled: Boolean(activeOrganizationId && caseId && hasPermission("case:read")) }); const timeline = trpc.cases.timeline.useQuery({ organizationId: activeOrganizationId || 0, caseId }, { enabled: Boolean(activeOrganizationId && caseId && hasPermission("case:read")) });
-  const createReport = trpc.reports.createDraft.useMutation({ onSuccess: result => navigate(`/reports/${result.id}`), onError: error => toast.error(error.message) });
-  if (!hasPermission("case:read")) return <div className="space-y-7"><PageHeader eyebrow="Case management" title="Cases" description="View clinical cases within the organization boundary." /><StatePanel type="forbidden" title="You do not have permission to view cases" description="Ask your organization administrator for a role that includes the case:read action." action={<Button variant="outline" onClick={() => navigate("/")}>Dashboard</Button>} /></div>;
-  if (query.isLoading) return <div className="space-y-5"><Skeleton className="h-24" /><Skeleton className="h-80" /></div>;
-  if (query.isError) return <div className="space-y-7"><PageHeader eyebrow="Case management" title="Case error" description="Unable to verify the requested case and organization access boundary." /><StatePanel type="error" title="Failed to load case" description={query.error.message} onRetry={() => { void query.refetch(); }} action={<Button variant="outline" onClick={() => navigate("/cases")}><ArrowLeft className="mr-2 size-4" />Back</Button>} /></div>;
-  if (!query.data) return <div className="space-y-7"><PageHeader eyebrow="Case management" title="Case not found" description="Please verify the requested case identifier." /><StatePanel type="empty" title="Case not found" description="Cases that have been deleted or do not belong to the current organization are not shown." action={<Button variant="outline" onClick={() => navigate("/cases")}><ArrowLeft className="mr-2 size-4" />Back</Button>} /></div>;
+  const params = useParams<{ id: string }>();
+  const caseId = Number(params.id);
+  const { activeOrganizationId, hasPermission } = useOrganization();
+  const [, navigate] = useLocation();
+  const query = trpc.cases.get.useQuery(
+    { organizationId: activeOrganizationId || 0, caseId },
+    {
+      enabled: Boolean(
+        activeOrganizationId && caseId && hasPermission("case:read")
+      ),
+    }
+  );
+  const timeline = trpc.cases.timeline.useQuery(
+    { organizationId: activeOrganizationId || 0, caseId },
+    {
+      enabled: Boolean(
+        activeOrganizationId && caseId && hasPermission("case:read")
+      ),
+    }
+  );
+  const createReport = trpc.somaticReports.createDraft.useMutation({
+    onSuccess: result => navigate(`/reports/${result.id}`),
+    onError: error => toast.error(error.message),
+  });
+  if (!hasPermission("case:read"))
+    return (
+      <div className="space-y-7">
+        <PageHeader
+          eyebrow="Case management"
+          title="Cases"
+          description="View clinical cases within the organization boundary."
+        />
+        <StatePanel
+          type="forbidden"
+          title="You do not have permission to view cases"
+          description="Ask your organization administrator for a role that includes the case:read action."
+          action={
+            <Button variant="outline" onClick={() => navigate("/")}>
+              Dashboard
+            </Button>
+          }
+        />
+      </div>
+    );
+  if (query.isLoading)
+    return (
+      <div className="space-y-5">
+        <Skeleton className="h-24" />
+        <Skeleton className="h-80" />
+      </div>
+    );
+  if (query.isError)
+    return (
+      <div className="space-y-7">
+        <PageHeader
+          eyebrow="Case management"
+          title="Case error"
+          description="Unable to verify the requested case and organization access boundary."
+        />
+        <StatePanel
+          type="error"
+          title="Failed to load case"
+          description={query.error.message}
+          onRetry={() => {
+            void query.refetch();
+          }}
+          action={
+            <Button variant="outline" onClick={() => navigate("/cases")}>
+              <ArrowLeft className="mr-2 size-4" />
+              Back
+            </Button>
+          }
+        />
+      </div>
+    );
+  if (!query.data)
+    return (
+      <div className="space-y-7">
+        <PageHeader
+          eyebrow="Case management"
+          title="Case not found"
+          description="Please verify the requested case identifier."
+        />
+        <StatePanel
+          type="empty"
+          title="Case not found"
+          description="Cases that have been deleted or do not belong to the current organization are not shown."
+          action={
+            <Button variant="outline" onClick={() => navigate("/cases")}>
+              <ArrowLeft className="mr-2 size-4" />
+              Back
+            </Button>
+          }
+        />
+      </div>
+    );
   const item = query.data;
   const latestJob = item.jobs[0];
   const waitingForGateway =
     (item.status === "queued" || item.status === "running") &&
-    (item.inputType === "fastq" || latestJob?.pipeline === "gx_exome" || latestJob?.pipeline === "gx_somatic");
-  return <div className="space-y-7"><PageHeader eyebrow={`${item.purpose} · ${item.inputType}`} title={item.caseNumber} description={`${item.patientAlias} · ${item.referenceBuild} · ${item.panelName || "No panel"}`} badge={item.status} actions={<><Button variant="outline" onClick={() => navigate("/cases")}><ArrowLeft className="mr-2 size-4" />Back</Button>{item.variantCount > 0 ? <>{hasPermission("report:draft") ? <Button variant="outline" onClick={() => createReport.mutate({ organizationId: activeOrganizationId!, caseId: item.id })} disabled={createReport.isPending}>Draft report</Button> : null}<Button onClick={() => navigate(`/workbench/${item.id}`)}><FlaskConical className="mr-2 size-4" />{item.variantCount.toLocaleString()} variants</Button></> : null}</>} />
-    {createReport.error ? <StatePanel compact type="error" title="Failed to create report draft" description={createReport.error.message} onRetry={() => createReport.mutate({ organizationId: activeOrganizationId!, caseId: item.id })} /> : null}
-    {waitingForGateway ? <Alert className="border-amber-200 bg-amber-50/65 text-amber-950"><Server className="size-4 text-amber-700" /><AlertTitle>Waiting for Site Gateway</AlertTitle><AlertDescription className="text-amber-800/80">FASTQ / gx_* analysis stays queued or running until a Site Gateway worker authenticated with <span className="font-mono text-[11px]">GVI_GATEWAY_TOKEN</span> claims this job. Completion is not simulated in the web app.</AlertDescription></Alert> : null}
-    <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">{([{ label: "Analysis status", value: <ClinicalStatus status={item.status} />, icon: Dna }, { label: "Variants", value: item.variantCount.toLocaleString(), icon: Database }, { label: "Samples", value: item.samples.length, icon: FlaskConical }, { label: "Files", value: item.files.length, icon: FileArchive }]).map(({ label, value, icon: Icon }) => <Card key={label} className="clinical-card shadow-none"><CardContent className="flex items-center justify-between p-5"><div><p className="text-xs text-muted-foreground">{label}</p><div className="mt-2 text-lg font-semibold">{value}</div></div><Icon className="size-5 text-primary" /></CardContent></Card>)}</section>
-    <section className="grid gap-5 xl:grid-cols-[1.1fr_.9fr]"><Card className="clinical-card shadow-none"><CardHeader><CardTitle className="font-display text-base">Analysis timeline</CardTitle></CardHeader><CardContent className="space-y-0">{timeline.isError ? <StatePanel compact type="error" title="Failed to load timeline" description={timeline.error.message} onRetry={() => { void timeline.refetch(); }} /> : timeline.data?.length ? timeline.data.map((event, index) => <div key={event.id} className="grid grid-cols-[28px_1fr] gap-3"><div className="flex flex-col items-center"><div className={`grid size-7 place-items-center rounded-full ${index === 0 ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}>{index === 0 ? <CheckCircle2 className="size-3.5" /> : <Clock3 className="size-3.5" />}</div>{index < timeline.data.length - 1 ? <div className="h-full w-px bg-border" /> : null}</div><div className="pb-6"><div className="flex flex-wrap items-center gap-2"><ClinicalStatus status={event.status} /><span className="font-mono text-[10px] text-muted-foreground">{event.progressPercent}%</span></div><p className="mt-2 text-sm leading-6">{event.message}</p><p className="mt-1 text-[10px] text-muted-foreground">{formatDateTime(event.createdAt)}</p></div></div>) : <StatePanel compact type="empty" title="No timeline entries" description="Status change history will appear here once analysis begins." />}</CardContent></Card>
-      <div className="space-y-5"><Card className="clinical-card shadow-none"><CardHeader><CardTitle className="font-display text-base">Samples</CardTitle></CardHeader><CardContent className="space-y-3">{item.samples.map(sample => <div key={sample.id} className="flex items-center justify-between rounded-xl border border-border/70 px-4 py-3"><div><p className="font-mono text-xs font-medium">{sample.sampleCode}</p><p className="mt-1 text-[10px] text-muted-foreground">{sample.specimenType}</p></div><span className="text-xs capitalize text-muted-foreground">{sample.role}</span></div>)}</CardContent></Card><Card className="clinical-card shadow-none"><CardHeader><CardTitle className="font-display text-base">Input files</CardTitle></CardHeader><CardContent className="space-y-3">{item.files.map(file => <div key={file.id} className="rounded-xl border border-border/70 px-4 py-3"><div className="flex items-center justify-between gap-3"><p className="truncate text-xs font-medium">{file.fileName}</p><span className="font-mono text-[9px] uppercase text-muted-foreground">{file.kind}</span></div><p className="mt-2 truncate font-mono text-[9px] text-muted-foreground">SHA-256 {file.sha256}</p></div>)}</CardContent></Card></div>
-    </section>
-  </div>;
+    (item.inputType === "fastq" ||
+      latestJob?.pipeline === "gx_exome" ||
+      latestJob?.pipeline === "gx_somatic");
+  return (
+    <div className="space-y-7">
+      <PageHeader
+        eyebrow={`${item.purpose} · ${item.inputType}`}
+        title={item.caseNumber}
+        description={`${item.patientAlias} · ${item.referenceBuild} · ${item.panelName || "No panel"}`}
+        badge={item.status}
+        actions={
+          <>
+            <Button variant="outline" onClick={() => navigate("/cases")}>
+              <ArrowLeft className="mr-2 size-4" />
+              Back
+            </Button>
+            {item.variantCount > 0 ? (
+              <>
+                {item.purpose === "somatic" && hasPermission("report:draft") ? (
+                  <Button
+                    variant="outline"
+                    onClick={() =>
+                      createReport.mutate({
+                        organizationId: activeOrganizationId!,
+                        caseId: item.id,
+                      })
+                    }
+                    disabled={createReport.isPending}
+                  >
+                    Draft Somatic Report
+                  </Button>
+                ) : null}
+                <Button onClick={() => navigate(`/workbench/${item.id}`)}>
+                  <FlaskConical className="mr-2 size-4" />
+                  {item.variantCount.toLocaleString()} variants
+                </Button>
+              </>
+            ) : null}
+          </>
+        }
+      />
+      {createReport.error ? (
+        <StatePanel
+          compact
+          type="error"
+          title="Failed to create report draft"
+          description={createReport.error.message}
+          onRetry={() =>
+            createReport.mutate({
+              organizationId: activeOrganizationId!,
+              caseId: item.id,
+            })
+          }
+        />
+      ) : null}
+      {waitingForGateway ? (
+        <Alert className="border-amber-200 bg-amber-50/65 text-amber-950">
+          <Server className="size-4 text-amber-700" />
+          <AlertTitle>Waiting for Site Gateway</AlertTitle>
+          <AlertDescription className="text-amber-800/80">
+            FASTQ / gx_* analysis stays queued or running until a Site Gateway
+            worker authenticated with{" "}
+            <span className="font-mono text-[11px]">GVI_GATEWAY_TOKEN</span>{" "}
+            claims this job. Completion is not simulated in the web app.
+          </AlertDescription>
+        </Alert>
+      ) : null}
+      <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {[
+          {
+            label: "Analysis status",
+            value: <ClinicalStatus status={item.status} />,
+            icon: Dna,
+          },
+          {
+            label: "Variants",
+            value: item.variantCount.toLocaleString(),
+            icon: Database,
+          },
+          { label: "Samples", value: item.samples.length, icon: FlaskConical },
+          { label: "Files", value: item.files.length, icon: FileArchive },
+        ].map(({ label, value, icon: Icon }) => (
+          <Card key={label} className="clinical-card shadow-none">
+            <CardContent className="flex items-center justify-between p-5">
+              <div>
+                <p className="text-xs text-muted-foreground">{label}</p>
+                <div className="mt-2 text-lg font-semibold">{value}</div>
+              </div>
+              <Icon className="size-5 text-primary" />
+            </CardContent>
+          </Card>
+        ))}
+      </section>
+      <section className="grid gap-5 xl:grid-cols-[1.1fr_.9fr]">
+        <Card className="clinical-card shadow-none">
+          <CardHeader>
+            <CardTitle className="font-display text-base">
+              Analysis timeline
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-0">
+            {timeline.isError ? (
+              <StatePanel
+                compact
+                type="error"
+                title="Failed to load timeline"
+                description={timeline.error.message}
+                onRetry={() => {
+                  void timeline.refetch();
+                }}
+              />
+            ) : timeline.data?.length ? (
+              timeline.data.map((event, index) => (
+                <div key={event.id} className="grid grid-cols-[28px_1fr] gap-3">
+                  <div className="flex flex-col items-center">
+                    <div
+                      className={`grid size-7 place-items-center rounded-full ${index === 0 ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"}`}
+                    >
+                      {index === 0 ? (
+                        <CheckCircle2 className="size-3.5" />
+                      ) : (
+                        <Clock3 className="size-3.5" />
+                      )}
+                    </div>
+                    {index < timeline.data.length - 1 ? (
+                      <div className="h-full w-px bg-border" />
+                    ) : null}
+                  </div>
+                  <div className="pb-6">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <ClinicalStatus status={event.status} />
+                      <span className="font-mono text-[10px] text-muted-foreground">
+                        {event.progressPercent}%
+                      </span>
+                    </div>
+                    <p className="mt-2 text-sm leading-6">{event.message}</p>
+                    <p className="mt-1 text-[10px] text-muted-foreground">
+                      {formatDateTime(event.createdAt)}
+                    </p>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <StatePanel
+                compact
+                type="empty"
+                title="No timeline entries"
+                description="Status change history will appear here once analysis begins."
+              />
+            )}
+          </CardContent>
+        </Card>
+        <div className="space-y-5">
+          <Card className="clinical-card shadow-none">
+            <CardHeader>
+              <CardTitle className="font-display text-base">Samples</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {item.samples.map(sample => (
+                <div
+                  key={sample.id}
+                  className="flex items-center justify-between rounded-xl border border-border/70 px-4 py-3"
+                >
+                  <div>
+                    <p className="font-mono text-xs font-medium">
+                      {sample.sampleCode}
+                    </p>
+                    <p className="mt-1 text-[10px] text-muted-foreground">
+                      {sample.specimenType}
+                    </p>
+                  </div>
+                  <span className="text-xs capitalize text-muted-foreground">
+                    {sample.role}
+                  </span>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+          <Card className="clinical-card shadow-none">
+            <CardHeader>
+              <CardTitle className="font-display text-base">
+                Input files
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {item.files.map(file => (
+                <div
+                  key={file.id}
+                  className="rounded-xl border border-border/70 px-4 py-3"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="truncate text-xs font-medium">
+                      {file.fileName}
+                    </p>
+                    <span className="font-mono text-[9px] uppercase text-muted-foreground">
+                      {file.kind}
+                    </span>
+                  </div>
+                  <p className="mt-2 truncate font-mono text-[9px] text-muted-foreground">
+                    SHA-256 {file.sha256}
+                  </p>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        </div>
+      </section>
+    </div>
+  );
 }

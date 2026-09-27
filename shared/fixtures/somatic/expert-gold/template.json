@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "packVersion": "institution-somatic-gold-v1",
+  "status": "draft",
+  "createdAt": "2026-09-27T00:00:00.000Z",
+  "deidentified": true,
+  "baseline": "AMP_ASCO_CAP_2017",
+  "institutionPolicyVersion": "replace-with-approved-sop-version",
+  "panelVersions": [
+    {
+      "key": "replace-with-panel-key",
+      "manufacturer": "replace-with-manufacturer",
+      "name": "replace-with-panel-name",
+      "version": "replace-with-panel-version",
+      "genomeBuild": "GRCh38",
+      "reportableRegionsArtifactHash": null,
+      "coverageValidationArtifactHash": null
+    }
+  ],
+  "cases": []
+}

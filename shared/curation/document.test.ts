@@ -2,7 +2,11 @@ import { readFileSync, readdirSync } from "fs";
 import path from "path";
 import { describe, expect, it } from "vitest";
 import { moduleDir } from "../moduleDir";
-import { ENGINE_HTML_KEYS, buildCurationSummary, curationDocumentSchema } from "./document";
+import {
+  ENGINE_HTML_KEYS,
+  buildCurationSummary,
+  curationDocumentSchema,
+} from "./document";
 
 /**
  * Cross-language contract conformance.
@@ -19,9 +23,42 @@ import { ENGINE_HTML_KEYS, buildCurationSummary, curationDocumentSchema } from "
 
 const repoRoot = path.resolve(moduleDir(import.meta.url), "..", "..");
 const fixtureDir = path.join(repoRoot, "engine", "tests", "contract_fixtures");
-const schemaPath = path.join(repoRoot, "contracts", "curation-document.v1.json");
+const schemaPath = path.join(
+  repoRoot,
+  "contracts",
+  "curation-document.v1.json"
+);
 
-const fixtures = readdirSync(fixtureDir).filter(name => name.endsWith(".document.json"));
+const fixtures = readdirSync(fixtureDir).filter(name =>
+  name.endsWith(".document.json")
+);
+
+const samVcGolden = [
+  {
+    file: "AMT_c.878-1G_A.document.json",
+    gene: "AMT",
+    classification: "Likely Pathogenic",
+    criteria: ["PVS1_Strong", "PM2", "PP3"],
+  },
+  {
+    file: "DDX39B_c.212-8A_G.document.json",
+    gene: "DDX39B",
+    classification: "VUS",
+    criteria: ["PM2", "PP3"],
+  },
+  {
+    file: "NEB_c.21522+3A_T.document.json",
+    gene: "NEB",
+    classification: "VUS",
+    criteria: ["PM2", "PP3"],
+  },
+  {
+    file: "NLRP3_c.2798G_T.document.json",
+    gene: "NLRP3",
+    classification: "VUS",
+    criteria: ["PM2"],
+  },
+] as const;
 
 describe("CurationDocument v1 contract", () => {
   it("has fixtures generated from the engine regression baselines", () => {
@@ -38,13 +75,32 @@ describe("CurationDocument v1 contract", () => {
     expect(parsed.variant.hgvsC).toBeTruthy();
   });
 
+  it.each(samVcGolden)(
+    "preserves the SAM-VC golden call for $gene",
+    ({ file, gene, classification, criteria }) => {
+      const raw = JSON.parse(readFileSync(path.join(fixtureDir, file), "utf8"));
+      const parsed = curationDocumentSchema.parse(raw);
+
+      expect(parsed.variant.gene).toBe(gene);
+      expect(parsed.acmg.classification?.label).toBe(classification);
+      expect(parsed.acmg.criteria.map(criterion => criterion.code)).toEqual(
+        criteria
+      );
+    }
+  );
+
   it("maps the engine's strength-suffixed PVS1 onto a base code plus strength", () => {
     const raw = JSON.parse(
-      readFileSync(path.join(fixtureDir, "AMT_c.878-1G_A.document.json"), "utf8")
+      readFileSync(
+        path.join(fixtureDir, "AMT_c.878-1G_A.document.json"),
+        "utf8"
+      )
     );
     const parsed = curationDocumentSchema.parse(raw);
 
-    const pvs1 = parsed.acmg.criteria.find(criterion => criterion.code === "PVS1_Strong");
+    const pvs1 = parsed.acmg.criteria.find(
+      criterion => criterion.code === "PVS1_Strong"
+    );
     expect(pvs1).toBeDefined();
     expect(pvs1?.baseCode).toBe("PVS1");
     expect(pvs1?.strength).toBe("strong");
@@ -53,7 +109,10 @@ describe("CurationDocument v1 contract", () => {
 
   it("rejects a document whose criterion carries an unknown strength", () => {
     const raw = JSON.parse(
-      readFileSync(path.join(fixtureDir, "AMT_c.878-1G_A.document.json"), "utf8")
+      readFileSync(
+        path.join(fixtureDir, "AMT_c.878-1G_A.document.json"),
+        "utf8"
+      )
     );
     raw.acmg.criteria[0].strength = "quite_strong";
     expect(() => curationDocumentSchema.parse(raw)).toThrow();
@@ -63,7 +122,10 @@ describe("CurationDocument v1 contract", () => {
     // The pass-through layer exists so SAM-VC's analysis arrives complete. A
     // document that only brought the typed core would silently lose most of it.
     const raw = JSON.parse(
-      readFileSync(path.join(fixtureDir, "AMT_c.878-1G_A.document.json"), "utf8")
+      readFileSync(
+        path.join(fixtureDir, "AMT_c.878-1G_A.document.json"),
+        "utf8"
+      )
     );
     const parsed = curationDocumentSchema.parse(raw);
 
@@ -79,7 +141,10 @@ describe("CurationDocument v1 contract", () => {
     // Engine releases add keys. That must not require a contract change, which is
     // the whole reason the pass-through layer is loosely typed.
     const raw = JSON.parse(
-      readFileSync(path.join(fixtureDir, "AMT_c.878-1G_A.document.json"), "utf8")
+      readFileSync(
+        path.join(fixtureDir, "AMT_c.878-1G_A.document.json"),
+        "utf8"
+      )
     );
     raw.engine.parsedData.some_future_engine_fact = { nested: [1, 2, 3] };
     expect(() => curationDocumentSchema.parse(raw)).not.toThrow();
@@ -91,7 +156,10 @@ describe("CurationDocument v1 contract", () => {
 
   it("rejects a document from a future contract version", () => {
     const raw = JSON.parse(
-      readFileSync(path.join(fixtureDir, "AMT_c.878-1G_A.document.json"), "utf8")
+      readFileSync(
+        path.join(fixtureDir, "AMT_c.878-1G_A.document.json"),
+        "utf8"
+      )
     );
     raw.contractVersion = "2.0";
     expect(() => curationDocumentSchema.parse(raw)).toThrow();
@@ -109,7 +177,10 @@ describe("CurationDocument v1 contract", () => {
 describe("buildCurationSummary", () => {
   it("projects the fields the run list and queries need", () => {
     const raw = JSON.parse(
-      readFileSync(path.join(fixtureDir, "AMT_c.878-1G_A.document.json"), "utf8")
+      readFileSync(
+        path.join(fixtureDir, "AMT_c.878-1G_A.document.json"),
+        "utf8"
+      )
     );
     const summary = buildCurationSummary(curationDocumentSchema.parse(raw));
 

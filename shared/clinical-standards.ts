@@ -38,6 +38,7 @@ export const GERMLINE_CLASSIFICATIONS = [
 ] as const;
 
 export const SOMATIC_TIERS = ["Tier I", "Tier II", "Tier III", "Tier IV"] as const;
+export const AMP_LEVELS = ["A", "B", "C", "D"] as const;
 
 export const ONCOGENICITY_CLASSIFICATIONS = [
   "Oncogenic",
@@ -45,4 +46,5 @@ export const ONCOGENICITY_CLASSIFICATIONS = [
   "VUS",
   "Likely Benign",
   "Benign",
+  "Not Evaluated",
 ] as const;

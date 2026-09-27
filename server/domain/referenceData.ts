@@ -6,7 +6,13 @@ import readline from "node:readline";
 import { createGunzip } from "node:zlib";
 
 export type ReferenceTrack = "G" | "S" | "tool";
-export type ReferenceStatus = "ready" | "missing" | "remote" | "license" | "optional" | "downloading";
+export type ReferenceStatus =
+  | "ready"
+  | "missing"
+  | "remote"
+  | "license"
+  | "optional"
+  | "downloading";
 
 export type GnomadMode = "local" | "myvariant" | "v3.1.2" | "v4.1";
 export type GnomadSelection = "myvariant" | "v3.1.2" | "v4.1";
@@ -85,12 +91,20 @@ export function parseClinvarMode(text: string): ClinvarMode | null {
 
 export function parseGnomadMode(text: string): GnomadMode | null {
   const value = text.trim().toLowerCase();
-  if (value === "local" || value === "myvariant" || value === "v3.1.2" || value === "v4.1") return value;
+  if (
+    value === "local" ||
+    value === "myvariant" ||
+    value === "v3.1.2" ||
+    value === "v4.1"
+  )
+    return value;
   return null;
 }
 
 /** Installed releases the Settings menu can choose. v4 lives beside the v3 directory. */
-export function gnomadReleaseDirectories(v3Dir: string): { release: GnomadSelection; label: string; dir: string }[] {
+export function gnomadReleaseDirectories(
+  v3Dir: string
+): { release: GnomadSelection; label: string; dir: string }[] {
   const root = v3Dir.replace(/\/+$/, "");
   const v4 = root ? path.join(path.dirname(root), "gnomad4") : "";
   return [
@@ -152,19 +166,37 @@ function hasValue(env: EnvMap, key: string): boolean {
   return Boolean((env[key] ?? "").trim());
 }
 
-async function fileInfo(filePath: string): Promise<{ exists: boolean; bytes: number; mtime: Date | null; partial: boolean }> {
+async function fileInfo(
+  filePath: string
+): Promise<{
+  exists: boolean;
+  bytes: number;
+  mtime: Date | null;
+  partial: boolean;
+}> {
   const partialPath = `${filePath}.partial`;
   try {
     const info = await stat(filePath);
     if (info.isFile() && info.size > 0) {
-      return { exists: true, bytes: info.size, mtime: info.mtime, partial: false };
+      return {
+        exists: true,
+        bytes: info.size,
+        mtime: info.mtime,
+        partial: false,
+      };
     }
   } catch {
     // Fall through to the in-progress download marker.
   }
   try {
     const partial = await stat(partialPath);
-    if (partial.isFile()) return { exists: false, bytes: partial.size, mtime: partial.mtime, partial: true };
+    if (partial.isFile())
+      return {
+        exists: false,
+        bytes: partial.size,
+        mtime: partial.mtime,
+        partial: true,
+      };
   } catch {
     // Neither file is present.
   }
@@ -173,8 +205,13 @@ async function fileInfo(filePath: string): Promise<{ exists: boolean; bytes: num
 
 async function readHeader(filePath: string, maxLines: number): Promise<string> {
   const gunzip = filePath.endsWith(".gz");
-  const stream = gunzip ? createReadStream(filePath).pipe(createGunzip()) : createReadStream(filePath);
-  const lines = readline.createInterface({ input: stream, crlfDelay: Infinity });
+  const stream = gunzip
+    ? createReadStream(filePath).pipe(createGunzip())
+    : createReadStream(filePath);
+  const lines = readline.createInterface({
+    input: stream,
+    crlfDelay: Infinity,
+  });
   const collected: string[] = [];
   try {
     for await (const line of lines) {
@@ -193,7 +230,8 @@ async function readHeader(filePath: string, maxLines: number): Promise<string> {
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes < 1024 * 1024 * 1024)
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
@@ -216,9 +254,17 @@ async function localFileSource(
   env: EnvMap
 ): Promise<ReferenceSource> {
   const override = spec.envKey ? (env[spec.envKey] ?? "").trim() : "";
-  const location = override ? expandHome(override) : path.join(root, spec.relativePath);
+  const location = override
+    ? expandHome(override)
+    : path.join(root, spec.relativePath);
   const info = await fileInfo(location);
-  const base = { id: spec.id, name: spec.name, track: spec.track, purpose: spec.purpose, location };
+  const base = {
+    id: spec.id,
+    name: spec.name,
+    track: spec.track,
+    purpose: spec.purpose,
+    location,
+  };
   if (info.partial) {
     return {
       ...base,
@@ -253,7 +299,9 @@ async function localFileSource(
   };
 }
 
-async function listPapers(pdfDir: string): Promise<{ papers: StoredPaper[]; paperCount: number }> {
+async function listPapers(
+  pdfDir: string
+): Promise<{ papers: StoredPaper[]; paperCount: number }> {
   const papers: StoredPaper[] = [];
   let paperCount = 0;
 
@@ -272,7 +320,8 @@ async function listPapers(pdfDir: string): Promise<{ papers: StoredPaper[]; pape
       }
       if (!entry.isFile()) continue;
       const pmid = parsePmid(entry.name);
-      const looksLikeLiterature = Boolean(pmid) || /\.(pdf|txt|xlsx|xls|csv|tsv)$/i.test(entry.name);
+      const looksLikeLiterature =
+        Boolean(pmid) || /\.(pdf|txt|xlsx|xls|csv|tsv)$/i.test(entry.name);
       if (!looksLikeLiterature) continue;
       paperCount += 1;
       if (papers.length >= PAPER_LIST_LIMIT) continue;
@@ -305,7 +354,8 @@ async function indexedGnomadFiles(directory: string): Promise<string[]> {
   }
   const present = new Set(names);
   return names.filter(name => {
-    if (!/gnomad/i.test(name) || !/\.(?:vcf\.gz|vcf\.bgz|bgz)$/i.test(name)) return false;
+    if (!/gnomad/i.test(name) || !/\.(?:vcf\.gz|vcf\.bgz|bgz)$/i.test(name))
+      return false;
     return present.has(`${name}.tbi`) || present.has(`${name}.csi`);
   });
 }
@@ -318,18 +368,33 @@ async function readGnomadMode(dataRoot: string): Promise<GnomadMode | null> {
   }
 }
 
-async function indexedRelease(dir: string, file: string): Promise<{ ready: boolean; version: string | null; count: number; countLabel: string }> {
+async function indexedRelease(
+  dir: string,
+  file: string
+): Promise<{
+  ready: boolean;
+  version: string | null;
+  count: number;
+  countLabel: string;
+}> {
   let names: string[] = [];
   if (file) {
     const body = await fileInfo(file);
-    const indexed = (await fileInfo(`${file}.tbi`)).exists || (await fileInfo(`${file}.csi`)).exists;
+    const indexed =
+      (await fileInfo(`${file}.tbi`)).exists ||
+      (await fileInfo(`${file}.csi`)).exists;
     names = body.exists && indexed ? [path.basename(file)] : [];
   } else if (dir) {
     names = await indexedGnomadFiles(dir);
   }
   const genomes = names.filter(name => /genomes/i.test(name)).length;
   const exomes = names.filter(name => /exomes/i.test(name)).length;
-  const countLabel = [genomes ? `${genomes} genomes` : "", exomes ? `${exomes} exomes` : ""].filter(Boolean).join(" and ");
+  const countLabel = [
+    genomes ? `${genomes} genomes` : "",
+    exomes ? `${exomes} exomes` : "",
+  ]
+    .filter(Boolean)
+    .join(" and ");
   return {
     ready: names.length > 0,
     version: names.map(parseGnomadRelease).find(Boolean) ?? null,
@@ -338,7 +403,10 @@ async function indexedRelease(dir: string, file: string): Promise<{ ready: boole
   };
 }
 
-async function gnomadSource(env: EnvMap, dataRoot: string): Promise<ReferenceSource> {
+async function gnomadSource(
+  env: EnvMap,
+  dataRoot: string
+): Promise<ReferenceSource> {
   const v3Dir = expandHome((env.VC_GNOMAD_DIR ?? "").trim());
   const singleFile = expandHome((env.VC_GNOMAD_PATH ?? "").trim());
   const catalogs = gnomadReleaseDirectories(v3Dir);
@@ -351,21 +419,36 @@ async function gnomadSource(env: EnvMap, dataRoot: string): Promise<ReferenceSou
     remoteLabel: "MyVariant",
   };
   const options: ReferenceLocalOption[] = [];
-  const installed = new Map<GnomadSelection, { ready: boolean; version: string | null; countLabel: string; location: string }>();
+  const installed = new Map<
+    GnomadSelection,
+    {
+      ready: boolean;
+      version: string | null;
+      count: number;
+      countLabel: string;
+      location: string;
+    }
+  >();
   for (const catalog of catalogs) {
     const useFile = catalog.release === "v3.1.2" ? singleFile : "";
     const info = await indexedRelease(useFile ? "" : catalog.dir, useFile);
     const location = useFile || catalog.dir;
     const label = info.version ?? catalog.label;
-    options.push({ value: catalog.release, label, ready: info.ready, location });
+    options.push({
+      value: catalog.release,
+      label,
+      ready: info.ready,
+      location,
+    });
     installed.set(catalog.release, { ...info, location });
   }
   const stored = await readGnomadMode(dataRoot);
-  const choice: GnomadSelection = stored === "v3.1.2" || stored === "v4.1" || stored === "myvariant"
-    ? stored
-    : stored === "local" || options.some(option => option.ready)
-      ? (options.find(option => option.ready)?.value ?? "myvariant")
-      : "myvariant";
+  const choice: GnomadSelection =
+    stored === "v3.1.2" || stored === "v4.1" || stored === "myvariant"
+      ? stored
+      : stored === "local" || options.some(option => option.ready)
+        ? (options.find(option => option.ready)?.value ?? "myvariant")
+        : "myvariant";
   const selected = choice === "myvariant" ? null : installed.get(choice);
   const anyReady = options.some(option => option.ready);
   const selectedDetail = selected?.ready
@@ -378,7 +461,8 @@ async function gnomadSource(env: EnvMap, dataRoot: string): Promise<ReferenceSou
       ...base,
       status: "remote",
       version: "MyVariant",
-      detail: `Frequency comes from MyVariant gnomad_exomes and gnomad_genomes. ${selectedDetail}`.trim(),
+      detail:
+        `Frequency comes from MyVariant gnomad_exomes and gnomad_genomes. ${selectedDetail}`.trim(),
       location: "https://myvariant.info",
       choice,
       localReady: anyReady,
@@ -401,7 +485,10 @@ async function gnomadSource(env: EnvMap, dataRoot: string): Promise<ReferenceSou
   };
 }
 
-async function decorateClinvar(clinvar: ReferenceSource, dataRoot: string): Promise<ReferenceSource> {
+async function decorateClinvar(
+  clinvar: ReferenceSource,
+  dataRoot: string
+): Promise<ReferenceSource> {
   const localReady = clinvar.status === "ready";
   const localVersion = localReady ? clinvar.version : null;
   const stored = await readStoredMode(dataRoot, "clinvar", parseClinvarMode);
@@ -438,7 +525,7 @@ async function decorateClinvar(clinvar: ReferenceSource, dataRoot: string): Prom
 async function readStoredMode<T extends string>(
   dataRoot: string,
   stem: string,
-  parse: (text: string) => T | null,
+  parse: (text: string) => T | null
 ): Promise<T | null> {
   try {
     return parse(await readFile(path.join(dataRoot, `${stem}-source`), "utf8"));
@@ -447,19 +534,28 @@ async function readStoredMode<T extends string>(
   }
 }
 
-async function writeSourceFile(dataRoot: string, stem: string, mode: string): Promise<void> {
+async function writeSourceFile(
+  dataRoot: string,
+  stem: string,
+  mode: string
+): Promise<void> {
   await mkdir(dataRoot, { recursive: true });
   await writeFile(path.join(dataRoot, `${stem}-source`), `${mode}\n`, "utf8");
 }
 
 export async function setClinvarSource(mode: ClinvarMode): Promise<void> {
   const env = await loadEnv();
-  const dataRoot = expandHome((env.VC_DATA_ROOT ?? "").trim() || path.join(os.homedir(), "gvi-data"));
+  const dataRoot = expandHome(
+    (env.VC_DATA_ROOT ?? "").trim() || path.join(os.homedir(), "gvi-data")
+  );
   if (mode === "local") {
     const override = expandHome((env.VC_CLINVAR_PATH ?? "").trim());
-    const file = override || path.join(dataRoot, "reference", "clinvar", "clinvar.vcf.gz");
+    const file =
+      override || path.join(dataRoot, "reference", "clinvar", "clinvar.vcf.gz");
     const body = await fileInfo(file);
-    const indexed = (await fileInfo(`${file}.tbi`)).exists || (await fileInfo(`${file}.csi`)).exists;
+    const indexed =
+      (await fileInfo(`${file}.tbi`)).exists ||
+      (await fileInfo(`${file}.csi`)).exists;
     if (!body.exists || !indexed) {
       throw new Error("No indexed ClinVar VCF is configured.");
     }
@@ -469,7 +565,9 @@ export async function setClinvarSource(mode: ClinvarMode): Promise<void> {
 
 export async function setGnomadSource(mode: GnomadSelection): Promise<void> {
   const env = await loadEnv();
-  const dataRoot = expandHome((env.VC_DATA_ROOT ?? "").trim() || path.join(os.homedir(), "gvi-data"));
+  const dataRoot = expandHome(
+    (env.VC_DATA_ROOT ?? "").trim() || path.join(os.homedir(), "gvi-data")
+  );
   if (mode !== "myvariant") {
     const preview = await gnomadSource(env, dataRoot);
     const option = preview.localOptions?.find(item => item.value === mode);
@@ -483,9 +581,16 @@ export async function setGnomadSource(mode: GnomadSelection): Promise<void> {
 
 export async function inspectReferenceData(): Promise<ReferenceDataStatus> {
   const env = await loadEnv();
-  const dataRoot = expandHome((env.VC_DATA_ROOT ?? "").trim() || path.join(os.homedir(), "gvi-data"));
-  const pdfDir = expandHome((env.VC_PDF_DIR ?? "").trim() || path.join(dataRoot, "pdfs"));
-  const hgmdEnabled = (env.ENGINE_HGMD_ENABLED ?? "true").trim().toLowerCase() !== "false";
+  const dataRoot = expandHome(
+    (env.VC_DATA_ROOT ?? "").trim() || path.join(os.homedir(), "gvi-data")
+  );
+  const pdfDir = expandHome(
+    (env.VC_PDF_DIR ?? "").trim() || path.join(dataRoot, "pdfs")
+  );
+  const hgmdEnabled =
+    (env.ENGINE_HGMD_ENABLED ?? "true").trim().toLowerCase() !== "false";
+  const oncoKbMode = (env.ONCOKB_API_MODE ?? "disabled").trim().toLowerCase();
+  const oncoKbTokenConfigured = hasValue(env, "ONCOKB_API_TOKEN");
 
   const clinvar = await localFileSource(
     {
@@ -536,10 +641,22 @@ export async function inspectReferenceData(): Promise<ReferenceDataStatus> {
     env
   );
   const hgmd: ReferenceSource = !hgmdEnabled
-    ? { ...hgmdFile, status: "license", version: "disabled", detail: "ENGINE_HGMD_ENABLED=false. The commercial file is not mounted." }
+    ? {
+        ...hgmdFile,
+        status: "license",
+        version: "disabled",
+        detail:
+          "ENGINE_HGMD_ENABLED=false. The commercial file is not mounted.",
+      }
     : hgmdFile.status === "ready"
       ? hgmdFile
-      : { ...hgmdFile, status: "license", version: "not installed", detail: "QIAGEN license file is required. There is no public download." };
+      : {
+          ...hgmdFile,
+          status: "license",
+          version: "not installed",
+          detail:
+            "QIAGEN license file is required. There is no public download.",
+        };
 
   const chain = await localFileSource(
     {
@@ -566,7 +683,8 @@ export async function inspectReferenceData(): Promise<ReferenceDataStatus> {
       purpose: "Links only. No automatic ingest.",
       status: "license",
       version: "registration",
-      detail: "OMIM downloads require a registered license. GVI does not store a local copy.",
+      detail:
+        "OMIM downloads require a registered license. GVI does not store a local copy.",
       location: "https://omim.org/downloads",
     },
     {
@@ -575,7 +693,9 @@ export async function inspectReferenceData(): Promise<ReferenceDataStatus> {
       track: "G",
       purpose: "Literature search and ClinVar summaries",
       status: "remote",
-      version: hasValue(env, "NCBI_API_KEY") ? "live, API key set" : "live, anonymous (~3 req/s)",
+      version: hasValue(env, "NCBI_API_KEY")
+        ? "live, API key set"
+        : "live, anonymous (~3 req/s)",
       detail: "Called at curation time. Saved papers are listed below.",
       location: "https://eutils.ncbi.nlm.nih.gov",
     },
@@ -586,7 +706,8 @@ export async function inspectReferenceData(): Promise<ReferenceDataStatus> {
       purpose: "Engine literature search and OA PDFs",
       status: "remote",
       version: "live",
-      detail: "No local database. Open-access PDFs are stored under the literature folder when a curation run downloads them.",
+      detail:
+        "No local database. Open-access PDFs are stored under the literature folder when a curation run downloads them.",
       location: "https://www.ebi.ac.uk/europepmc/webservices/rest",
     },
     {
@@ -626,7 +747,8 @@ export async function inspectReferenceData(): Promise<ReferenceDataStatus> {
       purpose: "Engine splice scores",
       status: "remote",
       version: "live API",
-      detail: "Scores come from the Broad/Illumina API. Local score files are optional.",
+      detail:
+        "Scores come from the Broad/Illumina API. Local score files are optional.",
       location: "https://spliceailookup-api.broadinstitute.org",
     },
     {
@@ -663,23 +785,35 @@ export async function inspectReferenceData(): Promise<ReferenceDataStatus> {
       id: "civic",
       name: "CIViC",
       track: "S",
-      purpose: "GVI AMP evidence, queried live",
-      status: "remote",
-      version: hasValue(env, "CIVIC_API_KEY") ? "live, API key set" : "live, anonymous",
-      detail: "Nightly snapshot ingest is not enabled. Evidence is fetched from the GraphQL API.",
-      location: "https://civicdb.org/api/graphql",
+      purpose: "Version-pinned Somatic evidence",
+      status: "optional",
+      version: "organization-managed offline release",
+      detail: "Clinical Somatic runs do not use live CIViC fallback.",
+      location: "Somatic Governance",
     },
     {
       id: "oncokb",
       name: "OncoKB",
       track: "S",
-      purpose: "GVI AMP tier and oncogenicity",
-      status: hasValue(env, "ONCOKB_TOKEN") ? "remote" : "missing",
-      version: hasValue(env, "ONCOKB_TOKEN") ? "annotate API, token set" : "token required",
-      detail: hasValue(env, "ONCOKB_TOKEN")
-        ? "Annotate calls use the configured academic or commercial token."
-        : "Set ONCOKB_TOKEN. Without it, AMP evidence still runs on CIViC and population AF.",
-      location: "https://www.oncokb.org/api/v1",
+      purpose: "Source-native Somatic evidence (not direct AMP mapping)",
+      status:
+        oncoKbMode === "disabled"
+          ? "optional"
+          : oncoKbMode === "demo" || oncoKbTokenConfigured
+            ? "remote"
+            : "missing",
+      version: `${oncoKbMode} API, token ${
+        oncoKbTokenConfigured ? "configured" : "not configured"
+      }`,
+      detail:
+        oncoKbMode === "research" || oncoKbMode === "demo"
+          ? "Research/demo evidence is blocked from Clinical Report review and signing."
+          : "Commercial use additionally requires provider license and organization policy approval.",
+      location:
+        env.ONCOKB_BASE_URL?.trim() ||
+        (oncoKbMode === "demo"
+          ? "https://demo.oncokb.org"
+          : "https://www.oncokb.org"),
     },
     {
       id: "grch38",
@@ -695,5 +829,11 @@ export async function inspectReferenceData(): Promise<ReferenceDataStatus> {
   ];
 
   const literature = await listPapers(pdfDir);
-  return { dataRoot, pdfDir, sources, papers: literature.papers, paperCount: literature.paperCount };
+  return {
+    dataRoot,
+    pdfDir,
+    sources,
+    papers: literature.papers,
+    paperCount: literature.paperCount,
+  };
 }

@@ -12,9 +12,12 @@ import { workbenchRouter } from "./routers/workbench";
 import { dashboardRouter } from "./routers/dashboard";
 import { reportsRouter } from "./routers/reports";
 import { referenceDataRouter } from "./routers/referenceData";
+import { somaticRouter } from "./routers/somatic";
+import { somaticReportsRouter } from "./routers/somaticReports";
+import { somaticFoundationRouter } from "./routers/somaticFoundation";
 
 export const appRouter = router({
-    // if you need to use socket.io, read and register route in server/_core/index.ts, all api should start with '/api/' so that the gateway can route correctly
+  // if you need to use socket.io, read and register route in server/_core/index.ts, all api should start with '/api/' so that the gateway can route correctly
   system: systemRouter,
   auth: router({
     me: publicProcedure.query(opts => opts.ctx.user),
@@ -36,6 +39,9 @@ export const appRouter = router({
   dashboard: dashboardRouter,
   reports: reportsRouter,
   referenceData: referenceDataRouter,
+  somatic: somaticRouter,
+  somaticReports: somaticReportsRouter,
+  somaticFoundation: somaticFoundationRouter,
 });
 
 export type AppRouter = typeof appRouter;

@@ -62,3 +62,19 @@
 - [x] Re-run TypeScript check, 22 tests, and production build in a process without `GVI_GATEWAY_TOKEN`.
 - [x] Document the local-environment-independent verification result and regenerate the revised source ZIP, SHA-256 checksum, and checkpoint.
 -  [x] Test
+
+## Somatic CDS production readiness
+
+Detailed procedures, validation criteria, and required evidence are maintained in
+[`docs/somatic-production-readiness-todo.md`](docs/somatic-production-readiness-todo.md).
+
+- [ ] Upgrade production, CI, and development environments to Node.js 22 LTS and resolve mandatory dependency advisories.
+- [ ] Configure the approved OncoKB Research account and API secret.
+- [ ] Approve and deploy build-pinned GRCh37/GRCh38 FASTA, `.fai`, version, and SHA-256.
+- [ ] Register and validate each Target Panel BED/JSON artifact by exact version.
+- [ ] Prepare validated coverage and CNV/Fusion/MSI/TMB/HRD artifacts and cutoffs.
+- [ ] Complete and validate the institution's de-identified expert gold set.
+- [ ] Approve the clinical SOP, change-control, reinterpretation, rollback, and amendment procedures.
+- [ ] Publish approved Somatic Clinical Report templates and signing-role policy.
+- [ ] Apply production DB migrations through `0019` and complete backup/restore validation.
+- [ ] Complete OncoKB Commercial licensing and clinical-mode transition when required.

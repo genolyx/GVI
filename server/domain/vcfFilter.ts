@@ -24,12 +24,25 @@ export type VcfFilters = {
   codingOnly: boolean;
 };
 
-export type FilterReason = "filter" | "qual" | "gq" | "depth" | "af" | "impact" | "hpo" | "panel";
+export type FilterReason =
+  | "filter"
+  | "qual"
+  | "gq"
+  | "depth"
+  | "af"
+  | "impact"
+  | "hpo"
+  | "panel";
 
 export type FilteredVcf<T> = {
   total: number;
   kept: T[];
-  classifiable: { gene: string; hgvsC: string; transcript: string | null; hgvsP: string | null }[];
+  classifiable: {
+    gene: string;
+    hgvsC: string;
+    transcript: string | null;
+    hgvsP: string | null;
+  }[];
   dropped: Record<FilterReason, number>;
   missingHgvs: number;
 };
@@ -57,24 +70,51 @@ function alleleFrequency(value: string | null): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function firstFail(variant: FilterableVariant, filters: VcfFilters): FilterReason | null {
-  if (filters.passOnly && variant.callFilter && variant.callFilter !== "PASS") return "filter";
-  if (filters.minQual !== null && variant.siteQuality !== null && variant.siteQuality < filters.minQual) return "qual";
-  if (filters.minGenotypeQuality !== null && variant.genotypeQuality !== null && variant.genotypeQuality < filters.minGenotypeQuality) return "gq";
-  if (filters.minDepth !== null && variant.readDepth !== null && variant.readDepth < filters.minDepth) return "depth";
+function firstFail(
+  variant: FilterableVariant,
+  filters: VcfFilters
+): FilterReason | null {
+  if (filters.passOnly && variant.callFilter && variant.callFilter !== "PASS")
+    return "filter";
+  if (
+    filters.minQual !== null &&
+    variant.siteQuality !== null &&
+    variant.siteQuality < filters.minQual
+  )
+    return "qual";
+  if (
+    filters.minGenotypeQuality !== null &&
+    variant.genotypeQuality !== null &&
+    variant.genotypeQuality < filters.minGenotypeQuality
+  )
+    return "gq";
+  if (
+    filters.minDepth !== null &&
+    variant.readDepth !== null &&
+    variant.readDepth < filters.minDepth
+  )
+    return "depth";
   const af = alleleFrequency(variant.populationAf);
   if (filters.maxAf !== null && af !== null && af > filters.maxAf) return "af";
-  if (filters.codingOnly && (variant.impact === "LOW" || variant.impact === "MODIFIER")) return "impact";
+  if (
+    filters.codingOnly &&
+    (variant.impact === "LOW" || variant.impact === "MODIFIER")
+  )
+    return "impact";
   const gene = (variant.gene || "").toUpperCase();
   if (filters.genes && (!gene || !filters.genes.has(gene))) return "hpo";
-  if (filters.panelGenes && (!gene || !filters.panelGenes.has(gene))) return "panel";
+  if (filters.panelGenes && (!gene || !filters.panelGenes.has(gene)))
+    return "panel";
   return null;
 }
 
-export function applyVcfFilters<T extends FilterableVariant>(variants: T[], filters: VcfFilters): FilteredVcf<T> {
+export function applyVcfFilters<T extends FilterableVariant>(
+  variants: T[],
+  filters: VcfFilters
+): FilteredVcf<T> {
   const dropped = emptyDrops();
   const kept: T[] = [];
-  const classifiable: FilteredVcf["classifiable"] = [];
+  const classifiable: FilteredVcf<T>["classifiable"] = [];
   const seen = new Set<string>();
   let missingHgvs = 0;
   for (const variant of variants) {

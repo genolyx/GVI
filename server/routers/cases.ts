@@ -1,5 +1,5 @@
 import { TRPCError } from "@trpc/server";
-import { and, count, desc, eq, like, or } from "drizzle-orm";
+import { and, asc, count, desc, eq, like, or } from "drizzle-orm";
 import { createHash, randomUUID } from "node:crypto";
 import { gunzipSync } from "node:zlib";
 import { z } from "zod";
@@ -10,6 +10,10 @@ import {
   cases,
   projects,
   samples,
+  somaticCaseContexts,
+  somaticPanels,
+  somaticPanelVersions,
+  somaticTumorTypes,
   variants,
 } from "../../drizzle/schema";
 import { protectedProcedure, router } from "../_core/trpc";
@@ -19,7 +23,12 @@ import { runTriagePass } from "../domain/triagePass";
 import { parseVcf } from "../domain/vcf";
 import { variantReingestSet, variantReingestTarget } from "../domain/vcfIngest";
 import { loadHpoIndex, searchHpoTerms } from "../domain/hpoGenes";
-import { selectVcfRecords, variantInsertRow, vcfFilterSchema, type VcfFilterInput } from "../domain/vcfSelection";
+import {
+  selectVcfRecords,
+  variantInsertRow,
+  vcfFilterSchema,
+  type VcfFilterInput,
+} from "../domain/vcfSelection";
 import { storageCreateUploadUrl, storageGetSignedUrl } from "../storage";
 
 const caseStatus = z.enum([
@@ -39,11 +48,37 @@ const sampleSchema = z.object({
   tumorContentPercent: z.number().min(0).max(100).optional(),
 });
 
+const somaticContextSchema = z.object({
+  tumorTypeId: z.number().int().positive().optional(),
+  panelVersionId: z.number().int().positive().optional(),
+  tumor: z.object({
+    ontologySystem: z.string().trim().min(1).max(40).default("Internal"),
+    ontologyVersion: z.string().trim().min(1).max(80).default("1"),
+    code: z.string().trim().min(1).max(80),
+    label: z.string().trim().min(2).max(255),
+    primarySite: z.string().trim().min(1).max(160),
+    histology: z.string().trim().max(160).optional(),
+  }),
+  panel: z.object({
+    manufacturer: z.string().trim().min(1).max(160),
+    name: z.string().trim().min(1).max(200),
+    version: z.string().trim().min(1).max(80),
+    assayType: z.string().trim().min(1).max(120).default("Targeted DNA panel"),
+  }),
+  histologyText: z.string().trim().max(255).optional(),
+  diseaseStatus: z.string().trim().max(80).optional(),
+  specimenCollectionSite: z.string().trim().min(1).max(160),
+  pairedNormal: z.boolean().default(false),
+});
+
 /** Files at or under this size are ingested synchronously in the submit request. */
 const VCF_SYNC_MAX_BYTES = 15 * 1024 * 1024;
 
 function safeFileName(fileName: string) {
-  return fileName.normalize("NFKC").replace(/[^a-zA-Z0-9._-]+/g, "_").slice(-180);
+  return fileName
+    .normalize("NFKC")
+    .replace(/[^a-zA-Z0-9._-]+/g, "_")
+    .slice(-180);
 }
 
 async function requireCase(organizationId: number, caseId: number) {
@@ -53,7 +88,8 @@ async function requireCase(organizationId: number, caseId: number) {
     .from(cases)
     .where(and(eq(cases.id, caseId), eq(cases.organizationId, organizationId)))
     .limit(1);
-  if (!rows[0]) throw new TRPCError({ code: "NOT_FOUND", message: "Case not found" });
+  if (!rows[0])
+    throw new TRPCError({ code: "NOT_FOUND", message: "Case not found" });
   return rows[0];
 }
 
@@ -69,24 +105,42 @@ async function ingestVcfForJob(params: {
   jobId: number;
   vcfFile: CaseFileRow;
   referenceBuild: "GRCh37" | "GRCh38";
+  purpose: "germline" | "somatic";
   vcfFilters?: VcfFilterInput | null;
 }) {
-  const { organizationId, caseId, jobId, vcfFile, referenceBuild, vcfFilters } = params;
+  const {
+    organizationId,
+    caseId,
+    jobId,
+    vcfFile,
+    referenceBuild,
+    purpose,
+    vcfFilters,
+  } = params;
   const db = await requireDb();
   try {
     const signedUrl = await storageGetSignedUrl(vcfFile.storageKey);
     const response = await fetch(signedUrl);
-    if (!response.ok) throw new Error(`VCF download failed (${response.status})`);
+    if (!response.ok)
+      throw new Error(`VCF download failed (${response.status})`);
     const raw = Buffer.from(await response.arrayBuffer());
     const digest = createHash("sha256").update(raw).digest("hex");
     if (digest !== vcfFile.sha256) throw new Error("VCF checksum mismatch");
-    const text = vcfFile.fileName.endsWith(".gz") ? gunzipSync(raw).toString("utf8") : raw.toString("utf8");
-    const selected = vcfFilters ? await selectVcfRecords(text, referenceBuild, vcfFilters) : null;
-    const parsed = selected ? selected.filtered.kept : parseVcf(text, referenceBuild);
+    const text = vcfFile.fileName.endsWith(".gz")
+      ? gunzipSync(raw).toString("utf8")
+      : raw.toString("utf8");
+    const selected = vcfFilters
+      ? await selectVcfRecords(text, referenceBuild, vcfFilters)
+      : null;
+    const parsed = selected
+      ? selected.filtered.kept
+      : parseVcf(text, referenceBuild);
     if (!parsed.length) {
-      throw new Error(selected
-        ? "No variants passed the HPO, gene list, frequency, and quality filters."
-        : "VCF contains no readable variant records");
+      throw new Error(
+        selected
+          ? "No variants passed the HPO, gene list, frequency, and quality filters."
+          : "VCF contains no readable variant records"
+      );
     }
     const keptNote = selected
       ? ` Kept ${parsed.length.toLocaleString()} of ${selected.parsedCount.toLocaleString()} after HPO, gene list, frequency, and quality filters.`
@@ -107,9 +161,19 @@ async function ingestVcfForJob(params: {
             set: variantReingestSet,
           });
       }
-      await tx.update(analysisJobs).set({ status: "review_ready", progressPercent: 100, completedAt: new Date() }).where(
-        and(eq(analysisJobs.id, jobId), eq(analysisJobs.organizationId, organizationId))
-      );
+      await tx
+        .update(analysisJobs)
+        .set({
+          status: "review_ready",
+          progressPercent: 100,
+          completedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(analysisJobs.id, jobId),
+            eq(analysisJobs.organizationId, organizationId)
+          )
+        );
       await tx.insert(analysisEvents).values({
         organizationId,
         jobId,
@@ -117,20 +181,35 @@ async function ingestVcfForJob(params: {
         message: `Normalized ${parsed.length.toLocaleString()} variant(s) — ready for review.${keptNote}`,
         progressPercent: 100,
       });
-      await tx.update(cases).set({ status: "review_ready" }).where(
-        and(eq(cases.id, caseId), eq(cases.organizationId, organizationId))
-      );
+      await tx
+        .update(cases)
+        .set({ status: "review_ready" })
+        .where(
+          and(eq(cases.id, caseId), eq(cases.organizationId, organizationId))
+        );
     });
-    try {
-      await runTriagePass(organizationId, caseId);
-    } catch (error) {
-      console.warn(`[VCF] triage after ingest failed for case ${caseId}:`, error);
+    if (purpose === "germline") {
+      try {
+        await runTriagePass(organizationId, caseId);
+      } catch (error) {
+        console.warn(
+          `[VCF] germline triage after ingest failed for case ${caseId}:`,
+          error
+        );
+      }
     }
   } catch (error) {
-    const message = error instanceof Error ? error.message : "VCF ingestion failed";
-    await db.update(analysisJobs).set({ status: "failed", errorMessage: message, completedAt: new Date() }).where(
-      and(eq(analysisJobs.id, jobId), eq(analysisJobs.organizationId, organizationId))
-    );
+    const message =
+      error instanceof Error ? error.message : "VCF ingestion failed";
+    await db
+      .update(analysisJobs)
+      .set({ status: "failed", errorMessage: message, completedAt: new Date() })
+      .where(
+        and(
+          eq(analysisJobs.id, jobId),
+          eq(analysisJobs.organizationId, organizationId)
+        )
+      );
     await db.insert(analysisEvents).values({
       organizationId,
       jobId,
@@ -138,13 +217,60 @@ async function ingestVcfForJob(params: {
       message,
       progressPercent: 0,
     });
-    await db.update(cases).set({ status: "failed" }).where(
-      and(eq(cases.id, caseId), eq(cases.organizationId, organizationId))
-    );
+    await db
+      .update(cases)
+      .set({ status: "failed" })
+      .where(
+        and(eq(cases.id, caseId), eq(cases.organizationId, organizationId))
+      );
   }
 }
 
 export const casesRouter = router({
+  somaticCatalog: protectedProcedure
+    .input(z.object({ organizationId: z.number().int().positive() }))
+    .query(async ({ ctx, input }) => {
+      await requireOrganizationPermission(
+        ctx.user.id,
+        input.organizationId,
+        "case:read"
+      );
+      const db = await requireDb();
+      const [tumors, panelVersions] = await Promise.all([
+        db
+          .select()
+          .from(somaticTumorTypes)
+          .where(eq(somaticTumorTypes.active, true))
+          .orderBy(
+            asc(somaticTumorTypes.label),
+            desc(somaticTumorTypes.ontologyVersion)
+          ),
+        db
+          .select({
+            panel: somaticPanels,
+            version: somaticPanelVersions,
+          })
+          .from(somaticPanelVersions)
+          .innerJoin(
+            somaticPanels,
+            and(
+              eq(somaticPanels.id, somaticPanelVersions.panelId),
+              eq(
+                somaticPanels.organizationId,
+                somaticPanelVersions.organizationId
+              )
+            )
+          )
+          .where(eq(somaticPanelVersions.organizationId, input.organizationId))
+          .orderBy(
+            asc(somaticPanels.manufacturer),
+            asc(somaticPanels.name),
+            desc(somaticPanelVersions.version)
+          ),
+      ]);
+      return { tumors, panelVersions };
+    }),
+
   list: protectedProcedure
     .input(
       z.object({
@@ -157,10 +283,15 @@ export const casesRouter = router({
       })
     )
     .query(async ({ ctx, input }) => {
-      await requireOrganizationPermission(ctx.user.id, input.organizationId, "case:read");
+      await requireOrganizationPermission(
+        ctx.user.id,
+        input.organizationId,
+        "case:read"
+      );
       const db = await requireDb();
       const conditions = [eq(cases.organizationId, input.organizationId)];
-      if (input.projectId) conditions.push(eq(cases.projectId, input.projectId));
+      if (input.projectId)
+        conditions.push(eq(cases.projectId, input.projectId));
       if (input.status) conditions.push(eq(cases.status, input.status));
       if (input.purpose) conditions.push(eq(cases.purpose, input.purpose));
       if (input.search) {
@@ -188,7 +319,10 @@ export const casesRouter = router({
         .from(cases)
         .innerJoin(
           projects,
-          and(eq(projects.id, cases.projectId), eq(projects.organizationId, cases.organizationId))
+          and(
+            eq(projects.id, cases.projectId),
+            eq(projects.organizationId, cases.organizationId)
+          )
         )
         .where(and(...conditions))
         .orderBy(desc(cases.updatedAt))
@@ -196,18 +330,123 @@ export const casesRouter = router({
     }),
 
   get: protectedProcedure
-    .input(z.object({ organizationId: z.number().int().positive(), caseId: z.number().int().positive() }))
+    .input(
+      z.object({
+        organizationId: z.number().int().positive(),
+        caseId: z.number().int().positive(),
+      })
+    )
     .query(async ({ ctx, input }) => {
-      await requireOrganizationPermission(ctx.user.id, input.organizationId, "case:read");
-      const clinicalCase = await requireCase(input.organizationId, input.caseId);
+      await requireOrganizationPermission(
+        ctx.user.id,
+        input.organizationId,
+        "case:read"
+      );
+      const clinicalCase = await requireCase(
+        input.organizationId,
+        input.caseId
+      );
       const db = await requireDb();
-      const [sampleRows, fileRows, jobRows, variantCount] = await Promise.all([
-        db.select().from(samples).where(and(eq(samples.organizationId, input.organizationId), eq(samples.caseId, input.caseId))),
-        db.select().from(caseFiles).where(and(eq(caseFiles.organizationId, input.organizationId), eq(caseFiles.caseId, input.caseId))),
-        db.select().from(analysisJobs).where(and(eq(analysisJobs.organizationId, input.organizationId), eq(analysisJobs.caseId, input.caseId))).orderBy(desc(analysisJobs.createdAt)),
-        db.select({ count: count() }).from(variants).where(and(eq(variants.organizationId, input.organizationId), eq(variants.caseId, input.caseId))),
-      ]);
-      return { ...clinicalCase, samples: sampleRows, files: fileRows, jobs: jobRows, variantCount: variantCount[0]?.count || 0 };
+      const [sampleRows, fileRows, jobRows, variantCount, somaticContextRows] =
+        await Promise.all([
+          db
+            .select()
+            .from(samples)
+            .where(
+              and(
+                eq(samples.organizationId, input.organizationId),
+                eq(samples.caseId, input.caseId)
+              )
+            ),
+          db
+            .select()
+            .from(caseFiles)
+            .where(
+              and(
+                eq(caseFiles.organizationId, input.organizationId),
+                eq(caseFiles.caseId, input.caseId)
+              )
+            ),
+          db
+            .select()
+            .from(analysisJobs)
+            .where(
+              and(
+                eq(analysisJobs.organizationId, input.organizationId),
+                eq(analysisJobs.caseId, input.caseId)
+              )
+            )
+            .orderBy(desc(analysisJobs.createdAt)),
+          db
+            .select({ count: count() })
+            .from(variants)
+            .where(
+              and(
+                eq(variants.organizationId, input.organizationId),
+                eq(variants.caseId, input.caseId)
+              )
+            ),
+          db
+            .select({
+              id: somaticCaseContexts.id,
+              histologyText: somaticCaseContexts.histologyText,
+              diseaseStatus: somaticCaseContexts.diseaseStatus,
+              specimenCollectionSite:
+                somaticCaseContexts.specimenCollectionSite,
+              pairedNormal: somaticCaseContexts.pairedNormal,
+              tumorTypeId: somaticTumorTypes.id,
+              tumorCode: somaticTumorTypes.code,
+              tumorLabel: somaticTumorTypes.label,
+              ontologySystem: somaticTumorTypes.ontologySystem,
+              ontologyVersion: somaticTumorTypes.ontologyVersion,
+              primarySite: somaticTumorTypes.primarySite,
+              panelVersionId: somaticPanelVersions.id,
+              panelVersion: somaticPanelVersions.version,
+              panelName: somaticPanels.name,
+              panelManufacturer: somaticPanels.manufacturer,
+              assayType: somaticPanelVersions.assayType,
+            })
+            .from(somaticCaseContexts)
+            .innerJoin(
+              somaticTumorTypes,
+              eq(somaticTumorTypes.id, somaticCaseContexts.primaryTumorTypeId)
+            )
+            .innerJoin(
+              somaticPanelVersions,
+              and(
+                eq(somaticPanelVersions.id, somaticCaseContexts.panelVersionId),
+                eq(
+                  somaticPanelVersions.organizationId,
+                  somaticCaseContexts.organizationId
+                )
+              )
+            )
+            .innerJoin(
+              somaticPanels,
+              and(
+                eq(somaticPanels.id, somaticPanelVersions.panelId),
+                eq(
+                  somaticPanels.organizationId,
+                  somaticPanelVersions.organizationId
+                )
+              )
+            )
+            .where(
+              and(
+                eq(somaticCaseContexts.organizationId, input.organizationId),
+                eq(somaticCaseContexts.caseId, input.caseId)
+              )
+            )
+            .limit(1),
+        ]);
+      return {
+        ...clinicalCase,
+        samples: sampleRows,
+        files: fileRows,
+        jobs: jobRows,
+        variantCount: variantCount[0]?.count || 0,
+        somaticContext: somaticContextRows[0] ?? null,
+      };
     }),
 
   create: protectedProcedure
@@ -223,6 +462,7 @@ export const casesRouter = router({
         panelName: z.string().trim().max(160).optional(),
         indication: z.string().trim().max(4000).optional(),
         phenotypeText: z.string().trim().max(4000).optional(),
+        somaticContext: somaticContextSchema.optional(),
         consentClinicalAnalysis: z.literal(true),
         consentSecondaryFindings: z.boolean().default(false),
         consentDataUse: z.boolean().default(false),
@@ -230,43 +470,249 @@ export const casesRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      await requireOrganizationPermission(ctx.user.id, input.organizationId, "case:create");
+      await requireOrganizationPermission(
+        ctx.user.id,
+        input.organizationId,
+        "case:create"
+      );
+      if (input.purpose === "somatic" && !input.somaticContext) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message:
+            "Somatic cases require a coded primary tumor and target panel version.",
+        });
+      }
+      if (input.purpose === "germline" && input.somaticContext) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message:
+            "Somatic tumor and panel context cannot be attached to a germline case.",
+        });
+      }
       const db = await requireDb();
       const project = await db
         .select({ id: projects.id })
         .from(projects)
-        .where(and(eq(projects.id, input.projectId), eq(projects.organizationId, input.organizationId), eq(projects.status, "active")))
+        .where(
+          and(
+            eq(projects.id, input.projectId),
+            eq(projects.organizationId, input.organizationId),
+            eq(projects.status, "active")
+          )
+        )
         .limit(1);
-      if (!project[0]) throw new TRPCError({ code: "NOT_FOUND", message: "Project not found" });
+      if (!project[0])
+        throw new TRPCError({
+          code: "NOT_FOUND",
+          message: "Project not found",
+        });
       const { caseId, sampleIds } = await db.transaction(async tx => {
-        const result = await tx.insert(cases).values({
-          organizationId: input.organizationId,
-          projectId: input.projectId,
-          caseNumber: input.caseNumber,
-          patientAlias: input.patientAlias,
-          purpose: input.purpose,
-          inputType: input.inputType,
-          referenceBuild: input.referenceBuild,
-          panelName: input.panelName || null,
-          indication: input.indication || null,
-          phenotypeText: input.phenotypeText || null,
-          consentClinicalAnalysis: input.consentClinicalAnalysis,
-          consentSecondaryFindings: input.consentSecondaryFindings,
-          consentDataUse: input.consentDataUse,
-          createdBy: ctx.user.id,
-        }).returning({ id: cases.id });
+        let tumorTypeId: number | null = null;
+        let panelVersionId: number | null = null;
+        if (input.somaticContext) {
+          if (input.somaticContext.tumorTypeId) {
+            const selected = await tx
+              .select({ id: somaticTumorTypes.id })
+              .from(somaticTumorTypes)
+              .where(
+                and(
+                  eq(somaticTumorTypes.id, input.somaticContext.tumorTypeId),
+                  eq(somaticTumorTypes.active, true)
+                )
+              )
+              .limit(1);
+            if (!selected[0]) {
+              throw new TRPCError({
+                code: "BAD_REQUEST",
+                message: "The selected tumor concept is unavailable.",
+              });
+            }
+            tumorTypeId = selected[0].id;
+          } else {
+            const tumorRows = await tx
+              .insert(somaticTumorTypes)
+              .values({
+                ontologySystem: input.somaticContext.tumor.ontologySystem,
+                ontologyVersion: input.somaticContext.tumor.ontologyVersion,
+                code: input.somaticContext.tumor.code,
+                label: input.somaticContext.tumor.label,
+                primarySite: input.somaticContext.tumor.primarySite,
+                histology: input.somaticContext.tumor.histology || null,
+              })
+              .onConflictDoNothing()
+              .returning({ id: somaticTumorTypes.id });
+            if (tumorRows[0]) {
+              tumorTypeId = tumorRows[0].id;
+            } else {
+              const existing = await tx
+                .select({ id: somaticTumorTypes.id })
+                .from(somaticTumorTypes)
+                .where(
+                  and(
+                    eq(
+                      somaticTumorTypes.ontologySystem,
+                      input.somaticContext.tumor.ontologySystem
+                    ),
+                    eq(
+                      somaticTumorTypes.ontologyVersion,
+                      input.somaticContext.tumor.ontologyVersion
+                    ),
+                    eq(somaticTumorTypes.code, input.somaticContext.tumor.code)
+                  )
+                )
+                .limit(1);
+              tumorTypeId = existing[0]?.id ?? null;
+            }
+          }
+          if (input.somaticContext.panelVersionId) {
+            const selected = await tx
+              .select({ id: somaticPanelVersions.id })
+              .from(somaticPanelVersions)
+              .where(
+                and(
+                  eq(
+                    somaticPanelVersions.id,
+                    input.somaticContext.panelVersionId
+                  ),
+                  eq(somaticPanelVersions.organizationId, input.organizationId),
+                  eq(somaticPanelVersions.genomeBuild, input.referenceBuild)
+                )
+              )
+              .limit(1);
+            if (!selected[0]) {
+              throw new TRPCError({
+                code: "BAD_REQUEST",
+                message:
+                  "The selected panel version is unavailable or uses a different genome build.",
+              });
+            }
+            panelVersionId = selected[0].id;
+          } else {
+            const panelRows = await tx
+              .insert(somaticPanels)
+              .values({
+                organizationId: input.organizationId,
+                manufacturer: input.somaticContext.panel.manufacturer,
+                name: input.somaticContext.panel.name,
+                createdBy: ctx.user.id,
+              })
+              .onConflictDoUpdate({
+                target: [
+                  somaticPanels.organizationId,
+                  somaticPanels.manufacturer,
+                  somaticPanels.name,
+                ],
+                set: { updatedAt: new Date() },
+              })
+              .returning({ id: somaticPanels.id });
+            const panelVersionRows = await tx
+              .insert(somaticPanelVersions)
+              .values({
+                organizationId: input.organizationId,
+                panelId: panelRows[0].id,
+                version: input.somaticContext.panel.version,
+                genomeBuild: input.referenceBuild,
+                assayType: input.somaticContext.panel.assayType,
+                capabilities: {
+                  snvIndel: true,
+                  cnv: false,
+                  fusion: false,
+                  msi: false,
+                  tmb: false,
+                  hrd: false,
+                },
+              })
+              .onConflictDoNothing()
+              .returning({ id: somaticPanelVersions.id });
+            if (panelVersionRows[0]) {
+              panelVersionId = panelVersionRows[0].id;
+            } else {
+              const existing = await tx
+                .select({ id: somaticPanelVersions.id })
+                .from(somaticPanelVersions)
+                .where(
+                  and(
+                    eq(
+                      somaticPanelVersions.organizationId,
+                      input.organizationId
+                    ),
+                    eq(somaticPanelVersions.panelId, panelRows[0].id),
+                    eq(
+                      somaticPanelVersions.version,
+                      input.somaticContext.panel.version
+                    )
+                  )
+                )
+                .limit(1);
+              panelVersionId = existing[0]?.id ?? null;
+            }
+          }
+          if (!tumorTypeId || !panelVersionId) {
+            throw new TRPCError({
+              code: "INTERNAL_SERVER_ERROR",
+              message: "Somatic tumor or panel catalog resolution failed.",
+            });
+          }
+        }
+        const result = await tx
+          .insert(cases)
+          .values({
+            organizationId: input.organizationId,
+            projectId: input.projectId,
+            caseNumber: input.caseNumber,
+            patientAlias: input.patientAlias,
+            purpose: input.purpose,
+            inputType: input.inputType,
+            referenceBuild: input.referenceBuild,
+            panelName:
+              input.purpose === "somatic" && input.somaticContext
+                ? `${input.somaticContext.panel.manufacturer} ${input.somaticContext.panel.name} ${input.somaticContext.panel.version}`
+                : input.panelName || null,
+            indication: input.indication || null,
+            phenotypeText: input.phenotypeText || null,
+            consentClinicalAnalysis: input.consentClinicalAnalysis,
+            consentSecondaryFindings: input.consentSecondaryFindings,
+            consentDataUse: input.consentDataUse,
+            createdBy: ctx.user.id,
+          })
+          .returning({ id: cases.id });
         const id = result[0].id;
-        const sampleResult = await tx.insert(samples).values(
-          input.samples.map(sample => ({
+        if (input.somaticContext && tumorTypeId && panelVersionId) {
+          await tx.insert(somaticCaseContexts).values({
             organizationId: input.organizationId,
             caseId: id,
-            sampleCode: sample.sampleCode,
-            role: sample.role,
-            specimenType: sample.specimenType,
-            tumorContentPercent:
-              sample.tumorContentPercent === undefined ? null : String(sample.tumorContentPercent),
-          }))
-        ).returning({ id: samples.id });
+            primaryTumorTypeId: tumorTypeId,
+            panelVersionId,
+            histologyText: input.somaticContext.histologyText || null,
+            diseaseStatus: input.somaticContext.diseaseStatus || null,
+            specimenCollectionSite: input.somaticContext.specimenCollectionSite,
+            pairedNormal: input.somaticContext.pairedNormal,
+            mappingProvenance: {
+              method: input.somaticContext.tumorTypeId
+                ? "catalog_selected"
+                : "manual_concept_created",
+              tumorTypeId,
+              panelVersionId,
+              selectedAt: new Date().toISOString(),
+            },
+          });
+        }
+        const sampleResult = await tx
+          .insert(samples)
+          .values(
+            input.samples.map(sample => ({
+              organizationId: input.organizationId,
+              caseId: id,
+              sampleCode: sample.sampleCode,
+              role: sample.role,
+              specimenType: sample.specimenType,
+              tumorContentPercent:
+                sample.tumorContentPercent === undefined
+                  ? null
+                  : String(sample.tumorContentPercent),
+            }))
+          )
+          .returning({ id: samples.id });
         return { caseId: id, sampleIds: sampleResult.map(row => row.id) };
       });
       await writeAuditEvent({
@@ -275,7 +721,11 @@ export const casesRouter = router({
         action: "case.created",
         entityType: "case",
         entityId: caseId,
-        after: { caseNumber: input.caseNumber, purpose: input.purpose, inputType: input.inputType },
+        after: {
+          caseNumber: input.caseNumber,
+          purpose: input.purpose,
+          inputType: input.inputType,
+        },
         req: ctx.req,
       });
       return { id: caseId, sampleIds };
@@ -287,22 +737,55 @@ export const casesRouter = router({
         organizationId: z.number().int().positive(),
         caseId: z.number().int().positive(),
         sampleId: z.number().int().positive().optional(),
-        kind: z.enum(["vcf", "fastq_r1", "fastq_r2", "bam", "bai", "other"]),
+        kind: z.enum([
+          "vcf",
+          "fastq_r1",
+          "fastq_r2",
+          "bam",
+          "bai",
+          "report",
+          "panel_bed",
+          "coverage",
+          "assay_result",
+          "other",
+        ]),
         fileName: z.string().trim().min(1).max(255),
       })
     )
     .mutation(async ({ ctx, input }) => {
-      await requireOrganizationPermission(ctx.user.id, input.organizationId, "file:upload");
-      const clinicalCase = await requireCase(input.organizationId, input.caseId);
+      await requireOrganizationPermission(
+        ctx.user.id,
+        input.organizationId,
+        "file:upload"
+      );
+      const clinicalCase = await requireCase(
+        input.organizationId,
+        input.caseId
+      );
       if (clinicalCase.status !== "draft") {
-        throw new TRPCError({ code: "CONFLICT", message: "Files can only be added to a draft case" });
+        throw new TRPCError({
+          code: "CONFLICT",
+          message: "Files can only be added to a draft case",
+        });
       }
       if (input.sampleId) {
         const db = await requireDb();
-        const sample = await db.select({ id: samples.id }).from(samples).where(
-          and(eq(samples.id, input.sampleId), eq(samples.organizationId, input.organizationId), eq(samples.caseId, input.caseId))
-        ).limit(1);
-        if (!sample[0]) throw new TRPCError({ code: "NOT_FOUND", message: "Sample not found" });
+        const sample = await db
+          .select({ id: samples.id })
+          .from(samples)
+          .where(
+            and(
+              eq(samples.id, input.sampleId),
+              eq(samples.organizationId, input.organizationId),
+              eq(samples.caseId, input.caseId)
+            )
+          )
+          .limit(1);
+        if (!sample[0])
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: "Sample not found",
+          });
       }
       const key = `organizations/${input.organizationId}/cases/${input.caseId}/files/${randomUUID()}-${safeFileName(input.fileName)}`;
       return storageCreateUploadUrl(key);
@@ -325,33 +808,52 @@ export const casesRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      await requireOrganizationPermission(ctx.user.id, input.organizationId, "file:upload");
-      const clinicalCase = await requireCase(input.organizationId, input.caseId);
+      await requireOrganizationPermission(
+        ctx.user.id,
+        input.organizationId,
+        "file:upload"
+      );
+      const clinicalCase = await requireCase(
+        input.organizationId,
+        input.caseId
+      );
       if (clinicalCase.status !== "draft") {
-        throw new TRPCError({ code: "CONFLICT", message: "Files can only be added to a draft case" });
+        throw new TRPCError({
+          code: "CONFLICT",
+          message: "Files can only be added to a draft case",
+        });
       }
       const requiredPrefix = `organizations/${input.organizationId}/cases/${input.caseId}/files/`;
       const publicBase = (process.env.AWS_PUBLIC_URL ?? "").replace(/\/+$/, "");
       const expectedAccessUrl = publicBase
         ? `${publicBase}/${input.storageKey}`
         : `/storage/${input.storageKey}`;
-      if (!input.storageKey.startsWith(requiredPrefix) || input.accessUrl !== expectedAccessUrl) {
-        throw new TRPCError({ code: "BAD_REQUEST", message: "Storage path is outside the case boundary" });
+      if (
+        !input.storageKey.startsWith(requiredPrefix) ||
+        input.accessUrl !== expectedAccessUrl
+      ) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Storage path is outside the case boundary",
+        });
       }
       const db = await requireDb();
-      const result = await db.insert(caseFiles).values({
-        organizationId: input.organizationId,
-        caseId: input.caseId,
-        sampleId: input.sampleId || null,
-        kind: input.kind,
-        fileName: input.fileName,
-        storageKey: input.storageKey,
-        storageUrl: input.accessUrl,
-        mimeType: input.mimeType,
-        byteSize: input.byteSize,
-        sha256: input.sha256.toLowerCase(),
-        uploadedBy: ctx.user.id,
-      }).returning({ id: caseFiles.id });
+      const result = await db
+        .insert(caseFiles)
+        .values({
+          organizationId: input.organizationId,
+          caseId: input.caseId,
+          sampleId: input.sampleId || null,
+          kind: input.kind,
+          fileName: input.fileName,
+          storageKey: input.storageKey,
+          storageUrl: input.accessUrl,
+          mimeType: input.mimeType,
+          byteSize: input.byteSize,
+          sha256: input.sha256.toLowerCase(),
+          uploadedBy: ctx.user.id,
+        })
+        .returning({ id: caseFiles.id });
       const id = result[0].id;
       await writeAuditEvent({
         organizationId: input.organizationId,
@@ -359,7 +861,12 @@ export const casesRouter = router({
         action: "file.uploaded",
         entityType: "case_file",
         entityId: id,
-        after: { caseId: input.caseId, kind: input.kind, fileName: input.fileName, sha256: input.sha256 },
+        after: {
+          caseId: input.caseId,
+          kind: input.kind,
+          fileName: input.fileName,
+          sha256: input.sha256,
+        },
         req: ctx.req,
       });
       return { id };
@@ -374,14 +881,26 @@ export const casesRouter = router({
     }),
 
   previewVcf: protectedProcedure
-    .input(z.object({
-      organizationId: z.number().int().positive(),
-      vcfText: z.string().min(1).max(20_000_000),
-      referenceBuild: z.enum(["GRCh37", "GRCh38"]),
-    }).merge(vcfFilterSchema))
+    .input(
+      z
+        .object({
+          organizationId: z.number().int().positive(),
+          vcfText: z.string().min(1).max(20_000_000),
+          referenceBuild: z.enum(["GRCh37", "GRCh38"]),
+        })
+        .merge(vcfFilterSchema)
+    )
     .mutation(async ({ ctx, input }) => {
-      await requireOrganizationPermission(ctx.user.id, input.organizationId, "case:create");
-      const result = await selectVcfRecords(input.vcfText, input.referenceBuild, input);
+      await requireOrganizationPermission(
+        ctx.user.id,
+        input.organizationId,
+        "case:create"
+      );
+      const result = await selectVcfRecords(
+        input.vcfText,
+        input.referenceBuild,
+        input
+      );
       return {
         parsedCount: result.parsedCount,
         truncated: result.truncated,
@@ -399,54 +918,123 @@ export const casesRouter = router({
     }),
 
   submit: protectedProcedure
-    .input(z.object({
-      organizationId: z.number().int().positive(),
-      caseId: z.number().int().positive(),
-      vcfFilters: vcfFilterSchema.optional(),
-    }))
+    .input(
+      z.object({
+        organizationId: z.number().int().positive(),
+        caseId: z.number().int().positive(),
+        vcfFilters: vcfFilterSchema.optional(),
+      })
+    )
     .mutation(async ({ ctx, input }) => {
-      await requireOrganizationPermission(ctx.user.id, input.organizationId, "case:edit");
-      const clinicalCase = await requireCase(input.organizationId, input.caseId);
-      if (clinicalCase.status !== "draft") throw new TRPCError({ code: "CONFLICT", message: "Case is already submitted" });
-      const db = await requireDb();
-      const files = await db.select().from(caseFiles).where(
-        and(eq(caseFiles.organizationId, input.organizationId), eq(caseFiles.caseId, input.caseId))
+      await requireOrganizationPermission(
+        ctx.user.id,
+        input.organizationId,
+        "case:edit"
       );
+      const clinicalCase = await requireCase(
+        input.organizationId,
+        input.caseId
+      );
+      if (clinicalCase.status !== "draft")
+        throw new TRPCError({
+          code: "CONFLICT",
+          message: "Case is already submitted",
+        });
+      const db = await requireDb();
+      if (clinicalCase.purpose === "somatic") {
+        if (clinicalCase.inputType !== "vcf") {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message:
+              "Somatic Phase 1 interpretation accepts target-panel VCF input only.",
+          });
+        }
+        const context = await db
+          .select({ id: somaticCaseContexts.id })
+          .from(somaticCaseContexts)
+          .where(
+            and(
+              eq(somaticCaseContexts.organizationId, input.organizationId),
+              eq(somaticCaseContexts.caseId, input.caseId)
+            )
+          )
+          .limit(1);
+        if (!context[0]) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message:
+              "Somatic interpretation requires primary tumor and target panel context.",
+          });
+        }
+      }
+      const files = await db
+        .select()
+        .from(caseFiles)
+        .where(
+          and(
+            eq(caseFiles.organizationId, input.organizationId),
+            eq(caseFiles.caseId, input.caseId)
+          )
+        );
       const kinds = new Set(files.map(file => file.kind));
       if (clinicalCase.inputType === "vcf" && !kinds.has("vcf")) {
-        throw new TRPCError({ code: "BAD_REQUEST", message: "A VCF file is required" });
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "A VCF file is required",
+        });
       }
-      if (clinicalCase.inputType === "fastq" && (!kinds.has("fastq_r1") || !kinds.has("fastq_r2"))) {
-        throw new TRPCError({ code: "BAD_REQUEST", message: "Paired FASTQ R1 and R2 files are required" });
+      if (
+        clinicalCase.inputType === "fastq" &&
+        (!kinds.has("fastq_r1") || !kinds.has("fastq_r2"))
+      ) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Paired FASTQ R1 and R2 files are required",
+        });
       }
       const idempotencyKey = randomUUID();
-      const pipeline = clinicalCase.inputType === "vcf"
-        ? "vcf_ingest"
-        : clinicalCase.purpose === "germline" ? "gx_exome" : "gx_somatic";
+      const pipeline =
+        clinicalCase.inputType === "vcf"
+          ? "vcf_ingest"
+          : clinicalCase.purpose === "germline"
+            ? "gx_exome"
+            : "gx_somatic";
       const manifest = {
         schemaVersion: "1.0",
-        serviceCode: clinicalCase.inputType === "vcf"
-          ? "gvi_vcf_ingest"
-          : clinicalCase.purpose === "germline" ? "gx_exome" : "gx_somatic",
+        serviceCode:
+          clinicalCase.inputType === "vcf"
+            ? "gvi_vcf_ingest"
+            : clinicalCase.purpose === "germline"
+              ? "gx_exome"
+              : "gx_somatic",
         organizationId: input.organizationId,
         caseId: input.caseId,
         purpose: clinicalCase.purpose,
         referenceBuild: clinicalCase.referenceBuild,
         panelName: clinicalCase.panelName,
-        files: files.map(file => ({ id: file.id, kind: file.kind, storageKey: file.storageKey, sha256: file.sha256 })),
-        vcfFilters: clinicalCase.inputType === "vcf" ? input.vcfFilters ?? null : null,
+        files: files.map(file => ({
+          id: file.id,
+          kind: file.kind,
+          storageKey: file.storageKey,
+          sha256: file.sha256,
+        })),
+        vcfFilters:
+          clinicalCase.inputType === "vcf" ? (input.vcfFilters ?? null) : null,
       };
       const jobId = await db.transaction(async tx => {
-        const result = await tx.insert(analysisJobs).values({
-          organizationId: input.organizationId,
-          caseId: input.caseId,
-          pipeline,
-          status: "queued",
-          progressPercent: 0,
-          idempotencyKey,
-          manifest,
-          createdBy: ctx.user.id,
-        }).returning({ id: analysisJobs.id });
+        const result = await tx
+          .insert(analysisJobs)
+          .values({
+            organizationId: input.organizationId,
+            caseId: input.caseId,
+            pipeline,
+            status: "queued",
+            progressPercent: 0,
+            idempotencyKey,
+            manifest,
+            createdBy: ctx.user.id,
+          })
+          .returning({ id: analysisJobs.id });
         const id = result[0].id;
         await tx.insert(analysisEvents).values({
           organizationId: input.organizationId,
@@ -455,11 +1043,22 @@ export const casesRouter = router({
           message: "Analysis request securely queued.",
           progressPercent: 0,
         });
-        const cas = await tx.update(cases).set({ status: "queued" }).where(
-          and(eq(cases.id, input.caseId), eq(cases.organizationId, input.organizationId), eq(cases.status, "draft"))
-        ).returning({ id: cases.id });
+        const cas = await tx
+          .update(cases)
+          .set({ status: "queued" })
+          .where(
+            and(
+              eq(cases.id, input.caseId),
+              eq(cases.organizationId, input.organizationId),
+              eq(cases.status, "draft")
+            )
+          )
+          .returning({ id: cases.id });
         if (cas.length !== 1) {
-          throw new TRPCError({ code: "CONFLICT", message: "Case is already submitted" });
+          throw new TRPCError({
+            code: "CONFLICT",
+            message: "Case is already submitted",
+          });
         }
         return id;
       });
@@ -472,13 +1071,18 @@ export const casesRouter = router({
           jobId,
           vcfFile,
           referenceBuild: clinicalCase.referenceBuild,
+          purpose: clinicalCase.purpose,
           vcfFilters: input.vcfFilters ?? null,
         };
         if (vcfFile.byteSize <= VCF_SYNC_MAX_BYTES) {
           await ingestVcfForJob(ingestArgs);
         } else {
           void ingestVcfForJob(ingestArgs).catch(error => {
-            console.error("[vcf_ingest] background ingest failed", { caseId: input.caseId, jobId, error });
+            console.error("[vcf_ingest] background ingest failed", {
+              caseId: input.caseId,
+              jobId,
+              error,
+            });
           });
         }
       }
@@ -489,16 +1093,29 @@ export const casesRouter = router({
         action: "case.submitted",
         entityType: "analysis_job",
         entityId: jobId,
-        after: { caseId: input.caseId, pipeline: manifest.serviceCode, idempotencyKey },
+        after: {
+          caseId: input.caseId,
+          pipeline: manifest.serviceCode,
+          idempotencyKey,
+        },
         req: ctx.req,
       });
       return { jobId };
     }),
 
   timeline: protectedProcedure
-    .input(z.object({ organizationId: z.number().int().positive(), caseId: z.number().int().positive() }))
+    .input(
+      z.object({
+        organizationId: z.number().int().positive(),
+        caseId: z.number().int().positive(),
+      })
+    )
     .query(async ({ ctx, input }) => {
-      await requireOrganizationPermission(ctx.user.id, input.organizationId, "case:read");
+      await requireOrganizationPermission(
+        ctx.user.id,
+        input.organizationId,
+        "case:read"
+      );
       await requireCase(input.organizationId, input.caseId);
       const db = await requireDb();
       return db
@@ -513,9 +1130,17 @@ export const casesRouter = router({
         .from(analysisEvents)
         .innerJoin(
           analysisJobs,
-          and(eq(analysisJobs.id, analysisEvents.jobId), eq(analysisJobs.organizationId, analysisEvents.organizationId))
+          and(
+            eq(analysisJobs.id, analysisEvents.jobId),
+            eq(analysisJobs.organizationId, analysisEvents.organizationId)
+          )
         )
-        .where(and(eq(analysisEvents.organizationId, input.organizationId), eq(analysisJobs.caseId, input.caseId)))
+        .where(
+          and(
+            eq(analysisEvents.organizationId, input.organizationId),
+            eq(analysisJobs.caseId, input.caseId)
+          )
+        )
         .orderBy(desc(analysisEvents.createdAt));
     }),
 });

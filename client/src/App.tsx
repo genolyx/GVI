@@ -11,16 +11,20 @@ import CasesPage from "./pages/Cases";
 import NewCasePage from "./pages/NewCase";
 import CaseDetailPage from "./pages/CaseDetail";
 import WorkbenchPage from "./pages/Workbench";
+import WorkbenchLandingPage from "./pages/WorkbenchLanding";
 import WorkbenchHomePage from "./pages/workbench/WorkbenchHome";
+import SomaticWorkbenchHomePage from "./pages/workbench/SomaticWorkbenchHome";
 import BatchPage from "./pages/workbench/BatchPage";
 import BatchReviewPage from "./pages/workbench/BatchReviewPage";
 import ReportsPage from "./pages/Reports";
-import ReportEditorPage from "./pages/ReportEditor";
+import ClinicalReportPage from "./pages/ClinicalReport";
 import OrganizationPage from "./pages/Organization";
 import InviteAcceptPage from "./pages/InviteAccept";
 import AuditLogPage from "./pages/AuditLog";
 import SecurityConsolePage from "./pages/SecurityConsole";
 import SettingsPage from "./pages/Settings";
+import SomaticReportTemplatesPage from "./pages/SomaticReportTemplates";
+import SomaticGovernancePage from "./pages/SomaticGovernance";
 
 function Router() {
   // make sure to consider if you need authentication for certain routes
@@ -31,12 +35,22 @@ function Router() {
       <Route path={"/cases"} component={CasesPage} />
       <Route path={"/cases/new"} component={NewCasePage} />
       <Route path={"/cases/:id"} component={CaseDetailPage} />
-      <Route path={"/workbench"} component={WorkbenchHomePage} />
-      <Route path={"/workbench/batches/:batchId/review/:runId"} component={BatchReviewPage} />
+      <Route path={"/workbench"} component={WorkbenchLandingPage} />
+      <Route path={"/workbench/germline"} component={WorkbenchHomePage} />
+      <Route path={"/workbench/somatic"} component={SomaticWorkbenchHomePage} />
+      <Route path={"/somatic-governance"} component={SomaticGovernancePage} />
+      <Route
+        path={"/workbench/batches/:batchId/review/:runId"}
+        component={BatchReviewPage}
+      />
       <Route path={"/workbench/batches/:batchId"} component={BatchPage} />
       <Route path={"/workbench/:caseId"} component={WorkbenchPage} />
       <Route path={"/reports"} component={ReportsPage} />
-      <Route path={"/reports/:id"} component={ReportEditorPage} />
+      <Route
+        path={"/report-templates/somatic"}
+        component={SomaticReportTemplatesPage}
+      />
+      <Route path={"/reports/:id"} component={ClinicalReportPage} />
       <Route path={"/organization"} component={OrganizationPage} />
       <Route path={"/audit"} component={AuditLogPage} />
       <Route path={"/security"} component={SecurityConsolePage} />

@@ -77,7 +77,8 @@ async function fetchJson(
       signal: controller.signal,
       headers: {
         Accept: "application/json",
-        "User-Agent": "Genolyx-Variant-Interpreter/1.0 (somatic evidence retrieval)",
+        "User-Agent":
+          "Genolyx-Variant-Interpreter/1.0 (somatic evidence retrieval)",
         ...(init.headers || {}),
       },
     });
@@ -88,18 +89,29 @@ async function fetchJson(
   }
 }
 
-function diseaseOverlap(disease: string | null | undefined, context: string | null | undefined): boolean {
+function diseaseOverlap(
+  disease: string | null | undefined,
+  context: string | null | undefined
+): boolean {
   if (!disease || !context) return false;
   const tokens = (value: string) =>
     value
       .toLowerCase()
       .split(/[^a-z0-9]+/)
-      .filter(token => token.length > 3 && token !== "cancer" && token !== "tumor" && token !== "tumour");
+      .filter(
+        token =>
+          token.length > 3 &&
+          token !== "cancer" &&
+          token !== "tumor" &&
+          token !== "tumour"
+      );
   const left = new Set(tokens(disease));
   return tokens(context).some(token => left.has(token));
 }
 
-function civicDomain(evidenceType: string | null | undefined): SomaticEvidenceDraft["clinicalDomain"] {
+function civicDomain(
+  evidenceType: string | null | undefined
+): SomaticEvidenceDraft["clinicalDomain"] {
   const type = (evidenceType || "").toLowerCase();
   if (type.includes("predict")) return "therapeutic";
   if (type.includes("diagnos")) return "diagnostic";
@@ -107,9 +119,12 @@ function civicDomain(evidenceType: string | null | undefined): SomaticEvidenceDr
   return "oncogenicity";
 }
 
-function civicDirection(direction: string | null | undefined): SomaticEvidenceDraft["direction"] {
+function civicDirection(
+  direction: string | null | undefined
+): SomaticEvidenceDraft["direction"] {
   const value = (direction || "").toLowerCase();
-  if (value.includes("does not support") || value.includes("refut")) return "contradicting";
+  if (value.includes("does not support") || value.includes("refut"))
+    return "contradicting";
   if (value.includes("support")) return "supporting";
   return "neutral";
 }
@@ -132,8 +147,9 @@ function civicDraftsFromGene(
   diseaseContext: string | null,
   payload: Record<string, any>
 ): SomaticEvidenceDraft[] {
-  const genes = payload?.data?.genes?.nodes
-    ?? (payload?.data?.gene ? [payload.data.gene] : []);
+  const genes =
+    payload?.data?.genes?.nodes ??
+    (payload?.data?.gene ? [payload.data.gene] : []);
   const drafts: SomaticEvidenceDraft[] = [];
   for (const geneNode of genes) {
     const variants = geneNode?.variants?.nodes ?? [];
@@ -144,24 +160,35 @@ function civicDraftsFromGene(
       const items: CivicEvidenceNode[] =
         variant?.singleVariantMolecularProfile?.evidenceItems?.nodes ?? [];
       for (const item of items) {
-        if ((item.status || "").toUpperCase() && (item.status || "").toUpperCase() !== "ACCEPTED") {
+        if (
+          (item.status || "").toUpperCase() &&
+          (item.status || "").toUpperCase() !== "ACCEPTED"
+        ) {
           continue;
         }
         const id = item.id != null ? String(item.id) : null;
         const disease = item.disease?.name || null;
-        const therapies = (item.therapies || []).map(t => t.name).filter(Boolean).join(", ");
+        const therapies = (item.therapies || [])
+          .map(t => t.name)
+          .filter(Boolean)
+          .join(", ");
         const domain = civicDomain(item.evidenceType);
         drafts.push({
           source: "CIViC",
           sourceRecordId: id,
           clinicalDomain: domain,
-          title: `${gene} ${name}: CIViC ${item.evidenceType || "evidence"} ${item.evidenceLevel || ""}`.trim(),
-          url: id ? `https://civicdb.org/evidence/${id}` : `https://civicdb.org/search/variants?query=${encodeURIComponent(`${gene} ${name}`)}`,
+          title:
+            `${gene} ${name}: CIViC ${item.evidenceType || "evidence"} ${item.evidenceLevel || ""}`.trim(),
+          url: id
+            ? `https://civicdb.org/evidence/${id}`
+            : `https://civicdb.org/search/variants?query=${encodeURIComponent(`${gene} ${name}`)}`,
           excerpt: [
             item.significance ? `Significance: ${item.significance}.` : null,
             disease ? `Disease: ${disease}.` : null,
             therapies ? `Therapies: ${therapies}.` : null,
-            item.evidenceDirection ? `Direction: ${item.evidenceDirection}.` : null,
+            item.evidenceDirection
+              ? `Direction: ${item.evidenceDirection}.`
+              : null,
           ]
             .filter(Boolean)
             .join(" "),
@@ -193,7 +220,9 @@ async function collectCivic(
   if (!variant.gene) return [];
   const change = proteinChangeFromHgvs(variant.hgvsP);
   if (!change) return [];
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
   if (ENV.civicApiKey) headers.Authorization = `Bearer ${ENV.civicApiKey}`;
   const payload = await fetchJson(CIVIC_GRAPHQL, {
     method: "POST",
@@ -203,8 +232,24 @@ async function collectCivic(
       variables: { symbol: variant.gene, variant: change },
     }),
   });
-  if (payload.errors) throw new Error(String(payload.errors[0]?.message || "CIViC GraphQL error"));
+  if (payload.errors)
+    throw new Error(
+      String(payload.errors[0]?.message || "CIViC GraphQL error")
+    );
   return civicDraftsFromGene(variant.gene, change, diseaseContext, payload);
+}
+
+/**
+ * CIViC-only adapter used by the isolated somatic CDS pipeline.
+ *
+ * The legacy workbench loader below may also query OncoKB and derive AMP facts;
+ * the CDS path intentionally consumes only these source-native drafts.
+ */
+export async function loadCivicEvidence(
+  variant: Variant,
+  diseaseContext: string | null
+): Promise<SomaticEvidenceDraft[]> {
+  return collectCivic(variant, diseaseContext);
 }
 
 type OncoKbAnnotation = {
@@ -215,7 +260,11 @@ type OncoKbAnnotation = {
   highestResistanceLevel?: string | null;
   highestDiagnosticImplicationLevel?: string | null;
   highestPrognosticImplicationLevel?: string | null;
-  treatments?: Array<{ level?: string; drugs?: Array<{ drugName?: string }>; levelAssociatedCancerType?: { mainType?: string } }>;
+  treatments?: Array<{
+    level?: string;
+    drugs?: Array<{ drugName?: string }>;
+    levelAssociatedCancerType?: { mainType?: string };
+  }>;
   hotspot?: boolean;
 };
 
@@ -250,11 +299,31 @@ function oncokbDrafts(
     });
   }
 
-  const levelRows: Array<{ level: string | null | undefined; domain: SomaticEvidenceDraft["clinicalDomain"]; label: string }> = [
-    { level: annotation.highestSensitiveLevel, domain: "therapeutic", label: "sensitive" },
-    { level: annotation.highestResistanceLevel, domain: "therapeutic", label: "resistance" },
-    { level: annotation.highestDiagnosticImplicationLevel, domain: "diagnostic", label: "diagnostic" },
-    { level: annotation.highestPrognosticImplicationLevel, domain: "prognostic", label: "prognostic" },
+  const levelRows: Array<{
+    level: string | null | undefined;
+    domain: SomaticEvidenceDraft["clinicalDomain"];
+    label: string;
+  }> = [
+    {
+      level: annotation.highestSensitiveLevel,
+      domain: "therapeutic",
+      label: "sensitive",
+    },
+    {
+      level: annotation.highestResistanceLevel,
+      domain: "therapeutic",
+      label: "resistance",
+    },
+    {
+      level: annotation.highestDiagnosticImplicationLevel,
+      domain: "diagnostic",
+      label: "diagnostic",
+    },
+    {
+      level: annotation.highestPrognosticImplicationLevel,
+      domain: "prognostic",
+      label: "prognostic",
+    },
   ];
   for (const row of levelRows) {
     if (!row.level) continue;
@@ -270,7 +339,9 @@ function oncokbDrafts(
       excerpt: [
         `OncoKB ${row.label} level ${row.level}.`,
         drugs.length ? `Therapies: ${drugs.slice(0, 8).join(", ")}.` : null,
-        annotation.query?.tumorType ? `Queried tumour type: ${annotation.query.tumorType}.` : null,
+        annotation.query?.tumorType
+          ? `Queried tumour type: ${annotation.query.tumorType}.`
+          : null,
       ]
         .filter(Boolean)
         .join(" "),
@@ -304,8 +375,16 @@ async function collectOncokb(
       referenceGenome: genome,
     });
     if (diseaseContext) params.set("tumorType", diseaseContext.slice(0, 80));
-    annotation = (await fetchJson(`${ONCOKB_ANNOTATE}/byProteinChange?${params}`, { headers })) as OncoKbAnnotation;
-  } else if (variant.chromosome && variant.position && variant.referenceAllele && variant.alternateAllele) {
+    annotation = (await fetchJson(
+      `${ONCOKB_ANNOTATE}/byProteinChange?${params}`,
+      { headers }
+    )) as OncoKbAnnotation;
+  } else if (
+    variant.chromosome &&
+    variant.position &&
+    variant.referenceAllele &&
+    variant.alternateAllele
+  ) {
     const genomicLocation = [
       variant.chromosome.replace(/^chr/i, ""),
       variant.position,
@@ -313,9 +392,15 @@ async function collectOncokb(
       variant.referenceAllele,
       variant.alternateAllele,
     ].join(",");
-    const params = new URLSearchParams({ genomicLocation, referenceGenome: genome });
+    const params = new URLSearchParams({
+      genomicLocation,
+      referenceGenome: genome,
+    });
     if (diseaseContext) params.set("tumorType", diseaseContext.slice(0, 80));
-    annotation = (await fetchJson(`${ONCOKB_ANNOTATE}/byGenomicChange?${params}`, { headers })) as OncoKbAnnotation;
+    annotation = (await fetchJson(
+      `${ONCOKB_ANNOTATE}/byGenomicChange?${params}`,
+      { headers }
+    )) as OncoKbAnnotation;
   }
   if (!annotation) return [];
   return oncokbDrafts(variant, change, diseaseContext, annotation);
@@ -352,18 +437,31 @@ export function factsFromLedger(
 ): AmpFact[] {
   const facts: AmpFact[] = [];
   for (const row of rows) {
-    if (row.source !== "CIViC" && row.source !== "OncoKB" && row.source !== "gnomAD" && row.source !== "ClinVar") {
+    if (
+      row.source !== "CIViC" &&
+      row.source !== "OncoKB" &&
+      row.source !== "gnomAD" &&
+      row.source !== "ClinVar"
+    ) {
       continue;
     }
     const payload = row.payload || {};
     const ampLevel =
       (payload.ampLevel as AmpLevel | null) ??
-      (row.source === "OncoKB" ? oncokbLevelToAmp(row.evidenceLevel) : civicLevelToAmp(row.evidenceLevel));
+      (row.source === "OncoKB"
+        ? oncokbLevelToAmp(row.evidenceLevel)
+        : civicLevelToAmp(row.evidenceLevel));
     facts.push({
       source: row.source,
       ampLevel,
       clinicalDomain: (
-        ["therapeutic", "diagnostic", "prognostic", "oncogenicity", "population"] as const
+        [
+          "therapeutic",
+          "diagnostic",
+          "prognostic",
+          "oncogenicity",
+          "population",
+        ] as const
       ).includes(row.clinicalDomain as AmpFact["clinicalDomain"])
         ? (row.clinicalDomain as AmpFact["clinicalDomain"])
         : "oncogenicity",
@@ -374,7 +472,8 @@ export function factsFromLedger(
           : row.source === "OncoKB" && row.clinicalDomain === "oncogenicity"
             ? row.evidenceLevel
             : null,
-      populationAf: typeof payload.populationAf === "number" ? payload.populationAf : null,
+      populationAf:
+        typeof payload.populationAf === "number" ? payload.populationAf : null,
       title: row.title || undefined,
     });
   }
@@ -416,14 +515,18 @@ export async function loadSomaticKnowledge(
   const sourcesDisabled: string[] = [];
   const drafts: SomaticEvidenceDraft[] = [];
 
-  const civic = await Promise.allSettled([collectCivic(variant, diseaseContext)]);
+  const civic = await Promise.allSettled([
+    collectCivic(variant, diseaseContext),
+  ]);
   if (civic[0].status === "fulfilled") drafts.push(...civic[0].value);
   else sourcesDisabled.push("civic");
 
   if (!ENV.oncokbToken) {
     sourcesDisabled.push("oncokb");
   } else {
-    const oncokb = await Promise.allSettled([collectOncokb(variant, diseaseContext)]);
+    const oncokb = await Promise.allSettled([
+      collectOncokb(variant, diseaseContext),
+    ]);
     if (oncokb[0].status === "fulfilled") drafts.push(...oncokb[0].value);
     else sourcesDisabled.push("oncokb");
   }
