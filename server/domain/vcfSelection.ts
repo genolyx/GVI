@@ -3,6 +3,7 @@ import { z } from "zod";
 import { parseGeneList } from "@shared/geneList";
 import { geneSetFromMatches, genesForTerms, loadHpoIndex } from "./hpoGenes";
 import { parseVcf, type ParsedVariant } from "./vcf";
+import type { GermlinePanelContent } from "./germlinePanel";
 import { applyVcfFilters, type VcfFilters } from "./vcfFilter";
 
 export const vcfFilterSchema = z.object({
@@ -20,7 +21,12 @@ export type VcfFilterInput = z.infer<typeof vcfFilterSchema>;
 
 const PARSE_LIMIT = 200_000;
 
-export async function selectVcfRecords(text: string, referenceBuild: "GRCh37" | "GRCh38", filters: VcfFilterInput) {
+export async function selectVcfRecords(
+  text: string,
+  referenceBuild: "GRCh37" | "GRCh38",
+  filters: VcfFilterInput,
+  panel?: GermlinePanelContent | null
+) {
   const parsed = parseVcf(text, referenceBuild, PARSE_LIMIT);
   let genes: VcfFilters["genes"] = null;
   let matches: { id: string; label: string; geneCount: number }[] = [];
@@ -39,10 +45,19 @@ export async function selectVcfRecords(text: string, referenceBuild: "GRCh37" | 
     genes = geneSetFromMatches(found.matches);
   }
   const listed = parseGeneList(filters.genes);
-  const panelGenes = listed && listed.size > 0 ? listed : null;
+  const catalog = panel?.genes.length
+    ? new Set(panel.genes.map(gene => gene.toUpperCase()))
+    : null;
+  let panelGenes = listed && listed.size > 0 ? listed : null;
+  if (catalog) {
+    panelGenes = panelGenes
+      ? new Set(Array.from(panelGenes).filter(gene => catalog.has(gene)))
+      : catalog;
+  }
   const filtered = applyVcfFilters(parsed, {
     genes,
     panelGenes,
+    panelRegions: panel?.regions,
     maxAf: filters.maxAf,
     minQual: filters.minQual,
     minGenotypeQuality: filters.minGenotypeQuality,
@@ -57,7 +72,7 @@ export async function selectVcfRecords(text: string, referenceBuild: "GRCh37" | 
     matches,
     unmatched,
     geneCount: genes?.size ?? null,
-    panelCount: listed ? listed.size : null,
+    panelCount: panelGenes ? panelGenes.size : null,
   };
 }
 

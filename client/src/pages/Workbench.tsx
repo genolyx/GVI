@@ -19,6 +19,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { useOrganization } from "@/contexts/OrganizationContext";
+import { GermlineCarrierReview } from "./workbench/GermlineCarrierReview";
 import { trpc } from "@/lib/trpc";
 import {
   ACMG_CRITERIA,
@@ -131,8 +132,9 @@ function GermlineWorkbenchPage() {
     { enabled: Boolean(activeOrganizationId && caseId && canReadVariants) }
   );
   useEffect(() => {
+    if (caseQuery.data?.purpose === "germline") return;
     if (!selectedId && list.data?.[0]) setSelectedId(list.data[0].id);
-  }, [list.data, selectedId]);
+  }, [list.data, selectedId, caseQuery.data?.purpose]);
   // Counts come from a tier-agnostic query so the chips keep their totals while a
   // tier filter is narrowing the table below them.
   const tierCountQuery = trpc.variants.triageCounts.useQuery(
@@ -440,7 +442,28 @@ function GermlineWorkbenchPage() {
           onRetry={failedMutation.retry}
         />
       ) : null}
-      <div className="grid min-h-[720px] overflow-hidden rounded-2xl border border-border/80 bg-card shadow-[0_18px_50px_-36px_rgba(15,23,42,.28)] xl:grid-cols-[minmax(540px,1.15fr)_minmax(470px,.85fr)]">
+      <div
+        className={
+          clinicalCase.purpose === "germline"
+            ? "space-y-5"
+            : "grid min-h-[720px] overflow-hidden rounded-2xl border border-border/80 bg-card shadow-[0_18px_50px_-36px_rgba(15,23,42,.28)] xl:grid-cols-[minmax(540px,1.15fr)_minmax(470px,.85fr)]"
+        }
+      >
+        {clinicalCase.purpose === "germline" ? (
+          <GermlineCarrierReview
+            organizationId={activeOrganizationId!}
+            caseId={caseId}
+            patientAlias={clinicalCase.patientAlias}
+            panelName={clinicalCase.panelName}
+            variants={list.data ?? []}
+            loading={list.isLoading}
+            error={list.error?.message}
+            onRetry={() => {
+              void list.refetch();
+            }}
+            onClassify={setSelectedId}
+          />
+        ) : (
         <section className="min-w-0 border-b border-border/70 xl:border-b-0 xl:border-r">
           <div className="flex flex-col gap-3 border-b border-border/70 bg-muted/20 p-4 sm:flex-row">
             <div className="relative flex-1">
@@ -596,7 +619,15 @@ function GermlineWorkbenchPage() {
             </table>
           </ScrollArea>
         </section>
-        <section className="min-w-0 bg-muted/[0.12]">
+        )}
+        {clinicalCase.purpose === "germline" && !selectedId ? null : (
+        <section
+          className={
+            clinicalCase.purpose === "germline"
+              ? "min-w-0 overflow-hidden rounded-2xl border border-border/80 bg-muted/[0.12]"
+              : "min-w-0 bg-muted/[0.12]"
+          }
+        >
           {detail.isError ? (
             <div className="p-5">
               <StatePanel
@@ -1196,6 +1227,7 @@ function GermlineWorkbenchPage() {
             </div>
           ) : null}
         </section>
+        )}
       </div>
     </div>
   );

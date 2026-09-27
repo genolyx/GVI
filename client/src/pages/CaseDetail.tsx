@@ -1,7 +1,6 @@
 import { ClinicalStatus } from "@/components/ClinicalStatus";
 import { PageHeader } from "@/components/PageHeader";
 import { StatePanel } from "@/components/StatePanel";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -15,11 +14,17 @@ import {
   Dna,
   FileArchive,
   FlaskConical,
-  Server,
 } from "lucide-react";
+import { useState } from "react";
 import { useLocation, useParams } from "wouter";
 import { toast } from "sonner";
 import { formatDateTime } from "@/lib/datetime";
+import { GermlineOrderFields } from "./GermlineOrderFields";
+import {
+  defaultGermlineOrder,
+  GERMLINE_TEST_CATEGORY_LABEL,
+  type GermlineOrderInput,
+} from "@shared/germlineOrder";
 
 export default function CaseDetailPage() {
   const params = useParams<{ id: string }>();
@@ -44,6 +49,17 @@ export default function CaseDetailPage() {
   );
   const createReport = trpc.somaticReports.createDraft.useMutation({
     onSuccess: result => navigate(`/reports/${result.id}`),
+    onError: error => toast.error(error.message),
+  });
+  const [editingOrder, setEditingOrder] = useState(false);
+  const [orderDraft, setOrderDraft] =
+    useState<GermlineOrderInput>(defaultGermlineOrder);
+  const saveOrder = trpc.cases.updateGermlineOrder.useMutation({
+    onSuccess: async () => {
+      toast.success("Order details saved.");
+      setEditingOrder(false);
+      await query.refetch();
+    },
     onError: error => toast.error(error.message),
   });
   if (!hasPermission("case:read"))
@@ -119,18 +135,12 @@ export default function CaseDetailPage() {
       </div>
     );
   const item = query.data;
-  const latestJob = item.jobs[0];
-  const waitingForGateway =
-    (item.status === "queued" || item.status === "running") &&
-    (item.inputType === "fastq" ||
-      latestJob?.pipeline === "gx_exome" ||
-      latestJob?.pipeline === "gx_somatic");
   return (
     <div className="space-y-7">
       <PageHeader
         eyebrow={`${item.purpose} · ${item.inputType}`}
         title={item.caseNumber}
-        description={`${item.patientAlias} · ${item.referenceBuild} · ${item.panelName || "No panel"}`}
+        description={`${item.patientAlias} · ${item.referenceBuild} · ${item.panelName || "No panel"}${item.germlinePanel ? ` · ${item.germlinePanel.geneCount.toLocaleString()} genes${item.germlinePanel.regionCount ? `, ${item.germlinePanel.regionCount.toLocaleString()} intervals` : ""}` : ""}`}
         badge={item.status}
         actions={
           <>
@@ -177,18 +187,6 @@ export default function CaseDetailPage() {
           }
         />
       ) : null}
-      {waitingForGateway ? (
-        <Alert className="border-amber-200 bg-amber-50/65 text-amber-950">
-          <Server className="size-4 text-amber-700" />
-          <AlertTitle>Waiting for Site Gateway</AlertTitle>
-          <AlertDescription className="text-amber-800/80">
-            FASTQ / gx_* analysis stays queued or running until a Site Gateway
-            worker authenticated with{" "}
-            <span className="font-mono text-[11px]">GVI_GATEWAY_TOKEN</span>{" "}
-            claims this job. Completion is not simulated in the web app.
-          </AlertDescription>
-        </Alert>
-      ) : null}
       <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {[
           {
@@ -215,6 +213,63 @@ export default function CaseDetailPage() {
           </Card>
         ))}
       </section>
+      {item.purpose === "germline" ? (
+        <GermlineOrderSection
+          order={item.germlineOrder}
+          patientAlias={item.patientAlias}
+          canEdit={hasPermission("case:edit")}
+          editing={editingOrder}
+          draft={orderDraft}
+          saving={saveOrder.isPending}
+          onEdit={() => {
+            setOrderDraft({
+              ...defaultGermlineOrder,
+              ...(item.germlineOrder ?? {}),
+              patientName: item.germlineOrder?.patientName || item.patientAlias,
+              testCategory:
+                (item.germlineOrder?.testCategory as GermlineOrderInput["testCategory"]) ||
+                defaultGermlineOrder.testCategory,
+              reportMode:
+                item.germlineOrder?.reportMode === "couples" ? "couples" : "single",
+              patientGender:
+                (item.germlineOrder?.patientGender as GermlineOrderInput["patientGender"]) ||
+                "",
+              patient2Gender:
+                (item.germlineOrder?.patient2Gender as GermlineOrderInput["patient2Gender"]) ||
+                "",
+              patient3Gender:
+                (item.germlineOrder?.patient3Gender as GermlineOrderInput["patient3Gender"]) ||
+                "",
+              patient2Affected:
+                (item.germlineOrder?.patient2Affected as GermlineOrderInput["patient2Affected"]) ||
+                "",
+              patient3Affected:
+                (item.germlineOrder?.patient3Affected as GermlineOrderInput["patient3Affected"]) ||
+                "",
+              affected:
+                (item.germlineOrder?.affected as GermlineOrderInput["affected"]) || "",
+              reportLanguage:
+                (item.germlineOrder?.reportLanguage as GermlineOrderInput["reportLanguage"]) ||
+                "",
+              reportType:
+                (item.germlineOrder?.reportType as GermlineOrderInput["reportType"]) || "",
+              specimenType:
+                (item.germlineOrder?.specimenType as GermlineOrderInput["specimenType"]) ||
+                "Blood",
+            });
+            setEditingOrder(true);
+          }}
+          onCancel={() => setEditingOrder(false)}
+          onChange={setOrderDraft}
+          onSave={() =>
+            saveOrder.mutate({
+              organizationId: activeOrganizationId!,
+              caseId: item.id,
+              ...orderDraft,
+            })
+          }
+        />
+      ) : null}
       <section className="grid gap-5 xl:grid-cols-[1.1fr_.9fr]">
         <Card className="clinical-card shadow-none">
           <CardHeader>
@@ -330,5 +385,168 @@ export default function CaseDetailPage() {
         </div>
       </section>
     </div>
+  );
+}
+
+function dash(value: string | null | undefined) {
+  return value && value.trim() ? value : "—";
+}
+
+function OrderCard({
+  title,
+  rows,
+}: {
+  title: string;
+  rows: Array<[string, string]>;
+}) {
+  return (
+    <Card className="clinical-card shadow-none">
+      <CardHeader>
+        <CardTitle className="font-display text-base">{title}</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <dl className="grid gap-x-6 gap-y-4 sm:grid-cols-2">
+          {rows.map(([label, value]) => (
+            <div
+              key={label}
+              className={label === "Clinical information" ? "sm:col-span-2" : ""}
+            >
+              <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                {label}
+              </dt>
+              <dd className="mt-1 whitespace-pre-wrap text-sm">{dash(value)}</dd>
+            </div>
+          ))}
+        </dl>
+      </CardContent>
+    </Card>
+  );
+}
+
+function GermlineOrderSection({
+  order,
+  patientAlias,
+  canEdit,
+  editing,
+  draft,
+  saving,
+  onEdit,
+  onCancel,
+  onChange,
+  onSave,
+}: {
+  order: { [K in keyof GermlineOrderInput]: string } | null;
+  patientAlias: string;
+  canEdit: boolean;
+  editing: boolean;
+  draft: GermlineOrderInput;
+  saving: boolean;
+  onEdit: () => void;
+  onCancel: () => void;
+  onChange: (value: GermlineOrderInput) => void;
+  onSave: () => void;
+}) {
+  const empty: Record<keyof GermlineOrderInput, string> = {
+    ...defaultGermlineOrder,
+    testCategory: "",
+    reportMode: "",
+    packageCode: "",
+    patientName: patientAlias,
+    reportLanguage: "",
+    reportType: "",
+    specimenType: "",
+  };
+  const current = order ?? empty;
+  const category =
+    order && order.testCategory in GERMLINE_TEST_CATEGORY_LABEL
+      ? GERMLINE_TEST_CATEGORY_LABEL[
+          order.testCategory as GermlineOrderInput["testCategory"]
+        ]
+      : "";
+  return (
+    <section className="space-y-4">
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="font-display text-base font-semibold">Order details</h2>
+        {canEdit ? (
+          editing ? (
+            <div className="flex gap-2">
+              <Button variant="outline" onClick={onCancel} disabled={saving}>
+                Cancel
+              </Button>
+              <Button onClick={onSave} disabled={saving}>
+                Save order
+              </Button>
+            </div>
+          ) : (
+            <Button variant="outline" onClick={onEdit}>
+              Edit order
+            </Button>
+          )
+        ) : null}
+      </div>
+      {editing ? (
+        <GermlineOrderFields value={draft} onChange={onChange} />
+      ) : (
+        <div className="grid gap-5 lg:grid-cols-2">
+          <OrderCard
+            title="Test type and report pairing"
+            rows={[
+              ["Test category", category],
+              ["Other test type", current.otherTestType],
+              ["Package code (test type)", current.packageCode],
+              ["Report mode", current.reportMode],
+              ["Partner order ID", current.partnerCaseNumber],
+              ["Prior order (follow-up)", current.priorCaseNumber],
+            ]}
+          />
+          <OrderCard
+            title="Hospital and identifiers"
+            rows={[
+              ["Hospital name", current.hospitalName],
+              ["Doctor", current.doctor],
+              ["Medical record ID", current.medicalRecordId],
+              ["Sample ID", current.sampleId],
+              ["Affected", current.affected],
+              ["Clinical information", current.clinicalInformation],
+            ]}
+          />
+          <OrderCard
+            title="Patient"
+            rows={[
+              ["Patient name", current.patientName || patientAlias],
+              ["Patient birth", current.patientBirth],
+              ["Patient gender", current.patientGender],
+              ...(current.patient2Name || current.patient2Gender
+                ? ([
+                    ["Patient 2", current.patient2Name],
+                    ["Patient 2 birth", current.patient2Birth],
+                    ["Patient 2 gender", current.patient2Gender],
+                    ["Affected 2", current.patient2Affected],
+                  ] as Array<[string, string]>)
+                : []),
+              ...(current.patient3Name || current.patient3Gender
+                ? ([
+                    ["Patient 3", current.patient3Name],
+                    ["Patient 3 birth", current.patient3Birth],
+                    ["Patient 3 gender", current.patient3Gender],
+                    ["Affected 3", current.patient3Affected],
+                  ] as Array<[string, string]>)
+                : []),
+            ]}
+          />
+          <OrderCard
+            title="Sample and report details"
+            rows={[
+              ["Sample collection date", current.sampleCollectionDate],
+              ["Receipt date", current.receiptDate],
+              ["Report language", current.reportLanguage],
+              ["Report type", current.reportType],
+              ["Sample specimen type", current.specimenType],
+              ["Sample barcode", current.sampleBarcode],
+            ]}
+          />
+        </div>
+      )}
+    </section>
   );
 }

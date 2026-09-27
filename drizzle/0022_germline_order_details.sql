@@ -1,0 +1,41 @@
+CREATE TABLE "germline_order_details" (
+  "id" integer PRIMARY KEY GENERATED ALWAYS AS IDENTITY,
+  "organizationId" integer NOT NULL,
+  "caseId" integer NOT NULL,
+  "testCategory" varchar(40) NOT NULL,
+  "otherTestType" varchar(160),
+  "packageCode" varchar(80),
+  "reportMode" varchar(20) NOT NULL,
+  "partnerCaseNumber" varchar(64),
+  "priorCaseNumber" varchar(64),
+  "patientName" varchar(160),
+  "patientBirth" varchar(10),
+  "patientGender" varchar(40),
+  "patient2Name" varchar(160),
+  "patient2Birth" varchar(10),
+  "patient2Gender" varchar(40),
+  "patient2Affected" varchar(8),
+  "patient3Name" varchar(160),
+  "patient3Birth" varchar(10),
+  "patient3Gender" varchar(40),
+  "patient3Affected" varchar(8),
+  "hospitalName" varchar(200),
+  "doctor" varchar(160),
+  "medicalRecordId" varchar(80),
+  "sampleId" varchar(80),
+  "affected" varchar(8),
+  "clinicalInformation" text,
+  "sampleCollectionDate" varchar(10),
+  "receiptDate" varchar(10),
+  "reportLanguage" varchar(16),
+  "reportType" varchar(40),
+  "specimenType" varchar(40),
+  "sampleBarcode" varchar(80),
+  "updatedBy" integer,
+  "createdAt" timestamp with time zone DEFAULT now() NOT NULL,
+  "updatedAt" timestamp with time zone DEFAULT now() NOT NULL
+);--> statement-breakpoint
+ALTER TABLE "germline_order_details" ADD CONSTRAINT "germline_order_details_organizationId_organizations_id_fk" FOREIGN KEY ("organizationId") REFERENCES "public"."organizations"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "germline_order_details" ADD CONSTRAINT "germline_order_details_case_org_fk" FOREIGN KEY ("caseId","organizationId") REFERENCES "public"."cases"("id","organizationId") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "germline_order_details" ADD CONSTRAINT "germline_order_details_updatedBy_users_id_fk" FOREIGN KEY ("updatedBy") REFERENCES "public"."users"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "germline_order_details" ADD CONSTRAINT "germline_order_details_case_uq" UNIQUE("organizationId","caseId");

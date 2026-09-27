@@ -5,6 +5,8 @@ import { publicProcedure, router } from "./_core/trpc";
 import { organizationsRouter } from "./routers/organizations";
 import { projectsRouter } from "./routers/projects";
 import { casesRouter } from "./routers/cases";
+import { germlinePanelsRouter } from "./routers/germlinePanels";
+import { germlineReviewRouter } from "./routers/germlineReview";
 import { variantsRouter } from "./routers/variants";
 import { copilotRouter } from "./routers/copilot";
 import { curationRouter } from "./routers/curation";
@@ -32,6 +34,8 @@ export const appRouter = router({
   organizations: organizationsRouter,
   projects: projectsRouter,
   cases: casesRouter,
+  germlinePanels: germlinePanelsRouter,
+  germlineReview: germlineReviewRouter,
   variants: variantsRouter,
   copilot: copilotRouter,
   curation: curationRouter,

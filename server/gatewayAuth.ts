@@ -1,11 +1,10 @@
 import type { Express, NextFunction, Request, Response } from "express";
 import { timingSafeEqual } from "node:crypto";
-import { and, asc, eq, inArray, or } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { z } from "zod";
-import { analysisEvents, analysisJobs, caseFiles, cases } from "../drizzle/schema";
+import { analysisEvents, analysisJobs, cases } from "../drizzle/schema";
 import { writeAuditEvent } from "./domain/audit";
 import { requireDb } from "./domain/tenant";
-import { storageGetSignedUrl } from "./storage";
 
 /** Case statuses the gateway may advance; never overwrite a reported case. */
 const GATEWAY_UPDATABLE_CASE_STATUSES = ["queued", "running", "review_ready", "failed"] as const;
@@ -42,101 +41,10 @@ export function registerGatewayAuthRoutes(app: Express) {
     res.json({ service: "gvi-gateway", authenticated: true });
   });
 
-  app.post("/api/gateway/jobs/claim", requireGatewayAuth, async (req, res) => {
-    try {
-      const db = await requireDb();
-      const candidate = await db
-        .select()
-        .from(analysisJobs)
-        .where(
-          and(
-            eq(analysisJobs.status, "queued"),
-            or(
-              eq(analysisJobs.pipeline, "gx_exome"),
-              eq(analysisJobs.pipeline, "gx_somatic"),
-              eq(analysisJobs.pipeline, "vcf_ingest")
-            )
-          )
-        )
-        .orderBy(asc(analysisJobs.createdAt))
-        .limit(1);
-      if (!candidate[0]) {
-        res.status(204).end();
-        return;
-      }
-      const job = candidate[0];
-      const externalJobId = z.string().trim().min(6).max(160).parse(req.body?.externalJobId);
-      const updateResult = await db
-        .update(analysisJobs)
-        .set({ status: "running", progressPercent: 1, claimedAt: new Date(), startedAt: new Date(), externalJobId })
-        .where(
-          and(
-            eq(analysisJobs.id, job.id),
-            eq(analysisJobs.organizationId, job.organizationId),
-            eq(analysisJobs.status, "queued")
-          )
-        )
-        .returning({ id: analysisJobs.id });
-      if (updateResult.length !== 1) {
-        res.status(409).json({ error: "job_already_claimed" });
-        return;
-      }
-      const files = await db
-        .select()
-        .from(caseFiles)
-        .where(
-          and(eq(caseFiles.organizationId, job.organizationId), eq(caseFiles.caseId, job.caseId))
-        );
-      const signedInputs = await Promise.all(
-        files.map(async file => ({
-          id: file.id,
-          kind: file.kind,
-          fileName: file.fileName,
-          byteSize: file.byteSize,
-          sha256: file.sha256,
-          downloadUrl: await storageGetSignedUrl(file.storageKey),
-        }))
-      );
-      await db.insert(analysisEvents).values({
-        organizationId: job.organizationId,
-        jobId: job.id,
-        status: "running",
-        message: "Internal analysis executor securely claimed the job.",
-        progressPercent: 1,
-        metadata: { externalJobId },
-      });
-      await db
-        .update(cases)
-        .set({ status: "running" })
-        .where(
-          and(
-            eq(cases.id, job.caseId),
-            eq(cases.organizationId, job.organizationId),
-            inArray(cases.status, [...GATEWAY_UPDATABLE_CASE_STATUSES])
-          )
-        );
-      await writeAuditEvent({
-        organizationId: job.organizationId,
-        actorUserId: null,
-        action: "gateway.job_claimed",
-        entityType: "analysis_job",
-        entityId: job.id,
-        after: { externalJobId, pipeline: job.pipeline },
-        req,
-      });
-      res.json({
-        jobId: job.id,
-        organizationId: job.organizationId,
-        caseId: job.caseId,
-        idempotencyKey: job.idempotencyKey,
-        externalJobId,
-        manifest: job.manifest,
-        inputFiles: signedInputs,
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Gateway claim failed";
-      res.status(400).json({ error: "invalid_claim_request", message });
-    }
+  app.post("/api/gateway/jobs/claim", requireGatewayAuth, (_req, res) => {
+    // FASTQ/BAM sequencing and IGV alignment stay outside this application.
+    // VCF interpretation is ingested here and is not dispatched to a gateway.
+    res.status(204).end();
   });
 
   app.post("/api/gateway/jobs/:jobId/events", requireGatewayAuth, async (req, res) => {

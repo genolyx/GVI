@@ -8,6 +8,9 @@ import {
   analysisJobs,
   caseFiles,
   cases,
+  germlineCasePanels,
+  germlineOrderDetails,
+  germlinePanels,
   projects,
   samples,
   somaticCaseContexts,
@@ -19,7 +22,16 @@ import {
 import { protectedProcedure, router } from "../_core/trpc";
 import { writeAuditEvent } from "../domain/audit";
 import { requireDb, requireOrganizationPermission } from "../domain/tenant";
+import {
+  germlineOrderRow,
+  germlineOrderSchema,
+} from "@shared/germlineOrder";
 import { runTriagePass } from "../domain/triagePass";
+import {
+  germlinePanelHash,
+  parseGermlineBed,
+  type GermlinePanelContent,
+} from "../domain/germlinePanel";
 import { parseVcf } from "../domain/vcf";
 import { variantReingestSet, variantReingestTarget } from "../domain/vcfIngest";
 import { loadHpoIndex, searchHpoTerms } from "../domain/hpoGenes";
@@ -129,21 +141,49 @@ async function ingestVcfForJob(params: {
     const text = vcfFile.fileName.endsWith(".gz")
       ? gunzipSync(raw).toString("utf8")
       : raw.toString("utf8");
-    const selected = vcfFilters
-      ? await selectVcfRecords(text, referenceBuild, vcfFilters)
+    const panelRows = await db
+      .select()
+      .from(germlineCasePanels)
+      .where(
+        and(
+          eq(germlineCasePanels.organizationId, organizationId),
+          eq(germlineCasePanels.caseId, caseId)
+        )
+      )
+      .limit(1);
+    const panelScope: GermlinePanelContent | null = panelRows[0]
+      ? { genes: panelRows[0].genes, regions: panelRows[0].regions }
       : null;
-    const parsed = selected
-      ? selected.filtered.kept
+    const scoped = Boolean(vcfFilters || panelScope);
+    const selection = scoped
+      ? await selectVcfRecords(
+          text,
+          referenceBuild,
+          vcfFilters ?? {
+            hpo: "",
+            genes: "",
+            maxAf: null,
+            minQual: null,
+            minGenotypeQuality: null,
+            minDepth: null,
+            passOnly: false,
+            codingOnly: false,
+          },
+          panelScope
+        )
+      : null;
+    const parsed = selection
+      ? selection.filtered.kept
       : parseVcf(text, referenceBuild);
     if (!parsed.length) {
       throw new Error(
-        selected
-          ? "No variants passed the HPO, gene list, frequency, and quality filters."
+        selection
+          ? "No variants passed the panel, HPO, gene list, frequency, and quality filters."
           : "VCF contains no readable variant records"
       );
     }
-    const keptNote = selected
-      ? ` Kept ${parsed.length.toLocaleString()} of ${selected.parsedCount.toLocaleString()} after HPO, gene list, frequency, and quality filters.`
+    const keptNote = selection
+      ? ` Kept ${parsed.length.toLocaleString()} of ${selection.parsedCount.toLocaleString()} after panel, HPO, gene list, frequency, and quality filters.`
       : "";
     await db.transaction(async tx => {
       for (let offset = 0; offset < parsed.length; offset += 500) {
@@ -347,8 +387,15 @@ export const casesRouter = router({
         input.caseId
       );
       const db = await requireDb();
-      const [sampleRows, fileRows, jobRows, variantCount, somaticContextRows] =
-        await Promise.all([
+      const [
+        sampleRows,
+        fileRows,
+        jobRows,
+        variantCount,
+        somaticContextRows,
+        germlinePanelRows,
+        germlineOrderRows,
+      ] = await Promise.all([
           db
             .select()
             .from(samples)
@@ -438,7 +485,34 @@ export const casesRouter = router({
               )
             )
             .limit(1),
+          db
+            .select({
+              name: germlineCasePanels.name,
+              genomeBuild: germlineCasePanels.genomeBuild,
+              contentHash: germlineCasePanels.contentHash,
+              genes: germlineCasePanels.genes,
+              regions: germlineCasePanels.regions,
+            })
+            .from(germlineCasePanels)
+            .where(
+              and(
+                eq(germlineCasePanels.organizationId, input.organizationId),
+                eq(germlineCasePanels.caseId, input.caseId)
+              )
+            )
+            .limit(1),
+          db
+            .select()
+            .from(germlineOrderDetails)
+            .where(
+              and(
+                eq(germlineOrderDetails.organizationId, input.organizationId),
+                eq(germlineOrderDetails.caseId, input.caseId)
+              )
+            )
+            .limit(1),
         ]);
+      const attachedPanel = germlinePanelRows[0];
       return {
         ...clinicalCase,
         samples: sampleRows,
@@ -446,6 +520,48 @@ export const casesRouter = router({
         jobs: jobRows,
         variantCount: variantCount[0]?.count || 0,
         somaticContext: somaticContextRows[0] ?? null,
+        germlinePanel: attachedPanel
+          ? {
+              name: attachedPanel.name,
+              genomeBuild: attachedPanel.genomeBuild,
+              contentHash: attachedPanel.contentHash,
+              geneCount: attachedPanel.genes.length,
+              regionCount: attachedPanel.regions?.length ?? 0,
+            }
+          : null,
+        germlineOrder: germlineOrderRows[0]
+          ? {
+              testCategory: germlineOrderRows[0].testCategory,
+              otherTestType: germlineOrderRows[0].otherTestType ?? "",
+              packageCode: germlineOrderRows[0].packageCode ?? "",
+              reportMode: germlineOrderRows[0].reportMode,
+              partnerCaseNumber: germlineOrderRows[0].partnerCaseNumber ?? "",
+              priorCaseNumber: germlineOrderRows[0].priorCaseNumber ?? "",
+              patientName: germlineOrderRows[0].patientName ?? "",
+              patientBirth: germlineOrderRows[0].patientBirth ?? "",
+              patientGender: germlineOrderRows[0].patientGender ?? "",
+              patient2Name: germlineOrderRows[0].patient2Name ?? "",
+              patient2Birth: germlineOrderRows[0].patient2Birth ?? "",
+              patient2Gender: germlineOrderRows[0].patient2Gender ?? "",
+              patient2Affected: germlineOrderRows[0].patient2Affected ?? "",
+              patient3Name: germlineOrderRows[0].patient3Name ?? "",
+              patient3Birth: germlineOrderRows[0].patient3Birth ?? "",
+              patient3Gender: germlineOrderRows[0].patient3Gender ?? "",
+              patient3Affected: germlineOrderRows[0].patient3Affected ?? "",
+              hospitalName: germlineOrderRows[0].hospitalName ?? "",
+              doctor: germlineOrderRows[0].doctor ?? "",
+              medicalRecordId: germlineOrderRows[0].medicalRecordId ?? "",
+              sampleId: germlineOrderRows[0].sampleId ?? "",
+              affected: germlineOrderRows[0].affected ?? "",
+              clinicalInformation: germlineOrderRows[0].clinicalInformation ?? "",
+              sampleCollectionDate: germlineOrderRows[0].sampleCollectionDate ?? "",
+              receiptDate: germlineOrderRows[0].receiptDate ?? "",
+              reportLanguage: germlineOrderRows[0].reportLanguage ?? "",
+              reportType: germlineOrderRows[0].reportType ?? "",
+              specimenType: germlineOrderRows[0].specimenType ?? "Blood",
+              sampleBarcode: germlineOrderRows[0].sampleBarcode ?? "",
+            }
+          : null,
       };
     }),
 
@@ -457,7 +573,7 @@ export const casesRouter = router({
         caseNumber: z.string().trim().min(2).max(64),
         patientAlias: z.string().trim().min(1).max(120),
         purpose: z.enum(["germline", "somatic"]),
-        inputType: z.enum(["vcf", "fastq"]),
+        inputType: z.literal("vcf"),
         referenceBuild: z.enum(["GRCh37", "GRCh38"]),
         panelName: z.string().trim().max(160).optional(),
         indication: z.string().trim().max(4000).optional(),
@@ -467,6 +583,14 @@ export const casesRouter = router({
         consentSecondaryFindings: z.boolean().default(false),
         consentDataUse: z.boolean().default(false),
         samples: z.array(sampleSchema).min(1).max(5),
+        germlinePanel: z
+          .object({
+            panelId: z.number().int().positive().optional(),
+            bedText: z.string().max(20_000_000).optional(),
+            name: z.string().trim().min(2).max(200).optional(),
+          })
+          .optional(),
+        germlineOrder: germlineOrderSchema.optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -489,7 +613,91 @@ export const casesRouter = router({
             "Somatic tumor and panel context cannot be attached to a germline case.",
         });
       }
+      if (input.purpose === "somatic" && input.germlinePanel) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message:
+            "A germline interpretation panel cannot be attached to a somatic case.",
+        });
+      }
+      if (input.purpose === "somatic" && input.germlineOrder) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Germline order details cannot be attached to a somatic case.",
+        });
+      }
       const db = await requireDb();
+      let germlineScope: {
+        panelId: number | null;
+        name: string;
+        content: GermlinePanelContent;
+        genomeBuild: "GRCh37" | "GRCh38" | null;
+      } | null = null;
+      if (input.germlinePanel) {
+        const hasCatalog = input.germlinePanel.panelId != null;
+        const hasBed = Boolean(input.germlinePanel.bedText?.trim());
+        if (hasCatalog === hasBed) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "Choose a saved panel or upload one BED file.",
+          });
+        }
+        if (hasCatalog) {
+          const rows = await db
+            .select()
+            .from(germlinePanels)
+            .where(
+              and(
+                eq(germlinePanels.id, input.germlinePanel.panelId!),
+                eq(germlinePanels.organizationId, input.organizationId)
+              )
+            )
+            .limit(1);
+          const panel = rows[0];
+          if (!panel) {
+            throw new TRPCError({
+              code: "NOT_FOUND",
+              message: "Germline panel not found.",
+            });
+          }
+          if (panel.genomeBuild && panel.genomeBuild !== input.referenceBuild) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message:
+                "The saved panel reference build does not match this case.",
+            });
+          }
+          germlineScope = {
+            panelId: panel.id,
+            name: panel.name,
+            content: { genes: panel.genes, regions: panel.regions },
+            genomeBuild: panel.genomeBuild,
+          };
+        } else {
+          if (!input.germlinePanel.name) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message: "A BED uploaded with the case needs a panel name.",
+            });
+          }
+          let content: GermlinePanelContent;
+          try {
+            content = parseGermlineBed(input.germlinePanel.bedText || "");
+          } catch (error) {
+            throw new TRPCError({
+              code: "BAD_REQUEST",
+              message:
+                error instanceof Error ? error.message : "Invalid BED panel.",
+            });
+          }
+          germlineScope = {
+            panelId: null,
+            name: input.germlinePanel.name,
+            content,
+            genomeBuild: input.referenceBuild,
+          };
+        }
+      }
       const project = await db
         .select({ id: projects.id })
         .from(projects)
@@ -665,9 +873,9 @@ export const casesRouter = router({
             inputType: input.inputType,
             referenceBuild: input.referenceBuild,
             panelName:
-              input.purpose === "somatic" && input.somaticContext
+              input.purpose === "somatic" && input.somaticContext?.panel
                 ? `${input.somaticContext.panel.manufacturer} ${input.somaticContext.panel.name} ${input.somaticContext.panel.version}`
-                : input.panelName || null,
+                : germlineScope?.name || input.panelName || null,
             indication: input.indication || null,
             phenotypeText: input.phenotypeText || null,
             consentClinicalAnalysis: input.consentClinicalAnalysis,
@@ -677,6 +885,35 @@ export const casesRouter = router({
           })
           .returning({ id: cases.id });
         const id = result[0].id;
+        if (germlineScope) {
+          await tx.insert(germlineCasePanels).values({
+            organizationId: input.organizationId,
+            caseId: id,
+            panelId: germlineScope.panelId,
+            name: germlineScope.name,
+            genes: germlineScope.content.genes,
+            regions: germlineScope.content.regions,
+            genomeBuild: germlineScope.genomeBuild,
+            contentHash: germlinePanelHash(
+              germlineScope.content,
+              germlineScope.genomeBuild
+            ),
+          });
+        }
+        if (input.purpose === "germline" && input.germlineOrder) {
+          const order = germlineOrderRow({
+            ...input.germlineOrder,
+            patientName: input.germlineOrder.patientName || input.patientAlias,
+            clinicalInformation:
+              input.germlineOrder.clinicalInformation || input.indication || "",
+          });
+          await tx.insert(germlineOrderDetails).values({
+            organizationId: input.organizationId,
+            caseId: id,
+            ...order,
+            updatedBy: ctx.user.id,
+          });
+        }
         if (input.somaticContext && tumorTypeId && panelVersionId) {
           await tx.insert(somaticCaseContexts).values({
             organizationId: input.organizationId,
@@ -705,7 +942,8 @@ export const casesRouter = router({
               caseId: id,
               sampleCode: sample.sampleCode,
               role: sample.role,
-              specimenType: sample.specimenType,
+              specimenType:
+                input.germlineOrder?.specimenType || sample.specimenType,
               tumorContentPercent:
                 sample.tumorContentPercent === undefined
                   ? null
@@ -729,6 +967,73 @@ export const casesRouter = router({
         req: ctx.req,
       });
       return { id: caseId, sampleIds };
+    }),
+
+  updateGermlineOrder: protectedProcedure
+    .input(
+      z
+        .object({
+          organizationId: z.number().int().positive(),
+          caseId: z.number().int().positive(),
+        })
+        .merge(germlineOrderSchema)
+    )
+    .mutation(async ({ ctx, input }) => {
+      await requireOrganizationPermission(
+        ctx.user.id,
+        input.organizationId,
+        "case:edit"
+      );
+      const db = await requireDb();
+      const found = await db
+        .select({ id: cases.id, purpose: cases.purpose })
+        .from(cases)
+        .where(
+          and(
+            eq(cases.id, input.caseId),
+            eq(cases.organizationId, input.organizationId)
+          )
+        )
+        .limit(1);
+      if (!found[0]) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Case not found." });
+      }
+      if (found[0].purpose !== "germline") {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Order details are stored for germline cases.",
+        });
+      }
+      const order = germlineOrderRow(input);
+      await db
+        .insert(germlineOrderDetails)
+        .values({
+          organizationId: input.organizationId,
+          caseId: input.caseId,
+          ...order,
+          updatedBy: ctx.user.id,
+        })
+        .onConflictDoUpdate({
+          target: [
+            germlineOrderDetails.organizationId,
+            germlineOrderDetails.caseId,
+          ],
+          set: { ...order, updatedBy: ctx.user.id, updatedAt: new Date() },
+        });
+      await writeAuditEvent({
+        organizationId: input.organizationId,
+        actorUserId: ctx.user.id,
+        action: "germline.order.updated",
+        entityType: "case",
+        entityId: input.caseId,
+        after: {
+          testCategory: order.testCategory,
+          packageCode: order.packageCode,
+          hospitalName: order.hospitalName,
+        },
+        req: ctx.req,
+      });
+      return { ok: true };
     }),
 
   requestUpload: protectedProcedure
@@ -766,6 +1071,13 @@ export const casesRouter = router({
         throw new TRPCError({
           code: "CONFLICT",
           message: "Files can only be added to a draft case",
+        });
+      }
+      if (input.kind === "fastq_r1" || input.kind === "fastq_r2" || input.kind === "bam" || input.kind === "bai") {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message:
+            "Only VCF input is accepted. FASTQ, BAM, and IGV alignment files are not used.",
         });
       }
       if (input.sampleId) {
@@ -821,6 +1133,13 @@ export const casesRouter = router({
         throw new TRPCError({
           code: "CONFLICT",
           message: "Files can only be added to a draft case",
+        });
+      }
+      if (input.kind !== "vcf") {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message:
+            "Only VCF input is accepted. FASTQ, BAM, and IGV alignment files are not used.",
         });
       }
       const requiredPrefix = `organizations/${input.organizationId}/cases/${input.caseId}/files/`;
@@ -889,6 +1208,14 @@ export const casesRouter = router({
           referenceBuild: z.enum(["GRCh37", "GRCh38"]),
         })
         .merge(vcfFilterSchema)
+        .extend({
+          germlinePanel: z
+            .object({
+              panelId: z.number().int().positive().optional(),
+              bedText: z.string().max(20_000_000).optional(),
+            })
+            .optional(),
+        })
     )
     .mutation(async ({ ctx, input }) => {
       await requireOrganizationPermission(
@@ -896,10 +1223,54 @@ export const casesRouter = router({
         input.organizationId,
         "case:create"
       );
+      const db = await requireDb();
+      let panelScope: GermlinePanelContent | null = null;
+      if (input.germlinePanel?.panelId && input.germlinePanel.bedText?.trim()) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Choose a saved panel or upload one BED file.",
+        });
+      }
+      if (input.germlinePanel?.panelId) {
+        const rows = await db
+          .select()
+          .from(germlinePanels)
+          .where(
+            and(
+              eq(germlinePanels.id, input.germlinePanel.panelId),
+              eq(germlinePanels.organizationId, input.organizationId)
+            )
+          )
+          .limit(1);
+        const panel = rows[0];
+        if (!panel) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: "Germline panel not found.",
+          });
+        }
+        if (panel.genomeBuild && panel.genomeBuild !== input.referenceBuild) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "The saved panel reference build does not match this case.",
+          });
+        }
+        panelScope = { genes: panel.genes, regions: panel.regions };
+      } else if (input.germlinePanel?.bedText?.trim()) {
+        try {
+          panelScope = parseGermlineBed(input.germlinePanel.bedText);
+        } catch (error) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: error instanceof Error ? error.message : "Invalid BED panel.",
+          });
+        }
+      }
       const result = await selectVcfRecords(
         input.vcfText,
         input.referenceBuild,
-        input
+        input,
+        panelScope
       );
       return {
         parsedCount: result.parsedCount,
@@ -977,36 +1348,24 @@ export const casesRouter = router({
           )
         );
       const kinds = new Set(files.map(file => file.kind));
-      if (clinicalCase.inputType === "vcf" && !kinds.has("vcf")) {
+      if (clinicalCase.inputType !== "vcf") {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message:
+            "Only VCF cases can be interpreted. External sequencing pipelines are disabled.",
+        });
+      }
+      if (!kinds.has("vcf")) {
         throw new TRPCError({
           code: "BAD_REQUEST",
           message: "A VCF file is required",
         });
       }
-      if (
-        clinicalCase.inputType === "fastq" &&
-        (!kinds.has("fastq_r1") || !kinds.has("fastq_r2"))
-      ) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: "Paired FASTQ R1 and R2 files are required",
-        });
-      }
       const idempotencyKey = randomUUID();
-      const pipeline =
-        clinicalCase.inputType === "vcf"
-          ? "vcf_ingest"
-          : clinicalCase.purpose === "germline"
-            ? "gx_exome"
-            : "gx_somatic";
+      const pipeline = "vcf_ingest" as const;
       const manifest = {
         schemaVersion: "1.0",
-        serviceCode:
-          clinicalCase.inputType === "vcf"
-            ? "gvi_vcf_ingest"
-            : clinicalCase.purpose === "germline"
-              ? "gx_exome"
-              : "gx_somatic",
+        serviceCode: "gvi_vcf_ingest",
         organizationId: input.organizationId,
         caseId: input.caseId,
         purpose: clinicalCase.purpose,

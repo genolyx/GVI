@@ -141,6 +141,27 @@
       "when": 1790494257073,
       "tag": "0019_somatic_policy_impact",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1790494257074,
+      "tag": "0020_germline_vcf_panels",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1790494257075,
+      "tag": "0021_germline_carrier_review",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1790494257076,
+      "tag": "0022_germline_order_details",
+      "breakpoints": true
     }
   ]
 }

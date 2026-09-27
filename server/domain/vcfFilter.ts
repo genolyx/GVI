@@ -1,3 +1,5 @@
+import { variantOverlapsPanel } from "./germlinePanel";
+
 export type FilterableVariant = {
   gene: string | null;
   transcript: string | null;
@@ -9,13 +11,22 @@ export type FilterableVariant = {
   siteQuality: number | null;
   genotypeQuality: number | null;
   callFilter: string | null;
+  chromosome?: string;
+  position?: number;
+  referenceAllele?: string;
 };
 
 export type VcfFilters = {
   /** Null skips the HPO gene filter. An empty set drops every variant. */
   genes: ReadonlySet<string> | null;
-  /** Null skips the panel or explicit gene list. */
-  panelGenes: ReadonlySet<string> | null;
+  /** Null or omitted skips the panel or explicit gene list. */
+  panelGenes?: ReadonlySet<string> | null;
+  /** Null skips coordinate filtering. Used for BED panels without relying on gene symbols. */
+  panelRegions?: ReadonlyArray<{
+    chromosome: string;
+    start: number;
+    end: number;
+  }> | null;
   maxAf: number | null;
   minQual: number | null;
   minGenotypeQuality: number | null;
@@ -103,8 +114,16 @@ function firstFail(
     return "impact";
   const gene = (variant.gene || "").toUpperCase();
   if (filters.genes && (!gene || !filters.genes.has(gene))) return "hpo";
-  if (filters.panelGenes && (!gene || !filters.panelGenes.has(gene)))
+  const geneMatch =
+    !filters.panelGenes || Boolean(gene && filters.panelGenes.has(gene));
+  const regions = filters.panelRegions;
+  const regionMatch =
+    !regions?.length || variantOverlapsPanel(variant, regions);
+  if (filters.panelGenes && regions?.length) {
+    if (!geneMatch && !regionMatch) return "panel";
+  } else if (!geneMatch || !regionMatch) {
     return "panel";
+  }
   return null;
 }
 

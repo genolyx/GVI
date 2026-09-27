@@ -665,6 +665,211 @@ export const cases = pgTable(
   ]
 );
 
+export type GermlinePanelRegion = {
+  chromosome: string;
+  start: number;
+  end: number;
+  name: string | null;
+};
+
+/** Reusable germline interpretation scope. Sequencing BED/BAM files are not stored here. */
+export const germlinePanels = pgTable(
+  "germline_panels",
+  {
+    id: surrogateId(),
+    organizationId: integer("organizationId")
+      .notNull()
+      .references(() => organizations.id),
+    code: varchar("code", { length: 80 }).notNull(),
+    name: varchar("name", { length: 200 }).notNull(),
+    description: text("description"),
+    genes: jsonb("genes").$type<string[]>().notNull(),
+    regions: jsonb("regions").$type<GermlinePanelRegion[]>(),
+    genomeBuild: referenceBuildEnum("genomeBuild"),
+    contentHash: varchar("contentHash", { length: 64 }).notNull(),
+    createdBy: integer("createdBy")
+      .notNull()
+      .references(() => users.id),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  table => [
+    unique("germline_panels_id_org_uq").on(table.id, table.organizationId),
+    unique("germline_panels_org_code_uq").on(table.organizationId, table.code),
+  ]
+);
+
+/** Frozen panel scope for one germline VCF case. */
+export const germlineCasePanels = pgTable(
+  "germline_case_panels",
+  {
+    id: surrogateId(),
+    organizationId: integer("organizationId")
+      .notNull()
+      .references(() => organizations.id),
+    caseId: integer("caseId").notNull(),
+    panelId: integer("panelId"),
+    name: varchar("name", { length: 200 }).notNull(),
+    genes: jsonb("genes").$type<string[]>().notNull(),
+    regions: jsonb("regions").$type<GermlinePanelRegion[]>(),
+    genomeBuild: referenceBuildEnum("genomeBuild"),
+    contentHash: varchar("contentHash", { length: 64 }).notNull(),
+    createdAt: createdAt(),
+  },
+  table => [
+    unique("germline_case_panels_case_uq").on(table.organizationId, table.caseId),
+    foreignKey({
+      name: "germline_case_panels_case_org_fk",
+      columns: [table.caseId, table.organizationId],
+      foreignColumns: [cases.id, cases.organizationId],
+    }).onDelete("cascade"),
+    foreignKey({
+      name: "germline_case_panels_panel_org_fk",
+      columns: [table.panelId, table.organizationId],
+      foreignColumns: [germlinePanels.id, germlinePanels.organizationId],
+    }).onDelete("restrict"),
+  ]
+);
+
+/** Clinical order fields for a germline case. Sequencing paths are not stored here. */
+export const germlineOrderDetails = pgTable(
+  "germline_order_details",
+  {
+    id: surrogateId(),
+    organizationId: integer("organizationId")
+      .notNull()
+      .references(() => organizations.id),
+    caseId: integer("caseId").notNull(),
+    testCategory: varchar("testCategory", { length: 40 }).notNull(),
+    otherTestType: varchar("otherTestType", { length: 160 }),
+    packageCode: varchar("packageCode", { length: 80 }),
+    reportMode: varchar("reportMode", { length: 20 }).notNull(),
+    partnerCaseNumber: varchar("partnerCaseNumber", { length: 64 }),
+    priorCaseNumber: varchar("priorCaseNumber", { length: 64 }),
+    patientName: varchar("patientName", { length: 160 }),
+    patientBirth: varchar("patientBirth", { length: 10 }),
+    patientGender: varchar("patientGender", { length: 40 }),
+    patient2Name: varchar("patient2Name", { length: 160 }),
+    patient2Birth: varchar("patient2Birth", { length: 10 }),
+    patient2Gender: varchar("patient2Gender", { length: 40 }),
+    patient2Affected: varchar("patient2Affected", { length: 8 }),
+    patient3Name: varchar("patient3Name", { length: 160 }),
+    patient3Birth: varchar("patient3Birth", { length: 10 }),
+    patient3Gender: varchar("patient3Gender", { length: 40 }),
+    patient3Affected: varchar("patient3Affected", { length: 8 }),
+    hospitalName: varchar("hospitalName", { length: 200 }),
+    doctor: varchar("doctor", { length: 160 }),
+    medicalRecordId: varchar("medicalRecordId", { length: 80 }),
+    sampleId: varchar("sampleId", { length: 80 }),
+    affected: varchar("affected", { length: 8 }),
+    clinicalInformation: text("clinicalInformation"),
+    sampleCollectionDate: varchar("sampleCollectionDate", { length: 10 }),
+    receiptDate: varchar("receiptDate", { length: 10 }),
+    reportLanguage: varchar("reportLanguage", { length: 16 }),
+    reportType: varchar("reportType", { length: 40 }),
+    specimenType: varchar("specimenType", { length: 40 }),
+    sampleBarcode: varchar("sampleBarcode", { length: 80 }),
+    updatedBy: integer("updatedBy").references(() => users.id),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  table => [
+    unique("germline_order_details_case_uq").on(
+      table.organizationId,
+      table.caseId
+    ),
+    foreignKey({
+      name: "germline_order_details_case_org_fk",
+      columns: [table.caseId, table.organizationId],
+      foreignColumns: [cases.id, cases.organizationId],
+    }).onDelete("cascade"),
+  ]
+);
+
+export type GermlinePgxGene = {
+  gene: string;
+  source: string;
+  diplotype: string;
+  phenotype: string;
+  alleleFunctions: string;
+  category: "" | "actionable" | "normal";
+  include: boolean;
+};
+
+export type GermlinePgxExtended = {
+  gene: string;
+  rsid: string;
+  variantName: string;
+  genotype: string;
+  zygosity: string;
+  significance: string;
+  drugs: string;
+  evidenceLevel: string;
+  include: boolean;
+};
+
+/** Reviewer, patient, selected variants, and PGx calls for one germline case. */
+export const germlineCaseReviews = pgTable(
+  "germline_case_reviews",
+  {
+    id: surrogateId(),
+    organizationId: integer("organizationId")
+      .notNull()
+      .references(() => organizations.id),
+    caseId: integer("caseId").notNull(),
+    reviewerName: varchar("reviewerName", { length: 160 }),
+    reviewerCode: varchar("reviewerCode", { length: 80 }),
+    institution: varchar("institution", { length: 200 }),
+    patientName: varchar("patientName", { length: 160 }),
+    patientDob: varchar("patientDob", { length: 10 }),
+    patientGender: varchar("patientGender", { length: 40 }),
+    partnerName: varchar("partnerName", { length: 160 }),
+    languages: jsonb("languages").$type<string[]>().notNull(),
+    selectedVariantIds: jsonb("selectedVariantIds").$type<number[]>(),
+    pgxGenes: jsonb("pgxGenes").$type<GermlinePgxGene[]>().notNull(),
+    pgxExtended: jsonb("pgxExtended").$type<GermlinePgxExtended[]>().notNull(),
+    updatedBy: integer("updatedBy").references(() => users.id),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  table => [
+    unique("germline_case_reviews_case_uq").on(table.organizationId, table.caseId),
+    foreignKey({
+      name: "germline_case_reviews_case_org_fk",
+      columns: [table.caseId, table.organizationId],
+      foreignColumns: [cases.id, cases.organizationId],
+    }).onDelete("cascade"),
+  ]
+);
+
+/** Organization gene text used by the Gene database tab. Shared across cases. */
+export const germlineGeneKnowledge = pgTable(
+  "germline_gene_knowledge",
+  {
+    id: surrogateId(),
+    organizationId: integer("organizationId")
+      .notNull()
+      .references(() => organizations.id),
+    gene: varchar("gene", { length: 80 }).notNull(),
+    language: varchar("language", { length: 8 }).notNull(),
+    disorder: text("disorder"),
+    omimNumber: varchar("omimNumber", { length: 40 }),
+    inheritance: varchar("inheritance", { length: 80 }),
+    functionSummary: text("functionSummary"),
+    diseaseAssociation: text("diseaseAssociation"),
+    updatedBy: integer("updatedBy").references(() => users.id),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  table => [
+    unique("germline_gene_knowledge_org_gene_lang_uq").on(
+      table.organizationId,
+      table.gene,
+      table.language
+    ),
+  ]
+);
+
 export const samples = pgTable(
   "samples",
   {
@@ -939,6 +1144,32 @@ export const variants = pgTable(
       name: "variants_case_org_fk",
       columns: [table.caseId, table.organizationId],
       foreignColumns: [cases.id, cases.organizationId],
+    }).onDelete("cascade"),
+  ]
+);
+
+export const germlineVariantNotes = pgTable(
+  "germline_variant_notes",
+  {
+    id: surrogateId(),
+    organizationId: integer("organizationId")
+      .notNull()
+      .references(() => organizations.id),
+    variantId: integer("variantId").notNull(),
+    notes: text("notes").notNull(),
+    updatedBy: integer("updatedBy").references(() => users.id),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  table => [
+    unique("germline_variant_notes_variant_uq").on(
+      table.organizationId,
+      table.variantId
+    ),
+    foreignKey({
+      name: "germline_variant_notes_variant_org_fk",
+      columns: [table.variantId, table.organizationId],
+      foreignColumns: [variants.id, variants.organizationId],
     }).onDelete("cascade"),
   ]
 );

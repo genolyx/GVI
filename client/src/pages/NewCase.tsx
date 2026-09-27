@@ -28,13 +28,18 @@ import {
   type CaseVcfFilterValues,
 } from "./CaseVcfFilters";
 import { HpoTermField } from "./HpoTermField";
+import { GermlineOrderFields } from "./GermlineOrderFields";
+import {
+  defaultGermlineOrder,
+  type GermlineOrderInput,
+} from "@shared/germlineOrder";
 
 type FormState = {
   projectId: string;
   caseNumber: string;
   patientAlias: string;
   purpose: "germline" | "somatic";
-  inputType: "vcf" | "fastq";
+  inputType: "vcf";
   referenceBuild: "GRCh37" | "GRCh38";
   panelName: string;
   indication: string;
@@ -108,13 +113,20 @@ export default function NewCasePage() {
     consentDataUse: false,
   });
   const [vcf, setVcf] = useState<File | null>(null);
-  const [r1, setR1] = useState<File | null>(null);
-  const [r2, setR2] = useState<File | null>(null);
   const [progress, setProgress] = useState(0);
   const [submissionError, setSubmissionError] = useState("");
   const [filters, setFilters] =
     useState<CaseVcfFilterValues>(defaultVcfFilters);
   const [createdCaseId, setCreatedCaseId] = useState<number | null>(null);
+  const [savedPanelId, setSavedPanelId] = useState("");
+  const [bedPanelName, setBedPanelName] = useState("");
+  const [bedText, setBedText] = useState("");
+  const [bedFileName, setBedFileName] = useState("");
+  const [order, setOrder] = useState<GermlineOrderInput>(defaultGermlineOrder);
+  const germlinePanels = trpc.germlinePanels.list.useQuery(
+    { organizationId: activeOrganizationId || 0 },
+    { enabled: Boolean(activeOrganizationId) }
+  );
   const createCase = trpc.cases.create.useMutation();
   const requestUpload = trpc.cases.requestUpload.useMutation();
   const completeUpload = trpc.cases.completeUpload.useMutation();
@@ -129,7 +141,7 @@ export default function NewCasePage() {
   const upload = async (
     caseId: number,
     file: File,
-    kind: "vcf" | "fastq_r1" | "fastq_r2",
+    kind: "vcf",
     sampleId?: number
   ) => {
     const ticket = await requestUpload.mutateAsync({
@@ -223,17 +235,28 @@ export default function NewCasePage() {
                 : undefined,
           },
         ],
+        germlinePanel:
+          form.purpose === "germline" && savedPanelId
+            ? { panelId: Number(savedPanelId) }
+            : form.purpose === "germline" && bedText
+              ? {
+                  bedText,
+                  name: bedPanelName || form.panelName || bedFileName || "BED panel",
+                }
+              : undefined,
+        germlineOrder:
+          form.purpose === "germline"
+            ? {
+                ...order,
+                patientName: order.patientName || form.patientAlias,
+                clinicalInformation: order.clinicalInformation || form.indication,
+              }
+            : undefined,
       });
       setCreatedCaseId(created.id);
       const sampleId = created.sampleIds[0];
       setProgress(25);
-      if (form.inputType === "vcf" && vcf)
-        await upload(created.id, vcf, "vcf", sampleId);
-      if (form.inputType === "fastq" && r1 && r2) {
-        await upload(created.id, r1, "fastq_r1", sampleId);
-        setProgress(58);
-        await upload(created.id, r2, "fastq_r2", sampleId);
-      }
+      if (vcf) await upload(created.id, vcf, "vcf", sampleId);
       setProgress(82);
       await submit.mutateAsync({
         organizationId: activeOrganizationId,
@@ -256,7 +279,7 @@ export default function NewCasePage() {
       toast.error(message);
     }
   };
-  const fileReady = form.inputType === "vcf" ? Boolean(vcf) : Boolean(r1 && r2);
+  const fileReady = Boolean(vcf);
   const somaticReady =
     form.purpose === "germline" ||
     Boolean(
@@ -420,11 +443,15 @@ export default function NewCasePage() {
                 value={form.purpose}
                 onChange={e => {
                   const purpose = e.target.value as FormState["purpose"];
+                  setSavedPanelId("");
+                  setBedText("");
+                  setBedFileName("");
+                  setBedPanelName("");
                   setForm(current => ({
                     ...current,
                     purpose,
-                    inputType:
-                      purpose === "somatic" ? "vcf" : current.inputType,
+                    inputType: "vcf",
+                    panelName: "",
                     specimenType:
                       purpose === "somatic" ? "Tumor tissue" : "Blood",
                   }));
@@ -436,24 +463,11 @@ export default function NewCasePage() {
               </select>
             </Field>
             <Field label="Input type">
-              <select
-                value={form.inputType}
-                onChange={e =>
-                  update("inputType", e.target.value as FormState["inputType"])
-                }
-                className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm"
-              >
-                <option value="vcf">VCF</option>
-                {form.purpose === "germline" ? (
-                  <option value="fastq">FASTQ paired-end</option>
-                ) : null}
-              </select>
-              {form.purpose === "somatic" ? (
-                <p className="mt-1 text-[10px] leading-4 text-muted-foreground">
-                  Phase 1 accepts target-panel VCF files. Somatic FASTQ calling
-                  is outside this interpretation workflow.
-                </p>
-              ) : null}
+              <Input value="VCF" readOnly />
+              <p className="mt-1 text-[10px] leading-4 text-muted-foreground">
+                Interpretation starts from an uploaded VCF. FASTQ sequencing,
+                BAM alignment, and IGV are not part of this workflow.
+              </p>
             </Field>
           </div>
           <div className="grid gap-5 sm:grid-cols-2">
@@ -479,13 +493,87 @@ export default function NewCasePage() {
               ) : null}
             </Field>
             {form.purpose === "germline" ? (
-              <Field label="Assay">
-                <Input
-                  value={form.panelName}
-                  onChange={e => update("panelName", e.target.value)}
-                  placeholder="WES"
-                />
-              </Field>
+              <>
+                <Field label="Assay">
+                  <Input
+                    value={form.panelName}
+                    onChange={e => update("panelName", e.target.value)}
+                    placeholder="WES"
+                  />
+                </Field>
+                <Field label="Interpretation panel">
+                  <select
+                    value={savedPanelId}
+                    onChange={event => {
+                      const id = event.target.value;
+                      setSavedPanelId(id);
+                      if (id) {
+                        setBedText("");
+                        setBedFileName("");
+                        const selected = germlinePanels.data?.find(
+                          panel => panel.id === Number(id)
+                        );
+                        if (selected) update("panelName", selected.name);
+                      }
+                    }}
+                    className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm"
+                  >
+                    <option value="">Whole VCF, no saved panel</option>
+                    {germlinePanels.data
+                      ?.filter(
+                        panel =>
+                          !panel.genomeBuild ||
+                          panel.genomeBuild === form.referenceBuild
+                      )
+                      .map(panel => (
+                        <option key={panel.id} value={panel.id}>
+                          {panel.name} · {panel.geneCount.toLocaleString()} genes
+                          {panel.regionCount
+                            ? ` · ${panel.regionCount.toLocaleString()} intervals`
+                            : ""}
+                        </option>
+                      ))}
+                  </select>
+                  <p className="mt-1 text-[10px] leading-4 text-muted-foreground">
+                    A saved panel is copied onto this case. Later edits to the catalog do not change cases already created.
+                  </p>
+                </Field>
+                <Field label="Or attach a BED for this case">
+                  <Input
+                    type="file"
+                    accept=".bed,.txt"
+                    disabled={Boolean(savedPanelId)}
+                    onChange={async event => {
+                      const file = event.target.files?.[0];
+                      event.target.value = "";
+                      if (!file) return;
+                      const text = await file.text();
+                      if (text.length > 20_000_000) {
+                        toast.error("That BED is larger than 20 MB.");
+                        return;
+                      }
+                      setSavedPanelId("");
+                      setBedText(text);
+                      setBedFileName(file.name);
+                      if (!bedPanelName) {
+                        setBedPanelName(file.name.replace(/\.(bed|txt)$/i, ""));
+                      }
+                    }}
+                  />
+                  {bedText ? (
+                    <div className="mt-2 space-y-2">
+                      <p className="text-xs text-muted-foreground">
+                        {bedFileName} · {bedText.length.toLocaleString()} characters
+                      </p>
+                      <Input
+                        value={bedPanelName}
+                        onChange={event => setBedPanelName(event.target.value)}
+                        placeholder="Panel name for this case"
+                      />
+                    </div>
+                  ) : null}
+                </Field>
+              </>
             ) : null}
           </div>
           <Field label="Clinical indication">
@@ -706,50 +794,49 @@ export default function NewCasePage() {
               </label>
             </div>
           )}
+          {form.purpose === "germline" ? (
+            <div className="space-y-3">
+              <div>
+                <h3 className="text-sm font-semibold">Order details</h3>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Hospital, patient, and report fields for this germline order. They are shown on the case page.
+                </p>
+              </div>
+              <GermlineOrderFields value={order} onChange={setOrder} />
+            </div>
+          ) : null}
         </CardContent>
       </Card>
       <Card className="clinical-card shadow-none">
         <CardHeader>
           <CardTitle className="font-display text-base">
-            {form.inputType === "vcf" ? "2. VCF and filters" : "2. Input files"}
+            2. VCF and filters
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-8">
-          {form.inputType === "vcf" ? (
-            <>
-              <FileInput
-                label="VCF or VCF.GZ"
-                accept=".vcf,.vcf.gz"
-                file={vcf}
-                onChange={setVcf}
-              />
-              {activeOrganizationId && form.purpose === "germline" ? (
-                <CaseVcfFilters
-                  organizationId={activeOrganizationId}
-                  referenceBuild={form.referenceBuild}
-                  file={vcf}
-                  hpo={form.phenotypeText}
-                  values={filters}
-                  onChange={setFilters}
-                />
-              ) : null}
-            </>
-          ) : (
-            <div className="grid gap-4 sm:grid-cols-2">
-              <FileInput
-                label="FASTQ R1"
-                accept=".fastq,.fq,.fastq.gz,.fq.gz"
-                file={r1}
-                onChange={setR1}
-              />
-              <FileInput
-                label="FASTQ R2"
-                accept=".fastq,.fq,.fastq.gz,.fq.gz"
-                file={r2}
-                onChange={setR2}
-              />
-            </div>
-          )}
+          <FileInput
+            label="VCF or VCF.GZ"
+            accept=".vcf,.vcf.gz"
+            file={vcf}
+            onChange={setVcf}
+          />
+          {activeOrganizationId && form.purpose === "germline" ? (
+            <CaseVcfFilters
+              organizationId={activeOrganizationId}
+              referenceBuild={form.referenceBuild}
+              file={vcf}
+              hpo={form.phenotypeText}
+              values={filters}
+              onChange={setFilters}
+              panelScope={
+                savedPanelId
+                  ? { panelId: Number(savedPanelId) }
+                  : bedText
+                    ? { bedText }
+                    : null
+              }
+            />
+          ) : null}
         </CardContent>
       </Card>
       <Card className="clinical-card shadow-none">

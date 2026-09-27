@@ -78,6 +78,21 @@ describe("VCF workbench filters", () => {
     expect(result.dropped.panel).toBe(1);
   });
 
+  it("keeps a coordinate overlap when the gene is not on the panel list", () => {
+    const result = applyVcfFilters(parsed, {
+      genes: null,
+      panelGenes: new Set(["TP53"]),
+      panelRegions: [{ chromosome: "chr2", start: 190, end: 210 }],
+      maxAf: null,
+      minQual: null,
+      minGenotypeQuality: null,
+      minDepth: null,
+      passOnly: false,
+      codingOnly: false,
+    });
+    expect(result.kept.map(row => row.gene).sort()).toEqual(["BRCA1", "TP53"]);
+  });
+
   it("reads a panel file and a comma-separated list as gene symbols", () => {
     expect(parseGeneList("SCN1A, KCNQ2\nSTXBP1")).toEqual(new Set(["SCN1A", "KCNQ2", "STXBP1"]));
     expect(parseGeneList("gene\ttranscript\nBRCA1\tNM_007294.4\nNKX2-1\tNM_001079668.3")).toEqual(new Set(["BRCA1", "NKX2-1"]));

@@ -59,7 +59,7 @@ async function readVcf(file: File): Promise<string> {
 
 const DROP_LABELS: Record<string, string> = {
   hpo: "outside the HPO genes",
-  panel: "outside the gene list",
+  panel: "outside the interpretation panel",
   af: "allele frequency",
   qual: "QUAL",
   gq: "genotype quality",
@@ -75,6 +75,7 @@ export function CaseVcfFilters({
   hpo,
   values,
   onChange,
+  panelScope,
 }: {
   organizationId: number;
   referenceBuild: "GRCh37" | "GRCh38";
@@ -82,6 +83,7 @@ export function CaseVcfFilters({
   hpo: string;
   values: CaseVcfFilterValues;
   onChange: (values: CaseVcfFilterValues) => void;
+  panelScope?: { panelId?: number; bedText?: string } | null;
 }) {
   const panelFileRef = useRef<HTMLInputElement>(null);
   const listedGenes = parseGeneList(values.genes);
@@ -96,7 +98,7 @@ export function CaseVcfFilters({
     preview.reset();
     // Phenotype text lives on the case form. A change invalidates the last preview.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hpo]);
+  }, [hpo, panelScope?.panelId, panelScope?.bedText]);
 
   return (
     <div className="space-y-8">
@@ -178,7 +180,17 @@ export function CaseVcfFilters({
               toast.error("Preview reads the first portion of smaller VCFs. This file will still be filtered when the case is submitted.");
               return;
             }
-            preview.mutate({ organizationId, referenceBuild, vcfText, ...vcfFiltersPayload(values, hpo) });
+            preview.mutate({
+              organizationId,
+              referenceBuild,
+              vcfText,
+              ...vcfFiltersPayload(values, hpo),
+              germlinePanel: panelScope?.panelId
+                ? { panelId: panelScope.panelId }
+                : panelScope?.bedText
+                  ? { bedText: panelScope.bedText }
+                  : undefined,
+            });
           } catch {
             toast.error("Could not read that VCF.");
           }

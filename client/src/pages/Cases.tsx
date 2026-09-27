@@ -31,7 +31,7 @@ export default function CasesPage() {
       <PageHeader
         eyebrow="Case management"
         title="Cases"
-        description="Manage FASTQ/VCF analysis requests and clinical review status within the organization boundary."
+        description="Manage VCF interpretation requests and clinical review status within the organization boundary."
         actions={hasPermission("case:create") ? <Button onClick={() => navigate("/cases/new")}><Plus className="mr-2 size-4" />New case</Button> : undefined}
       />
       <div className="clinical-card overflow-hidden">

@@ -1,0 +1,1010 @@
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { trpc } from "@/lib/trpc";
+import { carrierReviewBanner } from "@shared/carrierReview";
+import { Loader2 } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
+
+export type CarrierVariantRow = {
+  id: number;
+  gene: string | null;
+  transcript: string | null;
+  hgvsC: string | null;
+  hgvsP: string | null;
+  consequence: string | null;
+  zygosity: string | null;
+  populationAf: string | null;
+  vaf: string | null;
+  readDepth: number | null;
+  alternateDepth: number | null;
+  clinvarSignificance: string | null;
+  reviewStatus: string;
+  germlineClassification: string | null;
+  diseaseContext: string | null;
+  chromosome: string;
+  position: number;
+};
+
+type PgxGene = {
+  gene: string;
+  source: string;
+  diplotype: string;
+  phenotype: string;
+  alleleFunctions: string;
+  category: "" | "actionable" | "normal";
+  include: boolean;
+};
+
+type PgxExtended = {
+  gene: string;
+  rsid: string;
+  variantName: string;
+  genotype: string;
+  zygosity: string;
+  significance: string;
+  drugs: string;
+  evidenceLevel: string;
+  include: boolean;
+};
+
+type GeneRecord = {
+  gene: string;
+  language: string;
+  disorder: string;
+  omimNumber: string;
+  inheritance: string;
+  functionSummary: string;
+  diseaseAssociation: string;
+};
+
+const CLASS_OPTIONS = [
+  "Pathogenic",
+  "Likely Pathogenic",
+  "VUS",
+  "Likely Benign",
+  "Benign",
+] as const;
+
+const TABS = ["Variants", "PGx", "Review Case", "Gene database"] as const;
+
+function isPlp(value: string | null) {
+  const text = (value || "").toLowerCase();
+  return text === "pathogenic" || text === "likely pathogenic";
+}
+
+function classTone(value: string | null) {
+  const text = (value || "").toLowerCase();
+  if (text === "pathogenic" || text === "likely pathogenic")
+    return "bg-rose-100 text-rose-800";
+  if (text === "vus" || text.includes("uncertain")) return "bg-amber-100 text-amber-800";
+  if (text === "benign" || text === "likely benign" || text.includes("benign"))
+    return "bg-emerald-100 text-emerald-800";
+  return "bg-muted text-muted-foreground";
+}
+
+function formatAf(value: string | null) {
+  if (!value) return "—";
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "—";
+  if (number === 0) return "0";
+  return number >= 0.001 ? number.toFixed(4) : number.toExponential(2);
+}
+
+function alleleDepth(row: CarrierVariantRow) {
+  const alt = row.alternateDepth;
+  const depth = row.readDepth;
+  if (depth == null && alt == null) return "—";
+  if (depth != null && alt != null && depth >= alt) return `${depth - alt}/${alt}`;
+  return `${depth ?? "—"}/${alt ?? "—"}`;
+}
+
+function vafPercent(value: string | null) {
+  if (!value) return null;
+  const number = Number(value);
+  if (!Number.isFinite(number)) return null;
+  return number <= 1 ? number * 100 : number;
+}
+
+function emptyGene(): PgxGene {
+  return {
+    gene: "",
+    source: "",
+    diplotype: "",
+    phenotype: "",
+    alleleFunctions: "",
+    category: "",
+    include: true,
+  };
+}
+
+function emptyExtended(): PgxExtended {
+  return {
+    gene: "",
+    rsid: "",
+    variantName: "",
+    genotype: "",
+    zygosity: "",
+    significance: "",
+    drugs: "",
+    evidenceLevel: "",
+    include: true,
+  };
+}
+
+export function GermlineCarrierReview({
+  organizationId,
+  caseId,
+  patientAlias,
+  panelName,
+  variants,
+  loading,
+  error,
+  onRetry,
+  onClassify,
+}: {
+  organizationId: number;
+  caseId: number;
+  patientAlias: string;
+  panelName: string | null;
+  variants: CarrierVariantRow[];
+  loading: boolean;
+  error?: string;
+  onRetry: () => void;
+  onClassify: (variantId: number) => void;
+}) {
+  const review = trpc.germlineReview.get.useQuery({ organizationId, caseId });
+  const save = trpc.germlineReview.save.useMutation({
+    onSuccess: () => toast.success("Review saved."),
+    onError: err => toast.error(err.message),
+  });
+  const saveGene = trpc.germlineReview.saveGene.useMutation({
+    onSuccess: async () => {
+      toast.success("Gene text saved.");
+      await review.refetch();
+    },
+    onError: err => toast.error(err.message),
+  });
+  const saveNote = trpc.germlineReview.saveVariantNote.useMutation({
+    onSuccess: async () => {
+      toast.success("Variant note saved.");
+      await review.refetch();
+    },
+    onError: err => toast.error(err.message),
+  });
+  const hydrated = useRef(false);
+  const [tab, setTab] = useState<(typeof TABS)[number]>("Variants");
+  const [search, setSearch] = useState("");
+  const [classFilter, setClassFilter] = useState("");
+  const [geneFilter, setGeneFilter] = useState("");
+  const [clinvarFilter, setClinvarFilter] = useState("");
+  const [vafMode, setVafMode] = useState<"" | "include" | "exclude">("");
+  const [vafFrom, setVafFrom] = useState("");
+  const [vafTo, setVafTo] = useState("");
+  const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [reviewerName, setReviewerName] = useState("");
+  const [reviewerCode, setReviewerCode] = useState("");
+  const [institution, setInstitution] = useState("");
+  const [patientName, setPatientName] = useState("");
+  const [patientDob, setPatientDob] = useState("");
+  const [patientGender, setPatientGender] = useState("");
+  const [partnerName, setPartnerName] = useState("");
+  const [languages, setLanguages] = useState<string[]>(["EN"]);
+  const [pgxGenes, setPgxGenes] = useState<PgxGene[]>([]);
+  const [pgxExtended, setPgxExtended] = useState<PgxExtended[]>([]);
+  const [pgxDraft, setPgxDraft] = useState<PgxGene>(emptyGene());
+  const [extendedDraft, setExtendedDraft] = useState<PgxExtended>(emptyExtended());
+  const [pgxQuery, setPgxQuery] = useState("");
+  const [geneLang, setGeneLang] = useState<"EN" | "CN" | "KO">("EN");
+  const [geneQuery, setGeneQuery] = useState("");
+  const [editGene, setEditGene] = useState<GeneRecord | null>(null);
+  const [noteVariantId, setNoteVariantId] = useState<number | null>(null);
+  const [noteText, setNoteText] = useState("");
+  const [preview, setPreview] = useState(false);
+
+  useEffect(() => {
+    if (!review.data || hydrated.current) return;
+    if (review.data.selectedVariantIds === null && loading) return;
+    hydrated.current = true;
+    setReviewerName(review.data.reviewerName);
+    setReviewerCode(review.data.reviewerCode);
+    setInstitution(review.data.institution);
+    setPatientName(review.data.patientName || patientAlias);
+    setPatientDob(review.data.patientDob);
+    setPatientGender(review.data.patientGender);
+    setPartnerName(review.data.partnerName);
+    setLanguages(review.data.languages.length ? review.data.languages : ["EN"]);
+    setPgxGenes(review.data.pgxGenes);
+    setPgxExtended(review.data.pgxExtended);
+    setSelected(
+      new Set(
+        review.data.selectedVariantIds ??
+          variants.filter(row => isPlp(row.germlineClassification)).map(row => row.id)
+      )
+    );
+  }, [review.data, variants, loading, patientAlias]);
+
+  const genes = useMemo(
+    () =>
+      Array.from(
+        new Set(variants.map(row => (row.gene || "").toUpperCase()).filter(Boolean))
+      ).sort(),
+    [variants]
+  );
+  const banner = carrierReviewBanner(
+    variants.map(row => ({
+      gene: row.gene,
+      classification: row.germlineClassification,
+    }))
+  );
+  const visible = variants.filter(row => {
+    const query = search.trim().toLowerCase();
+    if (query) {
+      const haystack = [
+        row.gene,
+        row.hgvsC,
+        row.hgvsP,
+        row.diseaseContext,
+        row.chromosome,
+        String(row.position),
+      ]
+        .join(" ")
+        .toLowerCase();
+      if (!haystack.includes(query)) return false;
+    }
+    if (classFilter && (row.germlineClassification || "") !== classFilter) return false;
+    if (geneFilter && (row.gene || "").toUpperCase() !== geneFilter) return false;
+    if (clinvarFilter) {
+      const clinvar = (row.clinvarSignificance || "").toLowerCase();
+      if (clinvarFilter === "Benign") {
+        if (!clinvar.includes("benign")) return false;
+      } else if (!clinvar.includes(clinvarFilter.toLowerCase().replace(/_/g, " "))) {
+        return false;
+      }
+    }
+    if (vafMode) {
+      const from = vafFrom.trim() ? Number(vafFrom) : 0;
+      const to = vafTo.trim() ? Number(vafTo) : 100;
+      const percent = vafPercent(row.vaf);
+      const inside =
+        percent != null &&
+        percent >= Math.min(from, to) &&
+        percent <= Math.max(from, to);
+      if (vafMode === "include" && !inside) return false;
+      if (vafMode === "exclude" && inside) return false;
+    }
+    return true;
+  });
+  const notes = new Map((review.data?.notes ?? []).map(row => [row.variantId, row.notes]));
+  const knowledge = review.data?.genes ?? [];
+
+  const persist = () =>
+    save.mutate({
+      organizationId,
+      caseId,
+      reviewerName,
+      reviewerCode,
+      institution,
+      patientName,
+      patientDob,
+      patientGender,
+      partnerName,
+      languages: languages.length ? (languages as ("EN" | "CN" | "KO")[]) : ["EN"],
+      selectedVariantIds: Array.from(selected),
+      pgxGenes,
+      pgxExtended,
+    });
+
+  const selectedRows = variants.filter(row => selected.has(row.id));
+  const geneScope = selectedRows.length
+    ? Array.from(new Set(selectedRows.map(row => (row.gene || "").toUpperCase()).filter(Boolean)))
+    : genes;
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-muted-foreground">
+        {patientAlias}
+        {panelName ? ` · ${panelName}` : ""} · {variants.length.toLocaleString()} variants
+        {banner.pathogenic ? ` · ${banner.pathogenic} P/LP` : ""}
+        {banner.vus ? ` · ${banner.vus} VUS` : ""}
+      </p>
+      <div
+        className={`rounded-xl border px-4 py-3 ${
+          banner.tone === "detected"
+            ? "border-rose-300 bg-rose-50 text-rose-950"
+            : banner.tone === "uncertain"
+              ? "border-amber-300 bg-amber-50 text-amber-950"
+              : "border-emerald-300 bg-emerald-50 text-emerald-950"
+        }`}
+      >
+        <p className="text-sm font-semibold">{banner.title}</p>
+        <p className="mt-1 text-xs">{banner.detail}</p>
+      </div>
+      <div className="flex flex-wrap gap-1 rounded-xl bg-primary p-1 text-primary-foreground">
+        {TABS.map(item => (
+          <button
+            key={item}
+            type="button"
+            onClick={() => setTab(item)}
+            className={`rounded-lg px-4 py-2 text-sm font-medium ${
+              tab === item ? "bg-background text-foreground" : "text-primary-foreground/90"
+            }`}
+          >
+            {item}
+          </button>
+        ))}
+      </div>
+
+      {tab === "Variants" ? (
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <Input
+              value={search}
+              onChange={event => setSearch(event.target.value)}
+              placeholder="Search gene, position, disease..."
+              className="max-w-xs"
+            />
+            <select
+              aria-label="Classification"
+              value={classFilter}
+              onChange={event => setClassFilter(event.target.value)}
+              className="h-10 rounded-lg border border-input bg-background px-3 text-sm"
+            >
+              <option value="">All Classifications</option>
+              {CLASS_OPTIONS.map(item => (
+                <option key={item}>{item}</option>
+              ))}
+            </select>
+            <select
+              aria-label="Gene"
+              value={geneFilter}
+              onChange={event => setGeneFilter(event.target.value)}
+              className="h-10 rounded-lg border border-input bg-background px-3 text-sm"
+            >
+              <option value="">All Genes</option>
+              {genes.map(gene => (
+                <option key={gene}>{gene}</option>
+              ))}
+            </select>
+            <select
+              aria-label="ClinVar"
+              value={clinvarFilter}
+              onChange={event => setClinvarFilter(event.target.value)}
+              className="h-10 rounded-lg border border-input bg-background px-3 text-sm"
+            >
+              <option value="">All ClinVar</option>
+              <option value="Pathogenic">Pathogenic</option>
+              <option value="Likely pathogenic">Likely Pathogenic</option>
+              <option value="Uncertain">VUS</option>
+              <option value="Benign">Benign/Likely Benign</option>
+            </select>
+            <select
+              aria-label="VAF filter"
+              value={vafMode}
+              onChange={event =>
+                setVafMode(event.target.value as "" | "include" | "exclude")
+              }
+              className="h-10 rounded-lg border border-input bg-background px-3 text-sm"
+            >
+              <option value="">VAF any</option>
+              <option value="include">Show VAF range</option>
+              <option value="exclude">Hide VAF range</option>
+            </select>
+            <Input
+              value={vafFrom}
+              onChange={event => setVafFrom(event.target.value)}
+              placeholder="from %"
+              disabled={!vafMode}
+              className="w-24"
+            />
+            <Input
+              value={vafTo}
+              onChange={event => setVafTo(event.target.value)}
+              placeholder="to %"
+              disabled={!vafMode}
+              className="w-24"
+            />
+            <span className="text-xs text-muted-foreground">
+              {visible.length.toLocaleString()} variants
+            </span>
+            <div className="ml-auto flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  const next = new Set(selected);
+                  visible
+                    .filter(row => isPlp(row.germlineClassification))
+                    .forEach(row => next.add(row.id));
+                  setSelected(next);
+                }}
+              >
+                Select P/LP
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  setSelected(current => {
+                    const next = new Set(current);
+                    visible.forEach(row => next.add(row.id));
+                    return next;
+                  })
+                }
+              >
+                Select All Visible
+              </Button>
+              <Button type="button" variant="outline" size="sm" onClick={() => setSelected(new Set())}>
+                Deselect All
+              </Button>
+            </div>
+          </div>
+          {error ? (
+            <p className="text-sm text-rose-700">
+              {error}{" "}
+              <button type="button" className="underline" onClick={onRetry}>
+                Retry
+              </button>
+            </p>
+          ) : null}
+          <div className="overflow-auto rounded-xl border">
+            <table className="w-full min-w-[1100px] text-left text-xs">
+              <thead className="bg-muted/50 text-[10px] uppercase tracking-wide text-muted-foreground">
+                <tr>
+                  <th className="px-3 py-2" />
+                  {["Gene", "HGVSc", "HGVSp", "Transcript", "Effect", "Zygosity", "Allele depth", "gnomAD AF", "ClinVar", "ACMG", "Tags", "Disease", "Action"].map(
+                    label => (
+                      <th key={label} className="px-3 py-2 font-medium">
+                        {label}
+                      </th>
+                    )
+                  )}
+                </tr>
+              </thead>
+              <tbody>
+                {loading ? (
+                  <tr>
+                    <td colSpan={14} className="px-3 py-6 text-muted-foreground">
+                      Loading variants…
+                    </td>
+                  </tr>
+                ) : visible.length ? (
+                  visible.map(row => (
+                    <tr key={row.id} className="border-t border-border/60">
+                      <td className="px-3 py-2">
+                        <Checkbox
+                          checked={selected.has(row.id)}
+                          onCheckedChange={checked =>
+                            setSelected(current => {
+                              const next = new Set(current);
+                              if (checked) next.add(row.id);
+                              else next.delete(row.id);
+                              return next;
+                            })
+                          }
+                        />
+                      </td>
+                      <td className="px-3 py-2 font-semibold">{row.gene || "—"}</td>
+                      <td className="px-3 py-2 font-mono">{row.hgvsC || "—"}</td>
+                      <td className="px-3 py-2 font-mono">{row.hgvsP || "—"}</td>
+                      <td className="px-3 py-2 font-mono">{row.transcript || "—"}</td>
+                      <td className="max-w-[10rem] truncate px-3 py-2" title={row.consequence || ""}>
+                        {row.consequence || "—"}
+                      </td>
+                      <td className="px-3 py-2">{row.zygosity || "—"}</td>
+                      <td className="px-3 py-2 font-mono">{alleleDepth(row)}</td>
+                      <td className="px-3 py-2 font-mono">{formatAf(row.populationAf)}</td>
+                      <td className="px-3 py-2">
+                        {row.clinvarSignificance ? (
+                          <span className={`rounded px-1.5 py-0.5 ${classTone(row.clinvarSignificance)}`}>
+                            {row.clinvarSignificance}
+                          </span>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                      <td className="px-3 py-2">
+                        {row.germlineClassification ? (
+                          <span className={`rounded px-1.5 py-0.5 ${classTone(row.germlineClassification)}`}>
+                            {row.germlineClassification}
+                          </span>
+                        ) : (
+                          "—"
+                        )}
+                      </td>
+                      <td className="px-3 py-2">
+                        {row.reviewStatus === "unreviewed" ? "—" : row.reviewStatus}
+                      </td>
+                      <td className="max-w-[12rem] truncate px-3 py-2">{row.diseaseContext || "—"}</td>
+                      <td className="px-3 py-2">
+                        <Button type="button" size="sm" variant="outline" onClick={() => onClassify(row.id)}>
+                          Classify
+                        </Button>
+                      </td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={14} className="px-3 py-6 text-muted-foreground">
+                      No variants match these filters.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : null}
+
+      {tab === "PGx" ? (
+        <div className="space-y-6">
+          <p className="text-xs text-muted-foreground">
+            Pharmacogenomic calls stored on this case. Add PharmCAT-style gene rows or extended-panel rows, then save which ones belong on the review.
+          </p>
+          <div className="space-y-3">
+            <h3 className="text-sm font-semibold">PharmCAT genes</h3>
+            <Input
+              value={pgxQuery}
+              onChange={event => setPgxQuery(event.target.value)}
+              placeholder="Filter by gene, phenotype, diplotype..."
+              className="max-w-sm"
+            />
+            <div className="overflow-auto rounded-xl border">
+              <table className="w-full min-w-[760px] text-left text-xs">
+                <thead className="bg-muted/50 text-[10px] uppercase text-muted-foreground">
+                  <tr>
+                    {["Include", "Gene", "Source", "Diplotype", "Phenotype", "Allele functions", "Category", ""].map(label => (
+                      <th key={label || "remove"} className="px-3 py-2 font-medium">{label}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {pgxGenes.filter(row =>
+                    `${row.gene} ${row.phenotype} ${row.diplotype}`.toLowerCase().includes(pgxQuery.trim().toLowerCase())
+                  ).length ? (
+                    pgxGenes.map((row, index) =>
+                      `${row.gene} ${row.phenotype} ${row.diplotype}`.toLowerCase().includes(pgxQuery.trim().toLowerCase()) ? (
+                        <tr key={`${row.gene}-${index}`} className="border-t">
+                          <td className="px-3 py-2">
+                            <Checkbox
+                              checked={row.include}
+                              onCheckedChange={checked =>
+                                setPgxGenes(current =>
+                                  current.map((item, itemIndex) =>
+                                    itemIndex === index ? { ...item, include: Boolean(checked) } : item
+                                  )
+                                )
+                              }
+                            />
+                          </td>
+                          <td className="px-3 py-2 font-semibold">{row.gene}</td>
+                          <td className="px-3 py-2">{row.source || "—"}</td>
+                          <td className="px-3 py-2 font-mono">{row.diplotype || "—"}</td>
+                          <td className="px-3 py-2">{row.phenotype || "—"}</td>
+                          <td className="px-3 py-2">{row.alleleFunctions || "—"}</td>
+                          <td className="px-3 py-2">{row.category || "—"}</td>
+                          <td className="px-3 py-2">
+                            <button
+                              type="button"
+                              className="text-rose-700"
+                              onClick={() => setPgxGenes(current => current.filter((_, itemIndex) => itemIndex !== index))}
+                            >
+                              Remove
+                            </button>
+                          </td>
+                        </tr>
+                      ) : null
+                    )
+                  ) : (
+                    <tr>
+                      <td colSpan={8} className="px-3 py-4 text-muted-foreground">
+                        No PharmCAT rows on this case.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-3">
+              <Input placeholder="Gene" value={pgxDraft.gene} onChange={event => setPgxDraft(current => ({ ...current, gene: event.target.value }))} />
+              <Input placeholder="Source" value={pgxDraft.source} onChange={event => setPgxDraft(current => ({ ...current, source: event.target.value }))} />
+              <Input placeholder="Diplotype" value={pgxDraft.diplotype} onChange={event => setPgxDraft(current => ({ ...current, diplotype: event.target.value }))} />
+              <Input placeholder="Phenotype" value={pgxDraft.phenotype} onChange={event => setPgxDraft(current => ({ ...current, phenotype: event.target.value }))} />
+              <Input placeholder="Allele functions" value={pgxDraft.alleleFunctions} onChange={event => setPgxDraft(current => ({ ...current, alleleFunctions: event.target.value }))} />
+              <select
+                value={pgxDraft.category}
+                onChange={event =>
+                  setPgxDraft(current => ({
+                    ...current,
+                    category: event.target.value as PgxGene["category"],
+                  }))
+                }
+                className="h-10 rounded-lg border border-input bg-background px-3 text-sm"
+              >
+                <option value="">Category</option>
+                <option value="actionable">Actionable</option>
+                <option value="normal">Normal</option>
+              </select>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                if (!pgxDraft.gene.trim()) return;
+                setPgxGenes(current => [...current, { ...pgxDraft, gene: pgxDraft.gene.trim().toUpperCase() }]);
+                setPgxDraft(emptyGene());
+              }}
+            >
+              Add gene call
+            </Button>
+          </div>
+          <div className="space-y-3">
+            <h3 className="text-sm font-semibold">Extended PGx panel</h3>
+            <div className="overflow-auto rounded-xl border">
+              <table className="w-full min-w-[900px] text-left text-xs">
+                <thead className="bg-muted/50 text-[10px] uppercase text-muted-foreground">
+                  <tr>
+                    {["Include", "Gene", "rsID", "Variant", "Genotype", "Zygosity", "Significance", "Drugs", "Evidence"].map(label => (
+                      <th key={label} className="px-3 py-2 font-medium">{label}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {pgxExtended.length ? (
+                    pgxExtended.map((row, index) => (
+                      <tr key={`${row.gene}-${row.rsid}-${index}`} className="border-t">
+                        <td className="px-3 py-2">
+                          <Checkbox
+                            checked={row.include}
+                            onCheckedChange={checked =>
+                              setPgxExtended(current =>
+                                current.map((item, itemIndex) =>
+                                  itemIndex === index ? { ...item, include: Boolean(checked) } : item
+                                )
+                              )
+                            }
+                          />
+                        </td>
+                        <td className="px-3 py-2 font-semibold">{row.gene}</td>
+                        <td className="px-3 py-2">{row.rsid || "—"}</td>
+                        <td className="px-3 py-2">{row.variantName || "—"}</td>
+                        <td className="px-3 py-2 font-mono">{row.genotype || "—"}</td>
+                        <td className="px-3 py-2">{row.zygosity || "—"}</td>
+                        <td className="px-3 py-2">{row.significance || "—"}</td>
+                        <td className="px-3 py-2">{row.drugs || "—"}</td>
+                        <td className="px-3 py-2">{row.evidenceLevel || "—"}</td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={9} className="px-3 py-4 text-muted-foreground">
+                        No extended-panel rows.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-3">
+              <Input placeholder="Gene" value={extendedDraft.gene} onChange={event => setExtendedDraft(current => ({ ...current, gene: event.target.value }))} />
+              <Input placeholder="rsID" value={extendedDraft.rsid} onChange={event => setExtendedDraft(current => ({ ...current, rsid: event.target.value }))} />
+              <Input placeholder="Variant" value={extendedDraft.variantName} onChange={event => setExtendedDraft(current => ({ ...current, variantName: event.target.value }))} />
+              <Input placeholder="Genotype" value={extendedDraft.genotype} onChange={event => setExtendedDraft(current => ({ ...current, genotype: event.target.value }))} />
+              <Input placeholder="Zygosity" value={extendedDraft.zygosity} onChange={event => setExtendedDraft(current => ({ ...current, zygosity: event.target.value }))} />
+              <Input placeholder="Significance" value={extendedDraft.significance} onChange={event => setExtendedDraft(current => ({ ...current, significance: event.target.value }))} />
+              <Input placeholder="Affected drugs" value={extendedDraft.drugs} onChange={event => setExtendedDraft(current => ({ ...current, drugs: event.target.value }))} />
+              <Input placeholder="Evidence level" value={extendedDraft.evidenceLevel} onChange={event => setExtendedDraft(current => ({ ...current, evidenceLevel: event.target.value }))} />
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                if (!extendedDraft.gene.trim()) return;
+                setPgxExtended(current => [
+                  ...current,
+                  { ...extendedDraft, gene: extendedDraft.gene.trim().toUpperCase() },
+                ]);
+                setExtendedDraft(emptyExtended());
+              }}
+            >
+              Add extended row
+            </Button>
+          </div>
+          <Button type="button" onClick={persist} disabled={save.isPending}>
+            {save.isPending ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+            Save PGx review
+          </Button>
+        </div>
+      ) : null}
+
+      {tab === "Review Case" ? (
+        <div className="grid gap-4 lg:grid-cols-2">
+          <div className="space-y-3 rounded-xl border p-4 lg:col-span-2">
+            <h3 className="text-sm font-semibold">Selected variants for report</h3>
+            {selectedRows.length ? (
+              <ul className="space-y-1 text-sm">
+                {selectedRows.map(row => (
+                  <li key={row.id} className="font-mono text-xs">
+                    {row.gene || "—"} {row.hgvsC || ""} {row.hgvsP || ""} · {row.germlineClassification || "Unclassified"}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="text-sm text-muted-foreground">No variants selected. Choose rows on the Variants tab.</p>
+            )}
+          </div>
+          <div className="space-y-3 rounded-xl border p-4">
+            <h3 className="text-sm font-semibold">Reviewer</h3>
+            <Label htmlFor="rev-name">Reviewer name</Label>
+            <Input id="rev-name" value={reviewerName} onChange={event => setReviewerName(event.target.value)} placeholder="Dr. Smith" />
+            <Label htmlFor="rev-id">Reviewer ID</Label>
+            <Input id="rev-id" value={reviewerCode} onChange={event => setReviewerCode(event.target.value)} placeholder="REV-001" />
+            <Label htmlFor="rev-inst">Institution</Label>
+            <Input id="rev-inst" value={institution} onChange={event => setInstitution(event.target.value)} placeholder="Genolyx Lab" />
+          </div>
+          <div className="space-y-3 rounded-xl border p-4">
+            <h3 className="text-sm font-semibold">Patient</h3>
+            <Label htmlFor="pat-name">Patient name</Label>
+            <Input id="pat-name" value={patientName} onChange={event => setPatientName(event.target.value)} />
+            <Label htmlFor="pat-dob">Date of birth</Label>
+            <Input id="pat-dob" type="date" value={patientDob} onChange={event => setPatientDob(event.target.value)} />
+            <Label htmlFor="pat-gender">Gender</Label>
+            <select
+              id="pat-gender"
+              value={patientGender}
+              onChange={event => setPatientGender(event.target.value)}
+              className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm"
+            >
+              <option value="">—</option>
+              <option>Male</option>
+              <option>Female</option>
+            </select>
+            <Label htmlFor="pat-partner">Partner name</Label>
+            <Input id="pat-partner" value={partnerName} onChange={event => setPartnerName(event.target.value)} placeholder="For a couple test" />
+          </div>
+          <div className="space-y-3 rounded-xl border p-4 lg:col-span-2">
+            <h3 className="text-sm font-semibold">Report languages</h3>
+            <div className="flex flex-wrap gap-4 text-sm">
+              {(["EN", "CN", "KO"] as const).map(code => (
+                <label key={code} className="flex items-center gap-2">
+                  <Checkbox
+                    checked={languages.includes(code)}
+                    onCheckedChange={checked =>
+                      setLanguages(current => {
+                        const next = new Set(current);
+                        if (checked) next.add(code);
+                        else next.delete(code);
+                        return next.size ? Array.from(next) : ["EN"];
+                      })
+                    }
+                  />
+                  {code === "EN" ? "English (EN)" : code === "CN" ? "Chinese (CN)" : "Korean (KO)"}
+                </label>
+              ))}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" variant="outline" onClick={() => setPreview(true)}>
+                Preview HTML
+              </Button>
+              <Button type="button" onClick={persist} disabled={save.isPending}>
+                {save.isPending ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+                Save review
+              </Button>
+            </div>
+            {preview ? (
+              <article className="space-y-3 rounded-xl bg-muted/30 p-4 text-sm">
+                <h4 className="font-semibold">
+                  {patientName || patientAlias} · {languages.join(", ")}
+                </h4>
+                <p>
+                  Reviewer {reviewerName || "—"}
+                  {institution ? `, ${institution}` : ""}
+                  {partnerName ? ` · Partner ${partnerName}` : ""}
+                </p>
+                <p>{banner.title}</p>
+                {selectedRows.map(row => {
+                  const gene = knowledge.find(
+                    item => item.gene === (row.gene || "").toUpperCase() && item.language === (languages[0] || "EN")
+                  );
+                  return (
+                    <section key={row.id} className="border-t pt-2">
+                      <p className="font-mono text-xs">
+                        {row.gene} {row.hgvsC} {row.hgvsP} · {row.germlineClassification || "Unclassified"}
+                      </p>
+                      {gene?.diseaseAssociation ? <p className="mt-1">{gene.diseaseAssociation}</p> : null}
+                      {notes.get(row.id) ? <p className="mt-1 text-muted-foreground">{notes.get(row.id)}</p> : null}
+                    </section>
+                  );
+                })}
+                {pgxGenes.filter(row => row.include).length ? (
+                  <section className="border-t pt-2">
+                    <p className="font-semibold">PGx included</p>
+                    {pgxGenes.filter(row => row.include).map(row => (
+                      <p key={row.gene} className="text-xs">
+                        {row.gene} {row.diplotype} {row.phenotype}
+                      </p>
+                    ))}
+                  </section>
+                ) : null}
+              </article>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {tab === "Gene database" ? (
+        <div className="space-y-3">
+          <p className="text-xs text-muted-foreground">
+            {selectedRows.length
+              ? "Showing genes from the variants checked on the Variants tab."
+              : "No variants are checked, so every gene on this case is listed."}{" "}
+            Text is saved for the organization and reused on later cases.
+          </p>
+          <div className="flex flex-wrap items-center gap-2">
+            <Input
+              value={geneQuery}
+              onChange={event => setGeneQuery(event.target.value)}
+              placeholder="Filter gene or text..."
+              className="max-w-xs"
+            />
+            <select
+              aria-label="Narrative language"
+              value={geneLang}
+              onChange={event => setGeneLang(event.target.value as "EN" | "CN" | "KO")}
+              className="h-10 rounded-lg border border-input bg-background px-3 text-sm"
+            >
+              <option value="EN">English (EN)</option>
+              <option value="CN">Chinese (CN)</option>
+              <option value="KO">Korean (KO)</option>
+            </select>
+            <span className="text-xs text-muted-foreground">{geneScope.length} genes</span>
+          </div>
+          <div className="overflow-auto rounded-xl border">
+            <table className="w-full min-w-[980px] text-left text-xs">
+              <thead className="bg-muted/50 text-[10px] uppercase text-muted-foreground">
+                <tr>
+                  {["Gene", "HGVS", "Transcript", "Disorder", "OMIM", "Inheritance", "Gene function", "Disease association", "Variant notes", ""].map(label => (
+                    <th key={label || "edit"} className="px-3 py-2 font-medium">{label}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {geneScope
+                  .filter(gene => {
+                    const record = knowledge.find(item => item.gene === gene && item.language === geneLang);
+                    const blob = `${gene} ${record?.disorder || ""} ${record?.functionSummary || ""} ${record?.diseaseAssociation || ""}`.toLowerCase();
+                    return blob.includes(geneQuery.trim().toLowerCase());
+                  })
+                  .map(gene => {
+                    const record = knowledge.find(item => item.gene === gene && item.language === geneLang);
+                    const rows = variants.filter(row => (row.gene || "").toUpperCase() === gene);
+                    return (
+                      <tr key={gene} className="border-t align-top">
+                        <td className="px-3 py-2 font-semibold">{gene}</td>
+                        <td className="px-3 py-2 font-mono">
+                          {rows.slice(0, 3).map(row => (
+                            <div key={row.id}>
+                              {row.hgvsC || "—"}
+                              <div>{row.hgvsP || ""}</div>
+                            </div>
+                          ))}
+                        </td>
+                        <td className="px-3 py-2 font-mono">{rows[0]?.transcript || "—"}</td>
+                        <td className="max-w-[10rem] px-3 py-2">{record?.disorder || "—"}</td>
+                        <td className="px-3 py-2">{record?.omimNumber || "—"}</td>
+                        <td className="px-3 py-2">{record?.inheritance || "—"}</td>
+                        <td className="max-w-[14rem] px-3 py-2">{record?.functionSummary || "—"}</td>
+                        <td className="max-w-[14rem] px-3 py-2">{record?.diseaseAssociation || "—"}</td>
+                        <td className="px-3 py-2">
+                          {rows.map(row => (
+                            <button
+                              key={row.id}
+                              type="button"
+                              className="block text-left underline"
+                              onClick={() => {
+                                setNoteVariantId(row.id);
+                                setNoteText(notes.get(row.id) || "");
+                              }}
+                            >
+                              {row.hgvsC || row.id}: {notes.get(row.id) ? "edit" : "add"}
+                            </button>
+                          ))}
+                        </td>
+                        <td className="px-3 py-2">
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() =>
+                              setEditGene({
+                                gene,
+                                language: geneLang,
+                                disorder: record?.disorder || "",
+                                omimNumber: record?.omimNumber || "",
+                                inheritance: record?.inheritance || "",
+                                functionSummary: record?.functionSummary || "",
+                                diseaseAssociation: record?.diseaseAssociation || "",
+                              })
+                            }
+                          >
+                            Edit
+                          </Button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+              </tbody>
+            </table>
+          </div>
+          {editGene ? (
+            <div className="space-y-2 rounded-xl border p-4">
+              <h3 className="text-sm font-semibold">
+                {editGene.gene} · {editGene.language}
+              </h3>
+              <Input placeholder="Disorder" value={editGene.disorder} onChange={event => setEditGene({ ...editGene, disorder: event.target.value })} />
+              <div className="grid gap-2 sm:grid-cols-2">
+                <Input placeholder="OMIM" value={editGene.omimNumber} onChange={event => setEditGene({ ...editGene, omimNumber: event.target.value })} />
+                <Input placeholder="Inheritance" value={editGene.inheritance} onChange={event => setEditGene({ ...editGene, inheritance: event.target.value })} />
+              </div>
+              <Textarea placeholder="Gene function" value={editGene.functionSummary} onChange={event => setEditGene({ ...editGene, functionSummary: event.target.value })} />
+              <Textarea placeholder="Disease association" value={editGene.diseaseAssociation} onChange={event => setEditGene({ ...editGene, diseaseAssociation: event.target.value })} />
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  disabled={saveGene.isPending}
+                  onClick={() =>
+                    saveGene.mutate({
+                      organizationId,
+                      gene: editGene.gene,
+                      language: editGene.language as "EN" | "CN" | "KO",
+                      disorder: editGene.disorder,
+                      omimNumber: editGene.omimNumber,
+                      inheritance: editGene.inheritance,
+                      functionSummary: editGene.functionSummary,
+                      diseaseAssociation: editGene.diseaseAssociation,
+                    })
+                  }
+                >
+                  Save gene
+                </Button>
+                <Button type="button" variant="outline" onClick={() => setEditGene(null)}>
+                  Close
+                </Button>
+              </div>
+            </div>
+          ) : null}
+          {noteVariantId != null ? (
+            <div className="space-y-2 rounded-xl border p-4">
+              <h3 className="text-sm font-semibold">Variant note</h3>
+              <Textarea value={noteText} onChange={event => setNoteText(event.target.value)} />
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  disabled={saveNote.isPending}
+                  onClick={() =>
+                    saveNote.mutate({
+                      organizationId,
+                      caseId,
+                      variantId: noteVariantId,
+                      notes: noteText,
+                    })
+                  }
+                >
+                  Save note
+                </Button>
+                <Button type="button" variant="outline" onClick={() => setNoteVariantId(null)}>
+                  Close
+                </Button>
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
