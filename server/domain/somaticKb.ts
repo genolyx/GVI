@@ -8,6 +8,7 @@ import {
   type AmpLevel,
 } from "./amp";
 import { civicVariantMatches, proteinChangeFromHgvs } from "./proteinChange";
+import { oncoKbApiConfigFromEnv } from "./somatic/oncokbApi";
 
 export type SomaticEvidenceDraft = {
   source: "CIViC" | "OncoKB";
@@ -28,7 +29,6 @@ export type SomaticKnowledge = {
 };
 
 const CIVIC_GRAPHQL = "https://civicdb.org/api/graphql";
-const ONCOKB_ANNOTATE = "https://www.oncokb.org/api/v1/annotate/mutations";
 
 const cache = new Map<string, { at: number; value: SomaticKnowledge }>();
 const CACHE_TTL_MS = 15 * 60 * 1000;
@@ -362,10 +362,17 @@ async function collectOncokb(
   variant: Variant,
   diseaseContext: string | null
 ): Promise<SomaticEvidenceDraft[]> {
-  if (!ENV.oncokbToken) throw new Error("oncokb_not_configured");
+  const config = oncoKbApiConfigFromEnv();
+  if (config.mode === "disabled") throw new Error("oncokb_not_configured");
+  if (config.mode !== "demo" && !config.token) {
+    throw new Error("oncokb_not_configured");
+  }
   const change = proteinChangeFromHgvs(variant.hgvsP);
   const genome = variant.referenceBuild === "GRCh37" ? "GRCh37" : "GRCh38";
-  const headers = { Authorization: `Bearer ${ENV.oncokbToken}` };
+  const headers = config.token
+    ? { Authorization: `Bearer ${config.token}` }
+    : undefined;
+  const annotate = `${config.baseUrl}/api/v1/annotate/mutations`;
   let annotation: OncoKbAnnotation | null = null;
 
   if (variant.gene && change) {
@@ -375,10 +382,9 @@ async function collectOncokb(
       referenceGenome: genome,
     });
     if (diseaseContext) params.set("tumorType", diseaseContext.slice(0, 80));
-    annotation = (await fetchJson(
-      `${ONCOKB_ANNOTATE}/byProteinChange?${params}`,
-      { headers }
-    )) as OncoKbAnnotation;
+    annotation = (await fetchJson(`${annotate}/byProteinChange?${params}`, {
+      headers,
+    })) as OncoKbAnnotation;
   } else if (
     variant.chromosome &&
     variant.position &&
@@ -397,10 +403,9 @@ async function collectOncokb(
       referenceGenome: genome,
     });
     if (diseaseContext) params.set("tumorType", diseaseContext.slice(0, 80));
-    annotation = (await fetchJson(
-      `${ONCOKB_ANNOTATE}/byGenomicChange?${params}`,
-      { headers }
-    )) as OncoKbAnnotation;
+    annotation = (await fetchJson(`${annotate}/byGenomicChange?${params}`, {
+      headers,
+    })) as OncoKbAnnotation;
   }
   if (!annotation) return [];
   return oncokbDrafts(variant, change, diseaseContext, annotation);
@@ -521,7 +526,11 @@ export async function loadSomaticKnowledge(
   if (civic[0].status === "fulfilled") drafts.push(...civic[0].value);
   else sourcesDisabled.push("civic");
 
-  if (!ENV.oncokbToken) {
+  const oncoKbConfig = oncoKbApiConfigFromEnv();
+  const oncoKbConfigured =
+    oncoKbConfig.mode === "demo" ||
+    (oncoKbConfig.mode !== "disabled" && Boolean(oncoKbConfig.token));
+  if (!oncoKbConfigured) {
     sourcesDisabled.push("oncokb");
   } else {
     const oncokb = await Promise.allSettled([

@@ -8,7 +8,11 @@ import {
 } from "../../../drizzle/schema";
 import { requireDb } from "../tenant";
 import { pinnedDiseaseConceptSchema } from "./diseaseMatch";
-import { createOncoKbApiProvider, oncoKbApiConfigFromEnv } from "./oncokbApi";
+import {
+  createOncoKbApiProvider,
+  oncoKbApiConfigFromEnv,
+  resolveOncoKbAccess,
+} from "./oncokbApi";
 import {
   preserveSourceNativePayload,
   type NormalizedSomaticEvidence,
@@ -241,25 +245,26 @@ export async function createOrganizationSomaticEvidenceProvider(
   const oncoKbRegistry = providerRows.find(
     row => row.code.trim().toLowerCase() === "oncokb"
   );
-  const oncoKbGoverned =
-    oncoKbConfig.mode !== "disabled" &&
-    oncoKbRegistry?.enabled === true &&
-    oncoKbRegistry.licenseStatus === "approved" &&
-    Boolean(oncoKbRegistry.licenseReference) &&
-    policyRows[0]?.enableOncoKb === true;
-  const oncoKbProvider: SomaticEvidenceProvider = oncoKbGoverned
-    ? createOncoKbApiProvider({ config: oncoKbConfig })
-    : {
-        knowledgeVersions: {
-          OncoKB:
-            oncoKbConfig.mode === "disabled"
-              ? "disabled_pending_configuration"
-              : "disabled_org_governance",
-        },
-        async collect() {
-          return { records: [], unavailable: [] };
-        },
-      };
+  const oncoKbAccess = resolveOncoKbAccess(oncoKbConfig, {
+    providerEnabled: oncoKbRegistry?.enabled === true,
+    licenseApproved: oncoKbRegistry?.licenseStatus === "approved",
+    hasLicenseReference: Boolean(oncoKbRegistry?.licenseReference),
+    policyEnabled: policyRows[0]?.enableOncoKb === true,
+  });
+  const oncoKbProvider: SomaticEvidenceProvider =
+    oncoKbAccess === "query" || oncoKbAccess === "token_missing"
+      ? createOncoKbApiProvider({ config: oncoKbConfig })
+      : {
+          knowledgeVersions: {
+            OncoKB:
+              oncoKbAccess === "governance"
+                ? "disabled_org_governance"
+                : "disabled_pending_configuration",
+          },
+          async collect() {
+            return { records: [], unavailable: [] };
+          },
+        };
 
   return combineSomaticEvidenceProviders([civicProvider, oncoKbProvider]);
 }

@@ -128,6 +128,34 @@ const metrics: OncoKbApiMetrics = {
   httpStatusCounts: {},
 };
 
+export type OncoKbOrgGate = {
+  providerEnabled: boolean;
+  licenseApproved: boolean;
+  hasLicenseReference: boolean;
+  policyEnabled: boolean;
+};
+
+/**
+ * School and other academic tokens use research mode and may query as soon as
+ * the token is present. Commercial therapeutic use still needs an approved
+ * organization license and an explicit policy opt-in.
+ */
+export function resolveOncoKbAccess(
+  config: OncoKbApiConfig,
+  gate: OncoKbOrgGate
+): "query" | "disabled" | "governance" | "token_missing" {
+  if (config.mode === "disabled") return "disabled";
+  if (config.mode === "demo") return "query";
+  if (!config.token) return "token_missing";
+  if (config.mode === "research") return "query";
+  const governed =
+    gate.providerEnabled &&
+    gate.licenseApproved &&
+    gate.hasLicenseReference &&
+    gate.policyEnabled;
+  return governed ? "query" : "governance";
+}
+
 export function oncoKbApiConfigFromEnv(): OncoKbApiConfig {
   return {
     mode: ENV.oncokbMode,

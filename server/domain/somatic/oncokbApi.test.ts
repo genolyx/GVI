@@ -4,6 +4,7 @@ import {
   createOncoKbApiProvider,
   getOncoKbApiMetrics,
   resetOncoKbApiStateForTests,
+  resolveOncoKbAccess,
   type OncoKbApiConfig,
 } from "./oncokbApi";
 
@@ -83,6 +84,33 @@ function annotation(query: Record<string, unknown>) {
 
 describe("OncoKB API evidence provider", () => {
   beforeEach(() => resetOncoKbApiStateForTests());
+
+  it("lets a school research token query without a commercial policy", () => {
+    const research = config("research");
+    const closed = {
+      providerEnabled: false,
+      licenseApproved: false,
+      hasLicenseReference: false,
+      policyEnabled: false,
+    };
+    expect(resolveOncoKbAccess(research, closed)).toBe("query");
+    expect(
+      resolveOncoKbAccess({ ...research, token: "" }, closed)
+    ).toBe("token_missing");
+    expect(resolveOncoKbAccess(config("demo"), closed)).toBe("query");
+    expect(resolveOncoKbAccess(config("disabled"), closed)).toBe("disabled");
+    expect(resolveOncoKbAccess(config("commercial"), closed)).toBe(
+      "governance"
+    );
+    expect(
+      resolveOncoKbAccess(config("commercial"), {
+        providerEnabled: true,
+        licenseApproved: true,
+        hasLicenseReference: true,
+        policyEnabled: true,
+      })
+    ).toBe("query");
+  });
 
   it("uses batch POST, OncoTree context, source-native levels, and cache", async () => {
     const fetchImpl = vi.fn(async (_input: unknown, init?: RequestInit) => {
