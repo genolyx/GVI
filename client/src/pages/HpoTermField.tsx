@@ -19,17 +19,60 @@ function tokensOf(value: string): string[] {
 
 export function HpoTermField({ value, onChange }: { value: string; onChange: (value: string) => void }) {
   const listId = useId();
+  const utils = trpc.useUtils();
   const tokens = tokensOf(value);
   const [draft, setDraft] = useState("");
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
+  const [resolving, setResolving] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  const valueRef = useRef(value);
+  valueRef.current = value;
+
+  const pieces = draft
+    .split(/[\n,;]+/)
+    .map(part => part.trim())
+    .filter(Boolean);
+  const pastedList = pieces.length > 1;
+  const lookup = pastedList ? "" : draft.trim();
 
   useEffect(() => {
-    const handle = window.setTimeout(() => setQuery(draft.trim()), 120);
+    const handle = window.setTimeout(() => setQuery(lookup), 120);
     return () => window.clearTimeout(handle);
-  }, [draft]);
+  }, [lookup]);
+
+  useEffect(() => {
+    if (!pastedList) return;
+    let cancelled = false;
+    setResolving(true);
+    void (async () => {
+      const resolved: string[] = [];
+      for (const piece of pieces) {
+        try {
+          const hits = await utils.cases.searchHpo.fetch({ q: piece });
+          resolved.push(hits[0]?.name ?? piece);
+        } catch {
+          resolved.push(piece);
+        }
+        if (cancelled) return;
+      }
+      if (cancelled) return;
+      onChange(tokensOf(`${valueRef.current}, ${resolved.join(", ")}`).join(", "));
+      setDraft("");
+      setQuery("");
+      setActive(0);
+      setOpen(false);
+      setResolving(false);
+      inputRef.current?.focus();
+    })();
+    return () => {
+      cancelled = true;
+      setResolving(false);
+    };
+    // pieces is derived from draft; resolving runs once per pasted list.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft, pastedList, utils]);
 
   const search = trpc.cases.searchHpo.useQuery(
     { q: query },
@@ -124,11 +167,12 @@ export function HpoTermField({ value, onChange }: { value: string; onChange: (va
           />
         </div>
       </div>
-      {open && query.length >= 2 ? (
+      {open && (query.length >= 2 || resolving) ? (
         <ul id={listId} role="listbox" className="absolute z-30 mt-1 max-h-64 w-full overflow-auto rounded-lg border border-border bg-popover p-1 text-sm shadow-lg">
+          {resolving ? <li className="px-3 py-2 text-muted-foreground">Matching HPO terms…</li> : null}
           {search.isError ? <li className="px-3 py-2 text-muted-foreground">Could not search HPO terms.</li> : null}
-          {!search.isError && search.isFetching && suggestions.length === 0 ? <li className="px-3 py-2 text-muted-foreground">Searching HPO…</li> : null}
-          {!search.isError && !search.isFetching && suggestions.length === 0 ? <li className="px-3 py-2 text-muted-foreground">No HPO term is close to that.</li> : null}
+          {!resolving && !search.isError && search.isFetching && suggestions.length === 0 ? <li className="px-3 py-2 text-muted-foreground">Searching HPO…</li> : null}
+          {!resolving && !search.isError && !search.isFetching && query.length >= 2 && suggestions.length === 0 ? <li className="px-3 py-2 text-muted-foreground">No HPO term is close to that.</li> : null}
           {suggestions.map((item, index) => (
             <li
               key={item.id}

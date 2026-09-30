@@ -133,6 +133,13 @@ export type HpoSuggestion = {
   geneCount: number;
 };
 
+function wordsCover(query: string, name: string): boolean {
+  const words = query.split(" ").filter(word => word.length >= 2);
+  if (words.length < 2) return false;
+  const nameWords = name.split(" ");
+  return words.every(word => nameWords.some(part => part.startsWith(word)));
+}
+
 function editDistance(left: string, right: string, max: number): number {
   if (Math.abs(left.length - right.length) > max) return max + 1;
   let previous = Array.from({ length: right.length + 1 }, (_, index) => index);
@@ -161,6 +168,23 @@ export function searchHpoTerms(
   raw: string,
   limit = 8
 ): HpoSuggestion[] {
+  const pieces = raw
+    .split(/[\n,;]+/)
+    .map(piece => piece.trim())
+    .filter(Boolean);
+  if (pieces.length > 1) {
+    const seen = new Set<string>();
+    const merged: HpoSuggestion[] = [];
+    for (const piece of pieces) {
+      for (const hit of searchHpoTerms(index, piece, 1)) {
+        if (seen.has(hit.id)) continue;
+        seen.add(hit.id);
+        merged.push(hit);
+      }
+    }
+    return merged;
+  }
+
   const query = normalizeLabel(raw);
   const compact = raw
     .trim()
@@ -182,6 +206,11 @@ export function searchHpoTerms(
     else if (idDigits.length >= 3 && digits.startsWith(idDigits)) score = 1;
     else if (query.length >= 2 && name === query) score = 2;
     else if (query.length >= 2 && name.startsWith(query)) score = 3;
+    else if (
+      query.length >= 2 &&
+      wordsCover(query, name)
+    )
+      score = 4;
     else if (
       query.length >= 2 &&
       name.split(" ").some(word => word.startsWith(query))

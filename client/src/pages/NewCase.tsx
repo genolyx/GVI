@@ -18,7 +18,7 @@ import {
   Loader2,
   ShieldCheck,
 } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
 import {
@@ -31,8 +31,11 @@ import { HpoTermField } from "./HpoTermField";
 import { GermlineOrderFields } from "./GermlineOrderFields";
 import {
   defaultGermlineOrder,
+  germlineOrderMissing,
   type GermlineOrderInput,
 } from "@shared/germlineOrder";
+import { detectReferenceBuild } from "@shared/vcfAssembly";
+import { readVcfHeader } from "@/lib/readVcfHeader";
 
 type FormState = {
   projectId: string;
@@ -40,7 +43,7 @@ type FormState = {
   patientAlias: string;
   purpose: "germline" | "somatic";
   inputType: "vcf";
-  referenceBuild: "GRCh37" | "GRCh38";
+  referenceBuild: "" | "GRCh37" | "GRCh38";
   panelName: string;
   indication: string;
   phenotypeText: string;
@@ -90,7 +93,7 @@ export default function NewCasePage() {
     patientAlias: "",
     purpose: "germline",
     inputType: "vcf",
-    referenceBuild: "GRCh38",
+    referenceBuild: "",
     panelName: "",
     indication: "",
     phenotypeText: "",
@@ -123,6 +126,9 @@ export default function NewCasePage() {
   const [bedText, setBedText] = useState("");
   const [bedFileName, setBedFileName] = useState("");
   const [order, setOrder] = useState<GermlineOrderInput>(defaultGermlineOrder);
+  const [assemblyNote, setAssemblyNote] = useState("");
+  const [assemblyFromHeader, setAssemblyFromHeader] = useState(false);
+  const assemblyRequest = useRef(0);
   const germlinePanels = trpc.germlinePanels.list.useQuery(
     { organizationId: activeOrganizationId || 0 },
     { enabled: Boolean(activeOrganizationId) }
@@ -175,7 +181,8 @@ export default function NewCasePage() {
     if (
       !activeOrganizationId ||
       !form.projectId ||
-      !form.consentClinicalAnalysis
+      !form.consentClinicalAnalysis ||
+      !form.referenceBuild
     )
       return;
     try {
@@ -185,7 +192,10 @@ export default function NewCasePage() {
         organizationId: activeOrganizationId,
         projectId: Number(form.projectId),
         caseNumber: form.caseNumber,
-        patientAlias: form.patientAlias,
+        patientAlias:
+          form.patientAlias.trim() ||
+          (form.purpose === "germline" ? order.patientName.trim() : "") ||
+          form.caseNumber.trim(),
         purpose: form.purpose,
         inputType: form.inputType,
         referenceBuild: form.referenceBuild,
@@ -279,26 +289,25 @@ export default function NewCasePage() {
       toast.error(message);
     }
   };
-  const fileReady = Boolean(vcf);
-  const somaticReady =
-    form.purpose === "germline" ||
-    Boolean(
-      form.tumorCode &&
-        form.tumorLabel &&
-        form.primarySite &&
-        form.specimenCollectionSite &&
-        form.panelManufacturer &&
-        form.panelName &&
-        form.panelVersion
-    );
-  const valid = Boolean(
-    form.projectId &&
-      form.caseNumber.length >= 2 &&
-      form.patientAlias &&
-      fileReady &&
-      somaticReady &&
-      form.consentClinicalAnalysis
-  );
+  const missing = [
+    !form.projectId ? "Project" : "",
+    form.caseNumber.trim().length < 2 ? "Case number" : "",
+    !form.referenceBuild ? "Reference build" : "",
+    !vcf ? "VCF" : "",
+    ...(form.purpose === "somatic"
+      ? [
+          !form.tumorCode.trim() ? "Tumor code" : "",
+          !form.tumorLabel.trim() ? "Primary tumor type" : "",
+          !form.primarySite.trim() ? "Primary site" : "",
+          !form.specimenCollectionSite.trim() ? "Specimen collection site" : "",
+          !form.panelManufacturer.trim() ? "Panel manufacturer" : "",
+          !form.panelName.trim() ? "Target panel" : "",
+          !form.panelVersion.trim() ? "Panel version" : "",
+        ]
+      : germlineOrderMissing(order)),
+    !form.consentClinicalAnalysis ? "Clinical analysis consent" : "",
+  ].filter(Boolean);
+  const valid = missing.length === 0;
   if (!hasPermission("case:create"))
     return (
       <div className="space-y-7">
@@ -408,11 +417,14 @@ export default function NewCasePage() {
         </CardHeader>
         <CardContent className="space-y-5">
           <div className="space-y-2">
-            <Label>Project</Label>
+            <Label>
+              Project
+              <span className="text-destructive"> *</span>
+            </Label>
             <select
               value={form.projectId}
               onChange={e => update("projectId", e.target.value)}
-              className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm"
+              className={`h-10 w-full rounded-lg border bg-background px-3 text-sm ${form.projectId ? "border-input" : "border-destructive"}`}
             >
               <option value="">Select project</option>
               {projects.data?.map(project => (
@@ -423,7 +435,7 @@ export default function NewCasePage() {
             </select>
           </div>
           <div className="grid gap-5 sm:grid-cols-2">
-            <Field label="Case number">
+            <Field label="Case number" required invalid={form.caseNumber.trim().length < 2}>
               <Input
                 value={form.caseNumber}
                 onChange={e => update("caseNumber", e.target.value)}
@@ -433,7 +445,7 @@ export default function NewCasePage() {
               <Input
                 value={form.patientAlias}
                 onChange={e => update("patientAlias", e.target.value)}
-                placeholder="De-identified alias"
+                placeholder="Optional. Defaults to the patient name or case number"
               />
             </Field>
           </div>
@@ -471,24 +483,42 @@ export default function NewCasePage() {
             </Field>
           </div>
           <div className="grid gap-5 sm:grid-cols-2">
-            <Field label="Reference build">
+            <Field label="Reference build" required invalid={!form.referenceBuild}>
               <select
                 value={form.referenceBuild}
-                onChange={e =>
+                onChange={e => {
                   update(
                     "referenceBuild",
                     e.target.value as FormState["referenceBuild"]
-                  )
-                }
-                className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm"
+                  );
+                  setAssemblyFromHeader(false);
+                  setAssemblyNote("");
+                }}
+                className={`h-10 w-full rounded-lg border px-3 text-sm ${
+                  assemblyFromHeader
+                    ? "border-emerald-500 bg-emerald-50 text-emerald-950"
+                    : form.referenceBuild
+                      ? "border-input bg-background"
+                      : "border-destructive bg-background"
+                }`}
               >
-                <option value="GRCh38">GRCh38</option>
-                <option value="GRCh37">GRCh37</option>
+                <option value="">Select reference build</option>
+                <option value="GRCh38">GRCh38 (hg38)</option>
+                <option value="GRCh37">GRCh37 (hg19)</option>
               </select>
               {form.referenceBuild === "GRCh37" ? (
                 <p className="mt-1 text-[10px] leading-4 text-muted-foreground">
                   Submitted GRCh37 coordinates are lifted to GRCh38 before
                   engine analysis. Alleles stay on the original build.
+                </p>
+              ) : null}
+              {assemblyFromHeader ? (
+                <p className="mt-1 text-[10px] leading-4 text-emerald-800">
+                  {assemblyNote || "Filled from the VCF header."}
+                </p>
+              ) : assemblyNote ? (
+                <p className="mt-1 text-[10px] leading-4 text-muted-foreground">
+                  {assemblyNote}
                 </p>
               ) : null}
             </Field>
@@ -632,7 +662,7 @@ export default function NewCasePage() {
                 </select>
               </Field>
               <div className="grid gap-5 sm:grid-cols-2">
-                <Field label="Tumor code *">
+                <Field label="Tumor code" required invalid={!form.tumorCode.trim()}>
                   <Input
                     disabled={Boolean(form.tumorTypeId)}
                     value={form.tumorCode}
@@ -646,7 +676,7 @@ export default function NewCasePage() {
                     placeholder="e.g. NSCLC"
                   />
                 </Field>
-                <Field label="Primary tumor type *">
+                <Field label="Primary tumor type" required invalid={!form.tumorLabel.trim()}>
                   <Input
                     disabled={Boolean(form.tumorTypeId)}
                     value={form.tumorLabel}
@@ -660,7 +690,7 @@ export default function NewCasePage() {
                     placeholder="Non-Small Cell Lung Cancer"
                   />
                 </Field>
-                <Field label="Primary site *">
+                <Field label="Primary site" required invalid={!form.primarySite.trim()}>
                   <Input
                     disabled={Boolean(form.tumorTypeId)}
                     value={form.primarySite}
@@ -682,7 +712,7 @@ export default function NewCasePage() {
                     placeholder="Primary, recurrent, or metastatic"
                   />
                 </Field>
-                <Field label="Specimen collection site *">
+                <Field label="Specimen collection site" required invalid={!form.specimenCollectionSite.trim()}>
                   <Input
                     value={form.specimenCollectionSite}
                     onChange={e =>
@@ -727,6 +757,10 @@ export default function NewCasePage() {
                       referenceBuild:
                         selected?.version.genomeBuild ?? current.referenceBuild,
                     }));
+                    if (selected?.version.genomeBuild) {
+                      setAssemblyFromHeader(false);
+                      setAssemblyNote("");
+                    }
                   }}
                   className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm"
                 >
@@ -740,7 +774,7 @@ export default function NewCasePage() {
                 </select>
               </Field>
               <div className="grid gap-5 sm:grid-cols-3">
-                <Field label="Panel manufacturer *">
+                <Field label="Panel manufacturer" required invalid={!form.panelManufacturer.trim()}>
                   <Input
                     disabled={Boolean(form.panelVersionId)}
                     value={form.panelManufacturer}
@@ -754,7 +788,7 @@ export default function NewCasePage() {
                     placeholder="Roche, Illumina…"
                   />
                 </Field>
-                <Field label="Target panel *">
+                <Field label="Target panel" required invalid={!form.panelName.trim()}>
                   <Input
                     disabled={Boolean(form.panelVersionId)}
                     value={form.panelName}
@@ -768,7 +802,7 @@ export default function NewCasePage() {
                     placeholder="Panel name"
                   />
                 </Field>
-                <Field label="Panel version *">
+                <Field label="Panel version" required invalid={!form.panelVersion.trim()}>
                   <Input
                     disabled={Boolean(form.panelVersionId)}
                     value={form.panelVersion}
@@ -816,11 +850,50 @@ export default function NewCasePage() {
         <CardContent className="space-y-8">
           <FileInput
             label="VCF or VCF.GZ"
+            required
+            invalid={!vcf}
             accept=".vcf,.vcf.gz"
             file={vcf}
-            onChange={setVcf}
+            onChange={file => {
+              const request = ++assemblyRequest.current;
+              setVcf(file);
+              if (!file) {
+                if (assemblyFromHeader) {
+                  update("referenceBuild", "");
+                  setAssemblyFromHeader(false);
+                }
+                setAssemblyNote("");
+                return;
+              }
+              void readVcfHeader(file)
+                .then(header => {
+                  if (assemblyRequest.current !== request) return;
+                  const detected = detectReferenceBuild(header);
+                  if (!detected) {
+                    setAssemblyFromHeader(false);
+                    setAssemblyNote(
+                      "The VCF header does not say whether this is hg38 or hg19. Choose the reference build."
+                    );
+                    return;
+                  }
+                  update("referenceBuild", detected.build);
+                  setAssemblyFromHeader(true);
+                  setAssemblyNote(
+                    detected.build === "GRCh38"
+                      ? "Filled from the VCF header: GRCh38 (hg38)."
+                      : "Filled from the VCF header: GRCh37 (hg19)."
+                  );
+                })
+                .catch(() => {
+                  if (assemblyRequest.current !== request) return;
+                  setAssemblyFromHeader(false);
+                  setAssemblyNote(
+                    "The VCF header could not be read. Choose the reference build."
+                  );
+                });
+            }}
           />
-          {activeOrganizationId && form.purpose === "germline" ? (
+          {activeOrganizationId && form.purpose === "germline" && form.referenceBuild ? (
             <CaseVcfFilters
               organizationId={activeOrganizationId}
               referenceBuild={form.referenceBuild}
@@ -865,7 +938,11 @@ export default function NewCasePage() {
           ].map(([key, title, desc]) => (
             <label
               key={key}
-              className="flex items-start gap-3 rounded-xl border border-border/70 p-4"
+              className={`flex items-start gap-3 rounded-xl border p-4 ${
+                key === "consentClinicalAnalysis" && !form.consentClinicalAnalysis
+                  ? "border-destructive"
+                  : "border-border/70"
+              }`}
             >
               <Checkbox
                 checked={form[key as keyof FormState] as boolean}
@@ -896,6 +973,11 @@ export default function NewCasePage() {
               <Progress value={progress} />
             </div>
           ) : null}
+          {missing.length ? (
+            <p className="text-sm text-destructive">
+              Fill these to submit: {missing.join(", ")}.
+            </p>
+          ) : null}
           <div className="flex flex-col-reverse gap-3 border-t border-border/70 pt-5 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex items-start gap-2 text-[11px] leading-5 text-muted-foreground">
               <Info className="mt-0.5 size-3.5 shrink-0" />
@@ -919,15 +1001,30 @@ export default function NewCasePage() {
 
 function Field({
   label,
+  required,
+  invalid,
   children,
 }: {
   label: string;
+  required?: boolean;
+  invalid?: boolean;
   children: React.ReactNode;
 }) {
   return (
     <div className="space-y-2">
-      <Label>{label}</Label>
-      {children}
+      <Label>
+        {label}
+        {required ? <span className="text-destructive"> *</span> : null}
+      </Label>
+      <div
+        className={
+          invalid
+            ? "[&_input]:!border-destructive [&_select]:!border-destructive [&_textarea]:!border-destructive"
+            : undefined
+        }
+      >
+        {children}
+      </div>
     </div>
   );
 }
@@ -935,22 +1032,35 @@ function FileInput({
   label,
   accept,
   file,
+  required,
+  invalid,
   onChange,
 }: {
   label: string;
   accept: string;
   file: File | null;
+  required?: boolean;
+  invalid?: boolean;
   onChange: (file: File | null) => void;
 }) {
   return (
     <label
-      className={`flex cursor-pointer items-center gap-4 rounded-xl border border-dashed p-4 ${file ? "border-primary/40 bg-primary/[0.035]" : "border-border hover:border-primary/30"}`}
+      className={`flex cursor-pointer items-center gap-4 rounded-xl border border-dashed p-4 ${
+        invalid
+          ? "border-destructive"
+          : file
+            ? "border-primary/40 bg-primary/[0.035]"
+            : "border-border hover:border-primary/30"
+      }`}
     >
       <div className="grid size-10 place-items-center rounded-xl bg-muted text-muted-foreground">
         <FileUp className="size-4" />
       </div>
       <div className="min-w-0 flex-1">
-        <p className="text-sm font-medium">{file ? file.name : label}</p>
+        <p className="text-sm font-medium">
+          {file ? file.name : label}
+          {required && !file ? <span className="text-destructive"> *</span> : null}
+        </p>
         <p className="mt-1 truncate text-[11px] text-muted-foreground">
           {file
             ? `${(file.size / 1024 / 1024).toFixed(2)} MB`

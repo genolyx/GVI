@@ -1,31 +1,49 @@
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
+import { cn } from "@/lib/utils";
 import {
-  GERMLINE_TEST_CATEGORIES,
-  GERMLINE_TEST_CATEGORY_LABEL,
+  GERMLINE_EXTENDED_PROGRAMS,
+  GERMLINE_SERVICE_LABEL,
+  GERMLINE_SERVICES,
+  extendedProgramPatients,
+  normalizeGermlineOrder,
   type GermlineOrderInput,
+  type GermlineService,
 } from "@shared/germlineOrder";
-import { cloneElement, isValidElement, useId, useState, type ReactElement, type ReactNode } from "react";
+import { cloneElement, isValidElement, useId, type ReactElement, type ReactNode } from "react";
 
 const selectClass =
   "h-10 w-full rounded-lg border border-input bg-background px-3 text-sm";
 
 function Field({
   label,
+  required,
+  invalid,
   children,
 }: {
   label: string;
+  required?: boolean;
+  invalid?: boolean;
   children: ReactNode;
 }) {
   const id = useId();
+  const child = isValidElement(children)
+    ? cloneElement(children as ReactElement<{ id?: string; className?: string }>, {
+        id,
+        className: cn(
+          (children.props as { className?: string }).className,
+          invalid && "border-destructive"
+        ),
+      })
+    : children;
   return (
     <div className="space-y-2">
-      <Label htmlFor={id}>{label}</Label>
-      {isValidElement(children)
-        ? cloneElement(children as ReactElement<{ id?: string }>, { id })
-        : children}
+      <Label htmlFor={id}>
+        {label}
+        {required ? <span className="text-destructive"> *</span> : null}
+      </Label>
+      {child}
     </div>
   );
 }
@@ -38,69 +56,93 @@ export function GermlineOrderFields({
   onChange: (value: GermlineOrderInput) => void;
 }) {
   const set = (patch: Partial<GermlineOrderInput>) =>
-    onChange({ ...value, ...patch });
-  const [showPatient2, setShowPatient2] = useState(
-    Boolean(value.patient2Name || value.patient2Birth || value.patient2Gender)
-  );
-  const [showPatient3, setShowPatient3] = useState(
-    Boolean(value.patient3Name || value.patient3Birth || value.patient3Gender)
-  );
+    onChange(normalizeGermlineOrder({ ...value, ...patch }));
+  const service = value.service ?? "carrier_screening";
+  const patients = extendedProgramPatients(value.otherTestType);
+  const programOptions = GERMLINE_EXTENDED_PROGRAMS.some(
+    ([code]) => code === value.otherTestType
+  )
+    ? GERMLINE_EXTENDED_PROGRAMS
+    : value.otherTestType
+      ? ([
+          ...GERMLINE_EXTENDED_PROGRAMS,
+          [value.otherTestType, `${value.otherTestType} (legacy)`] as const,
+        ] as const)
+      : GERMLINE_EXTENDED_PROGRAMS;
   return (
     <div className="grid gap-5 lg:grid-cols-2">
-      <section className="space-y-4 rounded-xl border border-border/70 p-4">
-        <h3 className="text-sm font-semibold">Test type and report pairing</h3>
-        <Field label="Test category">
+      <section className="space-y-4 rounded-xl border border-border/70 p-4 lg:col-span-2">
+        <h3 className="text-sm font-semibold">Service</h3>
+        <Field label="Service">
           <select
             className={selectClass}
-            value={value.testCategory}
+            value={service}
             onChange={event =>
-              set({
-                testCategory: event.target.value as GermlineOrderInput["testCategory"],
-              })
+              set({ service: event.target.value as GermlineService })
             }
           >
-            {GERMLINE_TEST_CATEGORIES.map(item => (
+            {GERMLINE_SERVICES.map(item => (
               <option key={item} value={item}>
-                {GERMLINE_TEST_CATEGORY_LABEL[item]}
+                {GERMLINE_SERVICE_LABEL[item]}
               </option>
             ))}
           </select>
         </Field>
-        {value.testCategory === "other" ? (
-          <Field label="Other test type">
-            <Input
+        {service === "extended_services" ? (
+          <Field label="Primary" required invalid={!value.otherTestType}>
+            <select
+              className={selectClass}
               value={value.otherTestType}
-              onChange={event => set({ otherTestType: event.target.value })}
-            />
+              onChange={event =>
+                set({
+                  service: "extended_services",
+                  otherTestType: event.target.value,
+                })
+              }
+            >
+              <option value="">— Select extended program —</option>
+              {programOptions.map(([code, label]) => (
+                <option key={code} value={code}>
+                  {label}
+                </option>
+              ))}
+            </select>
           </Field>
         ) : null}
         <Field label="Package code (test type)">
-          <Input
-            value={value.packageCode}
-            onChange={event => set({ packageCode: event.target.value })}
-            placeholder="CarrierScreening"
-          />
+          <Input value={value.packageCode} readOnly tabIndex={-1} className="bg-muted" />
         </Field>
-        <Field label="Report mode">
-          <select
-            className={selectClass}
-            value={value.reportMode}
-            onChange={event =>
-              set({ reportMode: event.target.value as GermlineOrderInput["reportMode"] })
-            }
-          >
-            <option value="single">Single</option>
-            <option value="couples">Couples</option>
-          </select>
-        </Field>
-        {value.reportMode === "couples" ? (
-          <Field label="Partner order ID">
-            <Input
-              value={value.partnerCaseNumber}
-              onChange={event => set({ partnerCaseNumber: event.target.value })}
-              placeholder="Other case number"
-            />
-          </Field>
+      </section>
+      <section className="space-y-4 rounded-xl border border-border/70 p-4">
+        <h3 className="text-sm font-semibold">Test type and report pairing</h3>
+        {service === "carrier_screening" ? (
+          <>
+            <Field label="Report mode">
+              <select
+                className={selectClass}
+                value={value.reportMode}
+                onChange={event =>
+                  set({ reportMode: event.target.value as GermlineOrderInput["reportMode"] })
+                }
+              >
+                <option value="single">Single</option>
+                <option value="couples">Couples</option>
+              </select>
+            </Field>
+            {value.reportMode === "couples" ? (
+              <Field
+                label="Partner order ID"
+                required
+                invalid={!value.partnerCaseNumber.trim()}
+              >
+                <Input
+                  value={value.partnerCaseNumber}
+                  onChange={event => set({ partnerCaseNumber: event.target.value })}
+                  placeholder="Other case number"
+                />
+              </Field>
+            ) : null}
+          </>
         ) : null}
         <Field label="Prior order (follow-up)">
           <Input
@@ -112,10 +154,10 @@ export function GermlineOrderFields({
       <section className="space-y-4 rounded-xl border border-border/70 p-4">
         <h3 className="text-sm font-semibold">Hospital and identifiers</h3>
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Hospital name">
+          <Field label="Hospital name" required invalid={!value.hospitalName.trim()}>
             <Input value={value.hospitalName} onChange={event => set({ hospitalName: event.target.value })} />
           </Field>
-          <Field label="Doctor">
+          <Field label="Doctor" required invalid={!value.doctor.trim()}>
             <Input value={value.doctor} onChange={event => set({ doctor: event.target.value })} />
           </Field>
           <Field label="Medical record ID">
@@ -125,19 +167,6 @@ export function GermlineOrderFields({
             <Input value={value.sampleId} onChange={event => set({ sampleId: event.target.value })} />
           </Field>
         </div>
-        <Field label="Affected">
-          <select
-            className={selectClass}
-            value={value.affected}
-            onChange={event =>
-              set({ affected: event.target.value as GermlineOrderInput["affected"] })
-            }
-          >
-            <option value="">Select…</option>
-            <option value="Yes">Yes</option>
-            <option value="No">No</option>
-          </select>
-        </Field>
         <Field label="Clinical information">
           <Textarea
             value={value.clinicalInformation}
@@ -148,14 +177,14 @@ export function GermlineOrderFields({
       </section>
       <section className="space-y-4 rounded-xl border border-border/70 p-4">
         <h3 className="text-sm font-semibold">Patient</h3>
-        <Field label="Patient name">
+        <Field label="Patient name" required invalid={!value.patientName.trim()}>
           <Input value={value.patientName} onChange={event => set({ patientName: event.target.value })} />
         </Field>
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Patient birth">
+          <Field label="Patient birth" required invalid={!value.patientBirth.trim()}>
             <Input type="date" value={value.patientBirth} onChange={event => set({ patientBirth: event.target.value })} />
           </Field>
-          <Field label="Patient gender">
+          <Field label="Patient gender" required invalid={!value.patientGender}>
             <select
               className={selectClass}
               value={value.patientGender}
@@ -170,17 +199,32 @@ export function GermlineOrderFields({
             </select>
           </Field>
         </div>
-        {showPatient2 ? (
+        <Field label="Affected" required invalid={!value.affected}>
+          <select
+            className={selectClass}
+            value={value.affected}
+            onChange={event =>
+              set({ affected: event.target.value as GermlineOrderInput["affected"] })
+            }
+          >
+            <option value="">Select…</option>
+            <option value="Yes">Yes</option>
+            <option value="No">No</option>
+          </select>
+        </Field>
+        {patients.patient2 ? (
           <div className="space-y-3 border-t border-border/70 pt-3">
-            <p className="text-xs font-medium">Patient 2</p>
-            <Field label="Name">
+            <p className="text-xs font-medium">
+              Patient 2 (ExomeDuo, CouplesCarrier, ExomeMaxDuo, or trio)
+            </p>
+            <Field label="Name" required invalid={!value.patient2Name.trim()}>
               <Input value={value.patient2Name} onChange={event => set({ patient2Name: event.target.value })} />
             </Field>
             <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="Birth">
+              <Field label="Birth" required invalid={!value.patient2Birth.trim()}>
                 <Input type="date" value={value.patient2Birth} onChange={event => set({ patient2Birth: event.target.value })} />
               </Field>
-              <Field label="Gender">
+              <Field label="Gender" required invalid={!value.patient2Gender}>
                 <select
                   className={selectClass}
                   value={value.patient2Gender}
@@ -195,7 +239,7 @@ export function GermlineOrderFields({
                 </select>
               </Field>
             </div>
-            <Field label="Affected">
+            <Field label="Affected" required invalid={!value.patient2Affected}>
               <select
                 className={selectClass}
                 value={value.patient2Affected}
@@ -209,22 +253,18 @@ export function GermlineOrderFields({
               </select>
             </Field>
           </div>
-        ) : (
-          <Button type="button" variant="outline" size="sm" onClick={() => setShowPatient2(true)}>
-            Add patient 2
-          </Button>
-        )}
-        {showPatient3 ? (
+        ) : null}
+        {patients.patient3 ? (
           <div className="space-y-3 border-t border-border/70 pt-3">
-            <p className="text-xs font-medium">Patient 3</p>
-            <Field label="Name">
+            <p className="text-xs font-medium">Patient 3 (ExomeTrio / ExomeMaxTrio)</p>
+            <Field label="Name" required invalid={!value.patient3Name.trim()}>
               <Input value={value.patient3Name} onChange={event => set({ patient3Name: event.target.value })} />
             </Field>
             <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="Birth">
+              <Field label="Birth" required invalid={!value.patient3Birth.trim()}>
                 <Input type="date" value={value.patient3Birth} onChange={event => set({ patient3Birth: event.target.value })} />
               </Field>
-              <Field label="Gender">
+              <Field label="Gender" required invalid={!value.patient3Gender}>
                 <select
                   className={selectClass}
                   value={value.patient3Gender}
@@ -239,7 +279,7 @@ export function GermlineOrderFields({
                 </select>
               </Field>
             </div>
-            <Field label="Affected">
+            <Field label="Affected" required invalid={!value.patient3Affected}>
               <select
                 className={selectClass}
                 value={value.patient3Affected}
@@ -253,22 +293,18 @@ export function GermlineOrderFields({
               </select>
             </Field>
           </div>
-        ) : (
-          <Button type="button" variant="outline" size="sm" onClick={() => setShowPatient3(true)}>
-            Add patient 3
-          </Button>
-        )}
+        ) : null}
       </section>
       <section className="space-y-4 rounded-xl border border-border/70 p-4">
         <h3 className="text-sm font-semibold">Sample and report details</h3>
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Sample collection date">
+          <Field label="Sample collection date" required invalid={!value.sampleCollectionDate.trim()}>
             <Input type="date" value={value.sampleCollectionDate} onChange={event => set({ sampleCollectionDate: event.target.value })} />
           </Field>
           <Field label="Receipt date">
             <Input type="date" value={value.receiptDate} onChange={event => set({ receiptDate: event.target.value })} />
           </Field>
-          <Field label="Report language">
+          <Field label="Report language" required invalid={!value.reportLanguage}>
             <select
               className={selectClass}
               value={value.reportLanguage}
@@ -283,7 +319,7 @@ export function GermlineOrderFields({
               <option value="EN,CN">English + Chinese</option>
             </select>
           </Field>
-          <Field label="Report type">
+          <Field label="Report type" required invalid={!value.reportType}>
             <select
               className={selectClass}
               value={value.reportType}

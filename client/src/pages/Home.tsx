@@ -21,6 +21,7 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useOrganization } from "@/contexts/OrganizationContext";
 import { trpc } from "@/lib/trpc";
+import { formatDate } from "@/lib/datetime";
 import {
   workbenchStatusClass,
   workbenchStatusLabel,
@@ -151,6 +152,10 @@ export default function Home() {
   const [projectOpen, setProjectOpen] = useState(false);
   const [projectName, setProjectName] = useState("");
   const [projectCode, setProjectCode] = useState("");
+  const [renameId, setRenameId] = useState<number | null>(null);
+  const [renameName, setRenameName] = useState("");
+  const [renameCode, setRenameCode] = useState("");
+  const [deleteId, setDeleteId] = useState<number | null>(null);
   const summary = trpc.dashboard.summary.useQuery(
     { organizationId: activeOrganizationId || 0 },
     { enabled: Boolean(activeOrganizationId), refetchInterval: 4000 }
@@ -166,6 +171,22 @@ export default function Home() {
       setProjectName("");
       setProjectCode("");
       toast.success("Project created.");
+    },
+    onError: error => toast.error(error.message),
+  });
+  const updateProject = trpc.projects.update.useMutation({
+    onSuccess: async () => {
+      await projects.refetch();
+      setRenameId(null);
+      toast.success("Project updated.");
+    },
+    onError: error => toast.error(error.message),
+  });
+  const deleteProject = trpc.projects.delete.useMutation({
+    onSuccess: async () => {
+      await projects.refetch();
+      setDeleteId(null);
+      toast.success("Project deleted.");
     },
     onError: error => toast.error(error.message),
   });
@@ -303,6 +324,154 @@ export default function Home() {
           </Button>
         </div>
       ) : null}
+      {projects.data?.length ? (
+        <Card className="clinical-card border-border/70 shadow-none">
+          <CardHeader>
+            <CardTitle className="font-display text-base">Projects</CardTitle>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Cases in {activeOrganization.name} are filed under one of these projects.
+            </p>
+          </CardHeader>
+          <CardContent className="px-0">
+            <div className="divide-y divide-border/60">
+              {projects.data.map(project => (
+                <div
+                  key={project.id}
+                  className="flex items-center justify-between gap-4 px-5 py-3.5"
+                >
+                  <div className="min-w-0">
+                    <p className="font-mono text-xs font-semibold">{project.code}</p>
+                    <p className="mt-1 truncate text-sm">{project.name}</p>
+                    <p className="mt-1 text-[11px] text-muted-foreground">
+                      {project.caseCount.toLocaleString()}{" "}
+                      {project.caseCount === 1 ? "case" : "cases"} ·{" "}
+                      {formatDate(project.createdAt)}
+                    </p>
+                  </div>
+                  {hasPermission("project:manage") ? (
+                    <div className="flex shrink-0 gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          setRenameId(project.id);
+                          setRenameName(project.name);
+                          setRenameCode(project.code);
+                        }}
+                      >
+                        Rename
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setDeleteId(project.id)}
+                      >
+                        Delete
+                      </Button>
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
+      <Dialog
+        open={renameId !== null}
+        onOpenChange={open => {
+          if (!open) setRenameId(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Rename project</DialogTitle>
+            <DialogDescription>
+              The code is what appears before the name when a case is created.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-4 py-3">
+            <div className="space-y-2">
+              <Label>Project name</Label>
+              <Input
+                value={renameName}
+                onChange={event => setRenameName(event.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Project code</Label>
+              <Input
+                value={renameCode}
+                onChange={event =>
+                  setRenameCode(
+                    event.target.value
+                      .toUpperCase()
+                      .replace(/[^A-Z0-9_-]/g, "")
+                  )
+                }
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              disabled={updateProject.isPending || renameName.trim().length < 2 || !renameCode}
+              onClick={() => {
+                if (renameId === null) return;
+                updateProject.mutate({
+                  organizationId: activeOrganizationId,
+                  projectId: renameId,
+                  name: renameName,
+                  code: renameCode,
+                });
+              }}
+            >
+              Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog
+        open={deleteId !== null}
+        onOpenChange={open => {
+          if (!open) setDeleteId(null);
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete project</DialogTitle>
+            <DialogDescription>
+              {(() => {
+                const project = projects.data?.find(item => item.id === deleteId);
+                if (!project) return "This project will be removed from the organization.";
+                if (project.caseCount > 0) {
+                  return `${project.code} still has ${project.caseCount} ${project.caseCount === 1 ? "case" : "cases"}, so it cannot be deleted.`;
+                }
+                return `${project.code} · ${project.name} will be removed. This cannot be undone.`;
+              })()}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteId(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={
+                deleteProject.isPending ||
+                (projects.data?.find(item => item.id === deleteId)?.caseCount ?? 0) > 0
+              }
+              onClick={() => {
+                if (deleteId === null) return;
+                deleteProject.mutate({
+                  organizationId: activeOrganizationId,
+                  projectId: deleteId,
+                });
+              }}
+            >
+              Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <MetricCard
           label="Total cases"

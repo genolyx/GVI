@@ -3,6 +3,8 @@ import { PageHeader } from "@/components/PageHeader";
 import { StatePanel } from "@/components/StatePanel";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useOrganization } from "@/contexts/OrganizationContext";
 import { trpc } from "@/lib/trpc";
@@ -14,31 +16,108 @@ import {
   Dna,
   FileArchive,
   FlaskConical,
+  Terminal,
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useLocation, useParams } from "wouter";
 import { toast } from "sonner";
 import { formatDateTime } from "@/lib/datetime";
 import { GermlineOrderFields } from "./GermlineOrderFields";
+import { HpoTermField } from "./HpoTermField";
 import {
   defaultGermlineOrder,
+  GERMLINE_SERVICE_LABEL,
   GERMLINE_TEST_CATEGORY_LABEL,
+  germlineServiceFromStored,
+  normalizeGermlineOrder,
   type GermlineOrderInput,
 } from "@shared/germlineOrder";
+
+function detailLines(metadata: unknown): string[] {
+  if (!metadata || typeof metadata !== "object") return [];
+  const lines = (metadata as { lines?: unknown }).lines;
+  if (!Array.isArray(lines)) return [];
+  return lines.filter(
+    (line): line is string => typeof line === "string" && line.trim().length > 0
+  );
+}
+
+function logPhase(status: string): string {
+  if (status === "queued") return "Queued";
+  if (status === "failed") return "Failed";
+  if (status === "review_ready") return "Ready";
+  if (status === "running") return "Running";
+  return status;
+}
+
+type TimelineEvent = {
+  id: number;
+  jobId: number;
+  status: string;
+  message: string;
+  createdAt: Date | string;
+  metadata: unknown;
+};
+
+function AnalysisRunLog({ events }: { events: TimelineEvent[] }) {
+  const ordered = [...events].sort((left, right) => {
+    const time =
+      new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime();
+    return time || left.id - right.id;
+  });
+  return (
+    <div className="mt-3 overflow-hidden rounded-lg border border-border bg-card">
+      <div className="flex items-center gap-2 border-b border-border px-3 py-2 font-mono text-[11px] text-muted-foreground">
+        <Terminal className="size-3.5" />
+        Analysis log
+      </div>
+      <div className="max-h-72 space-y-2 overflow-auto px-3 py-2 font-mono text-[12px] leading-5">
+        {ordered.map(event => {
+          const failed = event.status === "failed";
+          const lines = detailLines(event.metadata);
+          return (
+            <div key={event.id}>
+              <p className={failed ? "text-rose-800 dark:text-rose-200" : "text-foreground/80"}>
+                <span className="text-muted-foreground">{formatDateTime(event.createdAt)}</span>
+                {"  "}
+                <span className={failed ? "text-rose-700 dark:text-rose-300" : "text-emerald-700 dark:text-emerald-400"}>
+                  {logPhase(event.status)}
+                </span>
+                {"  "}
+                {event.message}
+              </p>
+              {lines.map((line, index) => (
+                <p key={`${event.id}-${index}`} className="pl-4 text-foreground/80">
+                  {line}
+                </p>
+              ))}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 export default function CaseDetailPage() {
   const params = useParams<{ id: string }>();
   const caseId = Number(params.id);
   const { activeOrganizationId, hasPermission } = useOrganization();
   const [, navigate] = useLocation();
+  const [trackRunning, setTrackRunning] = useState(false);
   const query = trpc.cases.get.useQuery(
     { organizationId: activeOrganizationId || 0, caseId },
     {
       enabled: Boolean(
         activeOrganizationId && caseId && hasPermission("case:read")
       ),
+      refetchInterval: trackRunning ? 2000 : false,
     }
   );
+  useEffect(() => {
+    const status = query.data?.status;
+    setTrackRunning(status === "queued" || status === "running");
+  }, [query.data?.status]);
   const timeline = trpc.cases.timeline.useQuery(
     { organizationId: activeOrganizationId || 0, caseId },
     {
@@ -52,8 +131,45 @@ export default function CaseDetailPage() {
     onError: error => toast.error(error.message),
   });
   const [editingOrder, setEditingOrder] = useState(false);
+  const [requestDraft, setRequestDraft] = useState<CaseRequestDraft>({
+    panelName: "",
+    phenotypeText: "",
+    indication: "",
+  });
+  const [logJobId, setLogJobId] = useState<number | null>(null);
   const [orderDraft, setOrderDraft] =
     useState<GermlineOrderInput>(defaultGermlineOrder);
+  const utils = trpc.useUtils();
+  const rerun = trpc.cases.rerun.useMutation({
+    onSuccess: async () => {
+      toast.success("Analysis queued again.");
+      await Promise.all([
+        query.refetch(),
+        timeline.refetch(),
+        utils.cases.list.invalidate(),
+      ]);
+    },
+    onError: error => toast.error(error.message),
+  });
+  const resetTimeline = trpc.cases.resetTimeline.useMutation({
+    onSuccess: async () => {
+      setLogJobId(null);
+      toast.success("Analysis timeline cleared.");
+      await timeline.refetch();
+    },
+    onError: error => toast.error(error.message),
+  });
+  const stop = trpc.cases.stop.useMutation({
+    onSuccess: async () => {
+      toast.success("Analysis stopped.");
+      await Promise.all([
+        query.refetch(),
+        timeline.refetch(),
+        utils.cases.list.invalidate(),
+      ]);
+    },
+    onError: error => toast.error(error.message),
+  });
   const saveOrder = trpc.cases.updateGermlineOrder.useMutation({
     onSuccess: async () => {
       toast.success("Order details saved.");
@@ -206,7 +322,60 @@ export default function CaseDetailPage() {
             <CardContent className="flex items-center justify-between p-5">
               <div>
                 <p className="text-xs text-muted-foreground">{label}</p>
-                <div className="mt-2 text-lg font-semibold">{value}</div>
+                <div className="mt-2 text-lg font-semibold">
+                  {value}
+                  {label === "Analysis status" && item.status === "failed" ? (
+                    <button
+                      type="button"
+                      className="mt-1 block text-xs font-medium text-primary hover:underline"
+                      onClick={() => {
+                        const failed = timeline.data?.find(
+                          event => event.status === "failed"
+                        );
+                        if (failed) setLogJobId(failed.jobId);
+                        document
+                          .getElementById("analysis-timeline")
+                          ?.scrollIntoView({ behavior: "smooth", block: "start" });
+                      }}
+                    >
+                      View log
+                    </button>
+                  ) : null}
+                  {label === "Analysis status" && hasPermission("case:edit") &&
+                  (item.status === "failed" ||
+                    item.status === "queued" ||
+                    item.status === "running") ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={item.status === "failed" ? "default" : "outline"}
+                      className="mt-2"
+                      disabled={rerun.isPending || stop.isPending}
+                      onClick={() => {
+                        if (item.status === "queued" || item.status === "running") {
+                          if (!window.confirm(`Stop analysis for ${item.caseNumber}?`)) return;
+                          stop.mutate({
+                            organizationId: activeOrganizationId!,
+                            caseId: item.id,
+                          });
+                          return;
+                        }
+                        rerun.mutate({
+                          organizationId: activeOrganizationId!,
+                          caseId: item.id,
+                        });
+                      }}
+                    >
+                      {rerun.isPending
+                        ? "Running…"
+                        : stop.isPending
+                          ? "Stopping…"
+                          : item.status === "failed"
+                            ? "Run"
+                            : "Stop"}
+                    </Button>
+                  ) : null}
+                </div>
               </div>
               <Icon className="size-5 text-primary" />
             </CardContent>
@@ -222,9 +391,10 @@ export default function CaseDetailPage() {
           draft={orderDraft}
           saving={saveOrder.isPending}
           onEdit={() => {
-            setOrderDraft({
+            setOrderDraft(normalizeGermlineOrder({
               ...defaultGermlineOrder,
               ...(item.germlineOrder ?? {}),
+              service: germlineServiceFromStored(item.germlineOrder ?? {}),
               patientName: item.germlineOrder?.patientName || item.patientAlias,
               testCategory:
                 (item.germlineOrder?.testCategory as GermlineOrderInput["testCategory"]) ||
@@ -256,26 +426,74 @@ export default function CaseDetailPage() {
               specimenType:
                 (item.germlineOrder?.specimenType as GermlineOrderInput["specimenType"]) ||
                 "Blood",
+            }));
+            setRequestDraft({
+              panelName: item.panelName ?? "",
+              phenotypeText: item.phenotypeText ?? "",
+              indication: item.indication ?? "",
             });
             setEditingOrder(true);
           }}
           onCancel={() => setEditingOrder(false)}
           onChange={setOrderDraft}
+          request={{
+            project: [item.projectCode, item.projectName].filter(Boolean).join(" · "),
+            patientAlias: item.patientAlias,
+            referenceBuild: item.referenceBuild,
+            panelName: item.panelName ?? "",
+            phenotypeText: item.phenotypeText ?? "",
+            indication: item.indication ?? "",
+            filters: appliedFilterRows(item.jobs),
+          }}
+          requestDraft={requestDraft}
+          onRequestChange={patch =>
+            setRequestDraft(current => ({ ...current, ...patch }))
+          }
           onSave={() =>
             saveOrder.mutate({
               organizationId: activeOrganizationId!,
               caseId: item.id,
               ...orderDraft,
+              phenotypeText: requestDraft.phenotypeText,
+              indication: requestDraft.indication,
+              panelName: requestDraft.panelName,
             })
           }
         />
       ) : null}
-      <section className="grid gap-5 xl:grid-cols-[1.1fr_.9fr]">
+      <section id="analysis-timeline" className="grid gap-5 xl:grid-cols-[1.1fr_.9fr]">
         <Card className="clinical-card shadow-none">
-          <CardHeader>
+          <CardHeader className="flex-row items-center justify-between space-y-0">
             <CardTitle className="font-display text-base">
               Analysis timeline
             </CardTitle>
+            {hasPermission("case:edit") && timeline.data?.length ? (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={
+                  resetTimeline.isPending ||
+                  item.status === "queued" ||
+                  item.status === "running"
+                }
+                onClick={() => {
+                  if (
+                    !window.confirm(
+                      "Clear the analysis timeline? Stored variants and the case status stay as they are."
+                    )
+                  ) {
+                    return;
+                  }
+                  resetTimeline.mutate({
+                    organizationId: activeOrganizationId!,
+                    caseId: item.id,
+                  });
+                }}
+              >
+                {resetTimeline.isPending ? "Resetting…" : "Reset"}
+              </Button>
+            ) : null}
           </CardHeader>
           <CardContent className="space-y-0">
             {timeline.isError ? (
@@ -311,11 +529,31 @@ export default function CaseDetailPage() {
                       <span className="font-mono text-[10px] text-muted-foreground">
                         {event.progressPercent}%
                       </span>
+                      {event.status === "failed" ? (
+                        <button
+                          type="button"
+                          className="text-xs font-medium text-primary hover:underline"
+                          onClick={() =>
+                            setLogJobId(current =>
+                              current === event.jobId ? null : event.jobId
+                            )
+                          }
+                        >
+                          {logJobId === event.jobId ? "Hide log" : "View log"}
+                        </button>
+                      ) : null}
                     </div>
                     <p className="mt-2 text-sm leading-6">{event.message}</p>
                     <p className="mt-1 text-[10px] text-muted-foreground">
                       {formatDateTime(event.createdAt)}
                     </p>
+                    {timeline.data?.find(
+                      entry => entry.status === "failed" && entry.jobId === logJobId
+                    )?.id === event.id ? (
+                      <AnalysisRunLog
+                        events={timeline.data.filter(entry => entry.jobId === event.jobId)}
+                      />
+                    ) : null}
                   </div>
                 </div>
               ))
@@ -392,6 +630,36 @@ function dash(value: string | null | undefined) {
   return value && value.trim() ? value : "—";
 }
 
+function numberOrBlank(value: unknown, blank: string) {
+  return typeof value === "number" && Number.isFinite(value) ? String(value) : blank;
+}
+
+function appliedFilterRows(jobs: Array<{ manifest: unknown }>): Array<[string, string]> {
+  const manifest = jobs[0]?.manifest;
+  if (!manifest || typeof manifest !== "object") return [];
+  const raw = (manifest as { vcfFilters?: unknown }).vcfFilters;
+  if (!raw || typeof raw !== "object") return [];
+  const filters = raw as Record<string, unknown>;
+  const rows: Array<[string, string]> = [
+    ["Maximum allele frequency", numberOrBlank(filters.maxAf, "No maximum")],
+    ["FILTER is PASS", filters.passOnly === true ? "Yes" : "No"],
+    ["Coding changes only", filters.codingOnly === true ? "Yes" : "No"],
+    ["Minimum QUAL", numberOrBlank(filters.minQual, "No minimum")],
+    ["Minimum genotype quality", numberOrBlank(filters.minGenotypeQuality, "No minimum")],
+    ["Minimum read depth", numberOrBlank(filters.minDepth, "No minimum")],
+  ];
+  if (typeof filters.genes === "string" && filters.genes.trim()) {
+    rows.push(["Gene list", filters.genes.trim()]);
+  }
+  return rows;
+}
+
+type CaseRequestDraft = {
+  panelName: string;
+  phenotypeText: string;
+  indication: string;
+};
+
 function OrderCard({
   title,
   rows,
@@ -409,7 +677,14 @@ function OrderCard({
           {rows.map(([label, value]) => (
             <div
               key={label}
-              className={label === "Clinical information" ? "sm:col-span-2" : ""}
+              className={
+                label === "Clinical information" ||
+                label === "HPO terms" ||
+                label === "Clinical indication" ||
+                label === "Gene list"
+                  ? "sm:col-span-2"
+                  : ""
+              }
             >
               <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                 {label}
@@ -433,9 +708,12 @@ function GermlineOrderSection({
   onEdit,
   onCancel,
   onChange,
+  request,
+  requestDraft,
+  onRequestChange,
   onSave,
 }: {
-  order: { [K in keyof GermlineOrderInput]: string } | null;
+  order: { [K in keyof Omit<GermlineOrderInput, "service">]: string } | null;
   patientAlias: string;
   canEdit: boolean;
   editing: boolean;
@@ -444,10 +722,22 @@ function GermlineOrderSection({
   onEdit: () => void;
   onCancel: () => void;
   onChange: (value: GermlineOrderInput) => void;
+  request: {
+    project: string;
+    patientAlias: string;
+    referenceBuild: string;
+    panelName: string;
+    phenotypeText: string;
+    indication: string;
+    filters: Array<[string, string]>;
+  };
+  requestDraft: CaseRequestDraft;
+  onRequestChange: (patch: Partial<CaseRequestDraft>) => void;
   onSave: () => void;
 }) {
   const empty: Record<keyof GermlineOrderInput, string> = {
     ...defaultGermlineOrder,
+    service: "",
     testCategory: "",
     reportMode: "",
     packageCode: "",
@@ -463,6 +753,9 @@ function GermlineOrderSection({
           order.testCategory as GermlineOrderInput["testCategory"]
         ]
       : "";
+  const serviceLabel = order
+    ? GERMLINE_SERVICE_LABEL[germlineServiceFromStored(order)]
+    : "";
   return (
     <section className="space-y-4">
       <div className="flex items-center justify-between gap-3">
@@ -485,12 +778,66 @@ function GermlineOrderSection({
         ) : null}
       </div>
       {editing ? (
-        <GermlineOrderFields value={draft} onChange={onChange} />
+        <div className="space-y-5">
+          <section className="space-y-4 rounded-xl border border-border/70 p-4">
+            <h3 className="text-sm font-semibold">Case request</h3>
+            <p className="text-xs leading-5 text-muted-foreground">
+              Project, reference build, and the filters already used stay as they were for this analysis.
+              Assay, HPO terms, and clinical indication can be corrected here. Saving them does not re-run the VCF.
+            </p>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-2">
+                <p className="text-sm font-medium">Assay</p>
+                <Input
+                  value={requestDraft.panelName}
+                  onChange={event => onRequestChange({ panelName: event.target.value })}
+                  placeholder="WES"
+                />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <p className="text-sm font-medium">HPO terms</p>
+              <HpoTermField
+                value={requestDraft.phenotypeText}
+                onChange={phenotypeText => onRequestChange({ phenotypeText })}
+              />
+            </div>
+            <div className="space-y-2">
+              <p className="text-sm font-medium">Clinical indication</p>
+              <Textarea
+                value={requestDraft.indication}
+                onChange={event => onRequestChange({ indication: event.target.value })}
+                placeholder="Clinical indication and key question"
+              />
+            </div>
+          </section>
+          <GermlineOrderFields value={draft} onChange={onChange} />
+        </div>
       ) : (
         <div className="grid gap-5 lg:grid-cols-2">
           <OrderCard
+            title="Case request"
+            rows={[
+              ["Project", request.project],
+              ["Patient alias", request.patientAlias],
+              ["Reference build", request.referenceBuild],
+              ["Assay", request.panelName],
+              ["HPO terms", request.phenotypeText],
+              ["Clinical indication", request.indication],
+            ]}
+          />
+          <OrderCard
+            title="Filters used for this analysis"
+            rows={
+              request.filters.length
+                ? request.filters
+                : [["Filters", "No analysis has been submitted"]]
+            }
+          />
+          <OrderCard
             title="Test type and report pairing"
             rows={[
+              ["Service", serviceLabel],
               ["Test category", category],
               ["Other test type", current.otherTestType],
               ["Package code (test type)", current.packageCode],

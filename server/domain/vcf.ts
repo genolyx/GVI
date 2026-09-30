@@ -89,7 +89,7 @@ export function parseVcf(
     const sampleMap = Object.fromEntries(formatKeys.map((key, index) => [key, sampleValues[index]]));
     const depth = Number(sampleMap.DP || info.DP);
     const alleleDepths = sampleMap.AD?.split(",").map(Number) || [];
-    const populationAf = asNumber(info.gnomAD_AF ?? info.POP_AF ?? info.AF);
+    const populationAf = asNumber(info.gnomAD_AF ?? info.POP_AF);
     const siteQuality = quality && quality !== "." ? Number(quality) : null;
 
     const alternateAlleles = altRaw.split(",");

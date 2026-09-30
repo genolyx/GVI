@@ -7,6 +7,11 @@ const TABLE = [
   "HP:0001250\tSeizure\t2\tSCN2A\tOMIM:2",
   "HP:0002123\tGeneralized myoclonic seizure\t1\tSCN1A\tOMIM:1",
   "HP:0009830\tPeripheral neuropathy\t3\tPMP22\tOMIM:3",
+  "HP:0000488\tRetinopathy\t4\tRPE65\tOMIM:4",
+  "HP:0000580\tPigmentary retinopathy\t4\tRPE65\tOMIM:4",
+  "HP:0000608\tMacular degeneration\t5\tABCA4\tOMIM:5",
+  "HP:0008028\tCystoid macular degeneration\t5\tABCA4\tOMIM:5",
+  "HP:0002511\tAlzheimer disease\t6\tAPP\tOMIM:6",
 ].join("\n");
 
 describe("HPO gene lookup", () => {
@@ -39,5 +44,17 @@ describe("HPO gene lookup", () => {
     expect(searchHpoTerms(index, "HP:00098")[0]).toMatchObject({ id: "HP:0009830", name: "Peripheral neuropathy" });
     expect(searchHpoTerms(index, "neuropthy")[0]?.name).toBe("Peripheral neuropathy");
     expect(searchHpoTerms(index, "z")).toEqual([]);
+  });
+
+  it("resolves a pasted list to the closest term for each phrase", () => {
+    expect(
+      searchHpoTerms(
+        index,
+        "retinopathy, macular degeneration, Alzheimer"
+      ).map(item => item.name)
+    ).toEqual(["Retinopathy", "Macular degeneration", "Alzheimer disease"]);
+    expect(searchHpoTerms(index, "macular deg")[0]?.name).toBe(
+      "Macular degeneration"
+    );
   });
 });

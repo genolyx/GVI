@@ -1,5 +1,5 @@
 import { TRPCError } from "@trpc/server";
-import { and, asc, count, desc, eq, like, or } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, like, or } from "drizzle-orm";
 import { createHash, randomUUID } from "node:crypto";
 import { gunzipSync } from "node:zlib";
 import { z } from "zod";
@@ -36,6 +36,7 @@ import { parseVcf } from "../domain/vcf";
 import { variantReingestSet, variantReingestTarget } from "../domain/vcfIngest";
 import { loadHpoIndex, searchHpoTerms } from "../domain/hpoGenes";
 import {
+  emptyVcfSelectionLog,
   selectVcfRecords,
   variantInsertRow,
   vcfFilterSchema,
@@ -107,6 +108,18 @@ async function requireCase(organizationId: number, caseId: number) {
 
 type CaseFileRow = typeof caseFiles.$inferSelect;
 
+class VcfIngestFailure extends Error {
+  readonly lines: string[];
+
+  constructor(message: string, lines: string[]) {
+    super(message);
+    this.lines = lines;
+  }
+}
+
+/** Jobs the user stopped while ingest was still reading the VCF. */
+const stoppedJobIds = new Set<number>();
+
 /**
  * Download, verify, parse, and normalize a VCF into variants, then mark the job/case
  * review_ready (or failed). Used after submit for both sync and background paths.
@@ -176,15 +189,34 @@ async function ingestVcfForJob(params: {
       ? selection.filtered.kept
       : parseVcf(text, referenceBuild);
     if (!parsed.length) {
-      throw new Error(
-        selection
-          ? "No variants passed the panel, HPO, gene list, frequency, and quality filters."
-          : "VCF contains no readable variant records"
+      if (!selection) throw new Error("VCF contains no readable variant records");
+      const lines = emptyVcfSelectionLog({
+        parsedCount: selection.parsedCount,
+        truncated: selection.truncated,
+        dropped: selection.filtered.dropped,
+        filters: vcfFilters ?? {
+          hpo: "",
+          genes: "",
+          maxAf: null,
+          minQual: null,
+          minGenotypeQuality: null,
+          minDepth: null,
+          passOnly: false,
+          codingOnly: false,
+        },
+        geneCount: selection.geneCount,
+        recordsWithoutGene: selection.recordsWithoutGene,
+        afFromInfoOnly: selection.afFromInfoOnly,
+      });
+      throw new VcfIngestFailure(
+        "No variants passed the panel, HPO, gene list, frequency, and quality filters.",
+        lines
       );
     }
     const keptNote = selection
-      ? ` Kept ${parsed.length.toLocaleString()} of ${selection.parsedCount.toLocaleString()} after panel, HPO, gene list, frequency, and quality filters.`
+      ? ` Kept ${parsed.length.toLocaleString()} of ${selection.parsedCount.toLocaleString()} after the filters that could be applied.${selection.notes.length ? ` ${selection.notes.join(" ")}` : ""}`
       : "";
+    if (stoppedJobIds.has(jobId)) return;
     await db.transaction(async tx => {
       for (let offset = 0; offset < parsed.length; offset += 500) {
         await tx
@@ -201,7 +233,7 @@ async function ingestVcfForJob(params: {
             set: variantReingestSet,
           });
       }
-      await tx
+      const finished = await tx
         .update(analysisJobs)
         .set({
           status: "review_ready",
@@ -211,9 +243,12 @@ async function ingestVcfForJob(params: {
         .where(
           and(
             eq(analysisJobs.id, jobId),
-            eq(analysisJobs.organizationId, organizationId)
+            eq(analysisJobs.organizationId, organizationId),
+            inArray(analysisJobs.status, ["queued", "running"])
           )
-        );
+        )
+        .returning({ id: analysisJobs.id });
+      if (!finished.length) return;
       await tx.insert(analysisEvents).values({
         organizationId,
         jobId,
@@ -225,7 +260,11 @@ async function ingestVcfForJob(params: {
         .update(cases)
         .set({ status: "review_ready" })
         .where(
-          and(eq(cases.id, caseId), eq(cases.organizationId, organizationId))
+          and(
+            eq(cases.id, caseId),
+            eq(cases.organizationId, organizationId),
+            inArray(cases.status, ["queued", "running"])
+          )
         );
     });
     if (purpose === "germline") {
@@ -239,6 +278,7 @@ async function ingestVcfForJob(params: {
       }
     }
   } catch (error) {
+    if (stoppedJobIds.has(jobId)) return;
     const message =
       error instanceof Error ? error.message : "VCF ingestion failed";
     await db
@@ -256,13 +296,20 @@ async function ingestVcfForJob(params: {
       status: "failed",
       message,
       progressPercent: 0,
+      metadata: error instanceof VcfIngestFailure ? { lines: error.lines } : null,
     });
     await db
       .update(cases)
       .set({ status: "failed" })
       .where(
-        and(eq(cases.id, caseId), eq(cases.organizationId, organizationId))
+        and(
+          eq(cases.id, caseId),
+          eq(cases.organizationId, organizationId),
+          inArray(cases.status, ["queued", "running"])
+        )
       );
+  } finally {
+    stoppedJobIds.delete(jobId);
   }
 }
 
@@ -394,8 +441,9 @@ export const casesRouter = router({
         variantCount,
         somaticContextRows,
         germlinePanelRows,
-        germlineOrderRows,
-      ] = await Promise.all([
+          germlineOrderRows,
+          projectRows,
+        ] = await Promise.all([
           db
             .select()
             .from(samples)
@@ -511,6 +559,16 @@ export const casesRouter = router({
               )
             )
             .limit(1),
+          db
+            .select({ name: projects.name, code: projects.code })
+            .from(projects)
+            .where(
+              and(
+                eq(projects.id, clinicalCase.projectId),
+                eq(projects.organizationId, input.organizationId)
+              )
+            )
+            .limit(1),
         ]);
       const attachedPanel = germlinePanelRows[0];
       return {
@@ -529,6 +587,8 @@ export const casesRouter = router({
               regionCount: attachedPanel.regions?.length ?? 0,
             }
           : null,
+        projectName: projectRows[0]?.name ?? "",
+        projectCode: projectRows[0]?.code ?? "",
         germlineOrder: germlineOrderRows[0]
           ? {
               testCategory: germlineOrderRows[0].testCategory,
@@ -977,6 +1037,13 @@ export const casesRouter = router({
           caseId: z.number().int().positive(),
         })
         .merge(germlineOrderSchema)
+        .merge(
+          z.object({
+            phenotypeText: z.string().trim().max(4000).optional(),
+            indication: z.string().trim().max(4000).optional(),
+            panelName: z.string().trim().max(160).optional(),
+          })
+        )
     )
     .mutation(async ({ ctx, input }) => {
       await requireOrganizationPermission(
@@ -1020,6 +1087,19 @@ export const casesRouter = router({
           ],
           set: { ...order, updatedBy: ctx.user.id, updatedAt: new Date() },
         });
+      await db
+        .update(cases)
+        .set({
+          phenotypeText: input.phenotypeText?.trim() || null,
+          indication: input.indication?.trim() || null,
+          panelName: input.panelName?.trim() || null,
+        })
+        .where(
+          and(
+            eq(cases.id, input.caseId),
+            eq(cases.organizationId, input.organizationId)
+          )
+        );
       await writeAuditEvent({
         organizationId: input.organizationId,
         actorUserId: ctx.user.id,
@@ -1462,6 +1542,309 @@ export const casesRouter = router({
       return { jobId };
     }),
 
+  rerun: protectedProcedure
+    .input(
+      z.object({
+        organizationId: z.number().int().positive(),
+        caseId: z.number().int().positive(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      await requireOrganizationPermission(
+        ctx.user.id,
+        input.organizationId,
+        "case:edit"
+      );
+      const clinicalCase = await requireCase(
+        input.organizationId,
+        input.caseId
+      );
+      if (clinicalCase.status !== "failed") {
+        throw new TRPCError({
+          code: "CONFLICT",
+          message: "Only a failed case can be run again.",
+        });
+      }
+      const db = await requireDb();
+      const [latest] = await db
+        .select({ manifest: analysisJobs.manifest })
+        .from(analysisJobs)
+        .where(
+          and(
+            eq(analysisJobs.organizationId, input.organizationId),
+            eq(analysisJobs.caseId, input.caseId)
+          )
+        )
+        .orderBy(desc(analysisJobs.createdAt))
+        .limit(1);
+      const storedFilters = latest
+        ? vcfFilterSchema.safeParse(
+            (latest.manifest as { vcfFilters?: unknown }).vcfFilters
+          )
+        : null;
+      const vcfFilters = storedFilters?.success ? storedFilters.data : null;
+      const files = await db
+        .select()
+        .from(caseFiles)
+        .where(
+          and(
+            eq(caseFiles.organizationId, input.organizationId),
+            eq(caseFiles.caseId, input.caseId)
+          )
+        );
+      const vcfFile = files.find(file => file.kind === "vcf");
+      if (!vcfFile) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "A VCF file is required",
+        });
+      }
+      await db
+        .delete(variants)
+        .where(
+          and(
+            eq(variants.organizationId, input.organizationId),
+            eq(variants.caseId, input.caseId)
+          )
+        );
+      const idempotencyKey = randomUUID();
+      const manifest = {
+        schemaVersion: "1.0",
+        serviceCode: "gvi_vcf_ingest",
+        organizationId: input.organizationId,
+        caseId: input.caseId,
+        purpose: clinicalCase.purpose,
+        referenceBuild: clinicalCase.referenceBuild,
+        panelName: clinicalCase.panelName,
+        files: files.map(file => ({
+          id: file.id,
+          kind: file.kind,
+          storageKey: file.storageKey,
+          sha256: file.sha256,
+        })),
+        vcfFilters,
+      };
+      const jobId = await db.transaction(async tx => {
+        const result = await tx
+          .insert(analysisJobs)
+          .values({
+            organizationId: input.organizationId,
+            caseId: input.caseId,
+            pipeline: "vcf_ingest",
+            status: "queued",
+            progressPercent: 0,
+            idempotencyKey,
+            manifest,
+            createdBy: ctx.user.id,
+          })
+          .returning({ id: analysisJobs.id });
+        const id = result[0].id;
+        await tx.insert(analysisEvents).values({
+          organizationId: input.organizationId,
+          jobId: id,
+          status: "queued",
+          message: "Analysis rerun queued.",
+          progressPercent: 0,
+        });
+        const cas = await tx
+          .update(cases)
+          .set({ status: "queued" })
+          .where(
+            and(
+              eq(cases.id, input.caseId),
+              eq(cases.organizationId, input.organizationId),
+              eq(cases.status, "failed")
+            )
+          )
+          .returning({ id: cases.id });
+        if (cas.length !== 1) {
+          throw new TRPCError({
+            code: "CONFLICT",
+            message: "Only a failed case can be run again.",
+          });
+        }
+        return id;
+      });
+      const ingestArgs = {
+        organizationId: input.organizationId,
+        caseId: input.caseId,
+        jobId,
+        vcfFile,
+        referenceBuild: clinicalCase.referenceBuild,
+        purpose: clinicalCase.purpose,
+        vcfFilters,
+      };
+      if (vcfFile.byteSize <= VCF_SYNC_MAX_BYTES) {
+        await ingestVcfForJob(ingestArgs);
+      } else {
+        void ingestVcfForJob(ingestArgs).catch(error => {
+          console.error("[vcf_ingest] background rerun failed", {
+            caseId: input.caseId,
+            jobId,
+            error,
+          });
+        });
+      }
+      await writeAuditEvent({
+        organizationId: input.organizationId,
+        actorUserId: ctx.user.id,
+        action: "case.rerun",
+        entityType: "analysis_job",
+        entityId: jobId,
+        after: { caseId: input.caseId, idempotencyKey },
+        req: ctx.req,
+      });
+      return { jobId };
+    }),
+
+  stop: protectedProcedure
+    .input(
+      z.object({
+        organizationId: z.number().int().positive(),
+        caseId: z.number().int().positive(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      await requireOrganizationPermission(
+        ctx.user.id,
+        input.organizationId,
+        "case:edit"
+      );
+      const clinicalCase = await requireCase(
+        input.organizationId,
+        input.caseId
+      );
+      if (clinicalCase.status !== "queued" && clinicalCase.status !== "running") {
+        throw new TRPCError({
+          code: "CONFLICT",
+          message: "Only a queued or running case can be stopped.",
+        });
+      }
+      const db = await requireDb();
+      const [job] = await db
+        .select({ id: analysisJobs.id })
+        .from(analysisJobs)
+        .where(
+          and(
+            eq(analysisJobs.organizationId, input.organizationId),
+            eq(analysisJobs.caseId, input.caseId),
+            inArray(analysisJobs.status, ["queued", "running"])
+          )
+        )
+        .orderBy(desc(analysisJobs.createdAt))
+        .limit(1);
+      if (job) stoppedJobIds.add(job.id);
+      const message = "Stopped by user.";
+      await db.transaction(async tx => {
+        if (job) {
+          await tx
+            .update(analysisJobs)
+            .set({
+              status: "failed",
+              errorMessage: message,
+              completedAt: new Date(),
+            })
+            .where(
+              and(
+                eq(analysisJobs.id, job.id),
+                eq(analysisJobs.organizationId, input.organizationId),
+                inArray(analysisJobs.status, ["queued", "running"])
+              )
+            );
+          await tx.insert(analysisEvents).values({
+            organizationId: input.organizationId,
+            jobId: job.id,
+            status: "failed",
+            message,
+            progressPercent: 0,
+          });
+        }
+        const cas = await tx
+          .update(cases)
+          .set({ status: "failed" })
+          .where(
+            and(
+              eq(cases.id, input.caseId),
+              eq(cases.organizationId, input.organizationId),
+              inArray(cases.status, ["queued", "running"])
+            )
+          )
+          .returning({ id: cases.id });
+        if (cas.length !== 1) {
+          throw new TRPCError({
+            code: "CONFLICT",
+            message: "Only a queued or running case can be stopped.",
+          });
+        }
+      });
+      await writeAuditEvent({
+        organizationId: input.organizationId,
+        actorUserId: ctx.user.id,
+        action: "case.stopped",
+        entityType: "case",
+        entityId: input.caseId,
+        after: { jobId: job?.id ?? null },
+        req: ctx.req,
+      });
+      return { ok: true };
+    }),
+
+  resetTimeline: protectedProcedure
+    .input(
+      z.object({
+        organizationId: z.number().int().positive(),
+        caseId: z.number().int().positive(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      await requireOrganizationPermission(
+        ctx.user.id,
+        input.organizationId,
+        "case:edit"
+      );
+      const clinicalCase = await requireCase(
+        input.organizationId,
+        input.caseId
+      );
+      if (clinicalCase.status === "queued" || clinicalCase.status === "running") {
+        throw new TRPCError({
+          code: "CONFLICT",
+          message: "Stop the analysis before clearing its timeline.",
+        });
+      }
+      const db = await requireDb();
+      const jobs = await db
+        .select({ id: analysisJobs.id })
+        .from(analysisJobs)
+        .where(
+          and(
+            eq(analysisJobs.organizationId, input.organizationId),
+            eq(analysisJobs.caseId, input.caseId)
+          )
+        );
+      const jobIds = jobs.map(job => job.id);
+      if (jobIds.length) {
+        await db
+          .delete(analysisEvents)
+          .where(
+            and(
+              eq(analysisEvents.organizationId, input.organizationId),
+              inArray(analysisEvents.jobId, jobIds)
+            )
+          );
+      }
+      await writeAuditEvent({
+        organizationId: input.organizationId,
+        actorUserId: ctx.user.id,
+        action: "case.timeline.reset",
+        entityType: "case",
+        entityId: input.caseId,
+        after: { jobs: jobIds.length },
+        req: ctx.req,
+      });
+      return { ok: true };
+    }),
+
   timeline: protectedProcedure
     .input(
       z.object({
@@ -1484,6 +1867,7 @@ export const casesRouter = router({
           status: analysisEvents.status,
           message: analysisEvents.message,
           progressPercent: analysisEvents.progressPercent,
+          metadata: analysisEvents.metadata,
           createdAt: analysisEvents.createdAt,
         })
         .from(analysisEvents)

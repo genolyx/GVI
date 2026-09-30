@@ -21,7 +21,7 @@ export type CaseVcfFilterValues = {
 
 export const defaultVcfFilters: CaseVcfFilterValues = {
   genes: "",
-  maxAf: "0.01",
+  maxAf: "",
   minQual: "",
   minGq: "",
   minDepth: "",
@@ -143,7 +143,8 @@ export function CaseVcfFilters({
       <div className="grid gap-x-6 gap-y-5 sm:grid-cols-2 xl:grid-cols-4">
         <div className="space-y-2">
           <Label htmlFor="case-af">Maximum allele frequency</Label>
-          <Input id="case-af" value={values.maxAf} onChange={event => set({ maxAf: event.target.value })} inputMode="decimal" placeholder="0.01" className="font-mono" />
+          <Input id="case-af" value={values.maxAf} onChange={event => set({ maxAf: event.target.value })} inputMode="decimal" placeholder="e.g. 0.05" className="font-mono" />
+          <p className="text-xs leading-5 text-muted-foreground">Leave blank to skip. Uses gnomAD_AF or POP_AF. Sample INFO AF is not a population frequency.</p>
         </div>
         <div className="space-y-2">
           <Label htmlFor="case-qual">Minimum QUAL</Label>
