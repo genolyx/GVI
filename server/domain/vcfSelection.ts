@@ -100,6 +100,14 @@ export async function selectVcfRecords(
     recordsWithoutGene,
     afFromInfoOnly,
     notes,
+    steps: filterTimelineSteps({
+      total: parsed.length,
+      dropped: filtered.dropped,
+      filters,
+      hpoApplied: hpoGenes !== null,
+      hpoGeneCount,
+      panelApplied: Boolean(panelGenes?.size || panel?.regions?.length),
+    }),
   };
 }
 
@@ -123,6 +131,83 @@ const DROP_ORDER: FilterReason[] = [
   "hpo",
   "panel",
 ];
+
+export type FilterTimelineStep = {
+  label: string;
+  removed: number;
+  remaining: number;
+  detail: string | null;
+};
+
+/** Enabled filters in the same order as the first-fail check. gnomAD comes before HPO. */
+export function filterTimelineSteps(input: {
+  total: number;
+  dropped: Record<FilterReason, number>;
+  filters: VcfFilterInput;
+  hpoApplied: boolean;
+  hpoGeneCount: number | null;
+  panelApplied: boolean;
+}): FilterTimelineStep[] {
+  const enabled: Array<{ reason: FilterReason; label: string; detail: string | null }> = [];
+  if (input.filters.passOnly) {
+    enabled.push({ reason: "filter", label: "FILTER is PASS", detail: null });
+  }
+  if (input.filters.minQual !== null) {
+    enabled.push({
+      reason: "qual",
+      label: `QUAL is at least ${input.filters.minQual}`,
+      detail: null,
+    });
+  }
+  if (input.filters.minGenotypeQuality !== null) {
+    enabled.push({
+      reason: "gq",
+      label: `Genotype quality is at least ${input.filters.minGenotypeQuality}`,
+      detail: null,
+    });
+  }
+  if (input.filters.minDepth !== null) {
+    enabled.push({
+      reason: "depth",
+      label: `Read depth is at least ${input.filters.minDepth}`,
+      detail: null,
+    });
+  }
+  if (input.filters.maxAf !== null) {
+    enabled.push({
+      reason: "af",
+      label: `gnomAD allele frequency is at most ${input.filters.maxAf}`,
+      detail: "A variant with no gnomAD frequency is kept.",
+    });
+  }
+  if (input.filters.codingOnly) {
+    enabled.push({
+      reason: "impact",
+      label: "Consequence is HIGH or MODERATE",
+      detail: null,
+    });
+  }
+  if (input.hpoApplied) {
+    enabled.push({
+      reason: "hpo",
+      label: `Gene is in the HPO list (${(input.hpoGeneCount ?? 0).toLocaleString("en-US")} genes)`,
+      detail: null,
+    });
+  }
+  if (input.panelApplied) {
+    enabled.push({
+      reason: "panel",
+      label: "Gene or region is in the panel",
+      detail: null,
+    });
+  }
+  let remaining = input.total;
+  return enabled.map(step => {
+    const removed = input.dropped[step.reason];
+    remaining -= removed;
+    return { label: step.label, removed, remaining, detail: step.detail };
+  });
+}
 
 function dropReason(reason: FilterReason, filters: VcfFilterInput): string {
   if (reason === "filter") return "FILTER was not PASS";

@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { parseVcf } from "./vcf";
-import { emptyVcfSelectionLog, hpoGenesToApply, type VcfFilterInput } from "./vcfSelection";
+import {
+  emptyVcfSelectionLog,
+  filterTimelineSteps,
+  hpoGenesToApply,
+  type VcfFilterInput,
+} from "./vcfSelection";
 
 const filters: VcfFilterInput = {
   hpo: "Retinopathy",
@@ -78,6 +83,42 @@ describe("VCF frequency and HPO applicability", () => {
     );
     expect(parsed[0].populationAf).toBeNull();
     expect(parsed[1].populationAf).toBe("0.001");
+  });
+
+  it("applies gnomAD before the HPO gene list", () => {
+    expect(
+      filterTimelineSteps({
+        total: 100,
+        dropped: {
+          filter: 10,
+          qual: 0,
+          gq: 0,
+          depth: 0,
+          af: 30,
+          impact: 20,
+          hpo: 25,
+          panel: 0,
+        },
+        filters: {
+          hpo: "Retinopathy",
+          genes: "",
+          maxAf: 0.01,
+          minQual: null,
+          minGenotypeQuality: null,
+          minDepth: null,
+          passOnly: true,
+          codingOnly: true,
+        },
+        hpoApplied: true,
+        hpoGeneCount: 458,
+        panelApplied: false,
+      }).map(step => `${step.label} | ${step.remaining}`)
+    ).toEqual([
+      "FILTER is PASS | 90",
+      "gnomAD allele frequency is at most 0.01 | 60",
+      "Consequence is HIGH or MODERATE | 40",
+      "Gene is in the HPO list (458 genes) | 15",
+    ]);
   });
 
   it("does not apply an HPO gene list when every record lacks a gene", () => {

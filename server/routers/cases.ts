@@ -35,7 +35,7 @@ import {
 import { parseVcf } from "../domain/vcf";
 import { annotatedVcfFileName, ensureAnnotatedVcf, VcfAnnotationFailure } from "../domain/vepAnnotate";
 import { variantReingestSet, variantReingestTarget } from "../domain/vcfIngest";
-import { loadHpoIndex, searchHpoTerms } from "../domain/hpoGenes";
+import { hpoGeneGroupsForText, loadHpoIndex, searchHpoTerms } from "../domain/hpoGenes";
 import {
   emptyVcfSelectionLog,
   selectVcfRecords,
@@ -286,6 +286,17 @@ async function ingestVcfForJob(params: {
     const parsed = selection
       ? selection.filtered.kept
       : parseVcf(text, referenceBuild);
+    if (selection?.steps.length && !stoppedJobIds.has(jobId)) {
+      await db.insert(analysisEvents).values({
+        organizationId,
+        jobId,
+        status: "running",
+        message:
+          "Filters applied in this order. A variant is removed at the first step it fails.",
+        progressPercent: 80,
+        metadata: { steps: selection.steps },
+      });
+    }
     if (!parsed.length) {
       if (!selection) throw new Error("VCF contains no readable variant records");
       const lines = emptyVcfSelectionLog({
@@ -672,6 +683,13 @@ export const casesRouter = router({
             .limit(1),
         ]);
       const attachedPanel = germlinePanelRows[0];
+      const latestManifest = jobRows[0]?.manifest;
+      const appliedHpo =
+        latestManifest &&
+        typeof latestManifest === "object" &&
+        typeof (latestManifest as { vcfFilters?: { hpo?: unknown } }).vcfFilters?.hpo === "string"
+          ? (latestManifest as { vcfFilters: { hpo: string } }).vcfFilters.hpo
+          : "";
       return {
         ...clinicalCase,
         samples: sampleRows,
@@ -690,6 +708,7 @@ export const casesRouter = router({
           : null,
         projectName: projectRows[0]?.name ?? "",
         projectCode: projectRows[0]?.code ?? "",
+        hpoGenes: await hpoGeneGroupsForText(appliedHpo),
         germlineOrder: germlineOrderRows[0]
           ? {
               testCategory: germlineOrderRows[0].testCategory,

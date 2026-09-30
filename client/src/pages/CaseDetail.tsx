@@ -4,6 +4,7 @@ import { StatePanel } from "@/components/StatePanel";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useOrganization } from "@/contexts/OrganizationContext";
@@ -32,6 +33,57 @@ import {
   normalizeGermlineOrder,
   type GermlineOrderInput,
 } from "@shared/germlineOrder";
+
+function filterSteps(metadata: unknown) {
+  if (!metadata || typeof metadata !== "object") return [];
+  const steps = (metadata as { steps?: unknown }).steps;
+  if (!Array.isArray(steps)) return [];
+  return steps.flatMap(step => {
+    if (!step || typeof step !== "object") return [];
+    const row = step as {
+      label?: unknown;
+      removed?: unknown;
+      remaining?: unknown;
+      detail?: unknown;
+    };
+    if (
+      typeof row.label !== "string" ||
+      typeof row.removed !== "number" ||
+      typeof row.remaining !== "number"
+    ) {
+      return [];
+    }
+    return [
+      {
+        label: row.label,
+        removed: row.removed,
+        remaining: row.remaining,
+        detail: typeof row.detail === "string" ? row.detail : null,
+      },
+    ];
+  });
+}
+
+function FilterStepList({ metadata }: { metadata: unknown }) {
+  const steps = filterSteps(metadata);
+  if (!steps.length) return null;
+  return (
+    <ol className="mt-3 list-decimal space-y-2 pl-5 text-sm leading-6">
+      {steps.map(step => (
+        <li key={step.label}>
+          <span className="font-medium">{step.label}</span>
+          <span className="text-muted-foreground">
+            {" "}
+            — {step.removed.toLocaleString()} removed, {step.remaining.toLocaleString()} remain
+          </span>
+          {step.detail ? (
+            <span className="mt-0.5 block text-xs text-muted-foreground">{step.detail}</span>
+          ) : null}
+        </li>
+      ))}
+    </ol>
+  );
+}
 
 function detailLines(metadata: unknown): string[] {
   if (!metadata || typeof metadata !== "object") return [];
@@ -140,17 +192,6 @@ export default function CaseDetailPage() {
   const [orderDraft, setOrderDraft] =
     useState<GermlineOrderInput>(defaultGermlineOrder);
   const utils = trpc.useUtils();
-  const rerun = trpc.cases.rerun.useMutation({
-    onSuccess: async () => {
-      toast.success("Analysis queued again.");
-      await Promise.all([
-        query.refetch(),
-        timeline.refetch(),
-        utils.cases.list.invalidate(),
-      ]);
-    },
-    onError: error => toast.error(error.message),
-  });
   const resetTimeline = trpc.cases.resetTimeline.useMutation({
     onSuccess: async () => {
       setLogJobId(null);
@@ -341,51 +382,24 @@ export default function CaseDetailPage() {
                       View log
                     </button>
                   ) : null}
-                  {label === "Analysis status" && hasPermission("case:edit") &&
-                  (item.status === "failed" ||
-                    item.status === "review_ready" ||
-                    item.status === "queued" ||
-                    item.status === "running") ? (
+                  {label === "Analysis status" &&
+                  hasPermission("case:edit") &&
+                  (item.status === "queued" || item.status === "running") ? (
                     <Button
                       type="button"
                       size="sm"
-                      variant={
-                        item.status === "queued" || item.status === "running"
-                          ? "outline"
-                          : "default"
-                      }
+                      variant="outline"
                       className="mt-2"
-                      disabled={rerun.isPending || stop.isPending}
+                      disabled={stop.isPending}
                       onClick={() => {
-                        if (item.status === "queued" || item.status === "running") {
-                          if (!window.confirm(`Stop analysis for ${item.caseNumber}?`)) return;
-                          stop.mutate({
-                            organizationId: activeOrganizationId!,
-                            caseId: item.id,
-                          });
-                          return;
-                        }
-                        if (
-                          item.status === "review_ready" &&
-                          !window.confirm(
-                            `Run ${item.caseNumber} again from the original VCF? Stored variants will be replaced.`
-                          )
-                        ) {
-                          return;
-                        }
-                        rerun.mutate({
+                        if (!window.confirm(`Stop analysis for ${item.caseNumber}?`)) return;
+                        stop.mutate({
                           organizationId: activeOrganizationId!,
                           caseId: item.id,
                         });
                       }}
                     >
-                      {rerun.isPending
-                        ? "Running…"
-                        : stop.isPending
-                          ? "Stopping…"
-                          : item.status === "queued" || item.status === "running"
-                            ? "Stop"
-                            : "Run"}
+                      {stop.isPending ? "Stopping…" : "Stop"}
                     </Button>
                   ) : null}
                 </div>
@@ -458,6 +472,7 @@ export default function CaseDetailPage() {
             indication: item.indication ?? "",
             filters: appliedFilterRows(item.jobs),
           }}
+          hpoGenes={item.hpoGenes}
           requestDraft={requestDraft}
           onRequestChange={patch =>
             setRequestDraft(current => ({ ...current, ...patch }))
@@ -557,6 +572,7 @@ export default function CaseDetailPage() {
                       ) : null}
                     </div>
                     <p className="mt-2 text-sm leading-6">{event.message}</p>
+                    <FilterStepList metadata={event.metadata} />
                     <p className="mt-1 text-[10px] text-muted-foreground">
                       {formatDateTime(event.createdAt)}
                     </p>
@@ -697,6 +713,95 @@ type CaseRequestDraft = {
   indication: string;
 };
 
+function HpoGeneList({
+  groups,
+}: {
+  groups: Array<{ query: string; id: string; label: string; genes: string[] }>;
+}) {
+  const [geneQuery, setGeneQuery] = useState("");
+  const [termKey, setTermKey] = useState("all");
+  if (!groups.length) return null;
+  const total = groups.reduce((sum, group) => sum + group.genes.length, 0);
+  const unique = new Set(groups.flatMap(group => group.genes)).size;
+  const needle = geneQuery.trim().toLowerCase();
+  const selected =
+    termKey === "all" ? groups : groups.filter(group => `${group.query}:${group.id}` === termKey);
+  const shownGroups = selected
+    .map(group => ({
+      ...group,
+      genes: needle
+        ? group.genes.filter(gene => gene.toLowerCase().includes(needle))
+        : group.genes,
+    }))
+    .filter(group => group.genes.length > 0);
+  return (
+    <Card className="clinical-card shadow-none lg:col-span-2">
+      <CardHeader>
+        <CardTitle className="font-display text-base">HPO gene list</CardTitle>
+        <p className="text-xs text-muted-foreground">
+          Total {total.toLocaleString()} genes · Unique {unique.toLocaleString()}. A gene listed under more than one HPO term is counted again in Total.
+        </p>
+      </CardHeader>
+      <CardContent>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
+            HPO term
+            <Select value={termKey} onValueChange={setTermKey}>
+              <SelectTrigger className="w-full" aria-label="HPO term">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All HPO terms</SelectItem>
+                {groups.map(group => (
+                  <SelectItem key={`${group.query}:${group.id}`} value={`${group.query}:${group.id}`}>
+                    {group.label} · {group.id}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </label>
+          <label className="grid gap-1.5 text-xs font-medium text-muted-foreground">
+            Search genes
+            <Input
+              aria-label="Search genes"
+              value={geneQuery}
+              onChange={event => setGeneQuery(event.target.value)}
+              placeholder="Search genes"
+            />
+          </label>
+        </div>
+        <div className="mt-4 max-h-[28rem] space-y-5 overflow-y-auto">
+          {shownGroups.length ? (
+            shownGroups.map(group => (
+              <section key={`${group.query}:${group.id}`}>
+                <h3 className="text-sm font-medium">
+                  {group.label}
+                  <span className="ml-2 font-mono text-[10px] font-normal text-muted-foreground">
+                    {group.id}
+                  </span>
+                </h3>
+                <p className="mt-0.5 text-[11px] text-muted-foreground">
+                  From “{group.query}” · {group.genes.length.toLocaleString()}{" "}
+                  {group.genes.length === 1 ? "gene" : "genes"}
+                </p>
+                <ul className="mt-2 grid grid-cols-6 gap-x-4 gap-y-1">
+                  {group.genes.map(gene => (
+                    <li key={gene} className="truncate font-mono text-xs">
+                      {gene}
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ))
+          ) : (
+            <p className="text-sm text-muted-foreground">No genes match that search.</p>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 function OrderCard({
   title,
   rows,
@@ -749,6 +854,7 @@ function GermlineOrderSection({
   requestDraft,
   onRequestChange,
   onSave,
+  hpoGenes,
 }: {
   order: { [K in keyof Omit<GermlineOrderInput, "service">]: string } | null;
   patientAlias: string;
@@ -771,6 +877,7 @@ function GermlineOrderSection({
   requestDraft: CaseRequestDraft;
   onRequestChange: (patch: Partial<CaseRequestDraft>) => void;
   onSave: () => void;
+  hpoGenes: Array<{ query: string; id: string; label: string; genes: string[] }>;
 }) {
   const empty: Record<keyof GermlineOrderInput, string> = {
     ...defaultGermlineOrder,
@@ -871,6 +978,7 @@ function GermlineOrderSection({
                 : [["Filters", "No analysis has been submitted"]]
             }
           />
+          <HpoGeneList groups={hpoGenes} />
           <OrderCard
             title="Test type and report pairing"
             rows={[

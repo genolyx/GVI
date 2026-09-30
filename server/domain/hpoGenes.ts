@@ -241,6 +241,26 @@ export function searchHpoTerms(
   }));
 }
 
+export type HpoGeneGroup = {
+  query: string;
+  id: string;
+  label: string;
+  genes: string[];
+};
+
+/** Genes grouped by the HPO phenotype that contributed them, in the order the terms were entered. */
+export async function hpoGeneGroupsForText(raw: string): Promise<HpoGeneGroup[]> {
+  if (!raw.trim()) return [];
+  const index = await loadHpoIndex();
+  if (!index) return [];
+  return genesForTerms(index, raw).matches.map(match => ({
+    query: match.query,
+    id: match.id,
+    label: match.label,
+    genes: [...match.genes].sort((left, right) => left.localeCompare(right)),
+  }));
+}
+
 export function geneSetFromMatches(matches: HpoMatch[]): Set<string> {
   const genes = new Set<string>();
   for (const match of matches) {
