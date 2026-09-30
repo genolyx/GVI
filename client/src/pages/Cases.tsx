@@ -43,7 +43,8 @@ function CaseRunControl({
     onError: error => toast.error(error.message),
   });
   const active = status === "queued" || status === "running";
-  if (status !== "failed" && !active) {
+  const canRun = status === "failed" || status === "review_ready";
+  if (!canRun && !active) {
     return <span className="text-[11px] text-muted-foreground">—</span>;
   }
   return (
@@ -57,6 +58,14 @@ function CaseRunControl({
         if (active) {
           if (!window.confirm(`Stop analysis for ${caseNumber}?`)) return;
           stop.mutate({ organizationId, caseId });
+          return;
+        }
+        if (
+          status === "review_ready" &&
+          !window.confirm(
+            `Run ${caseNumber} again from the original VCF? Stored variants will be replaced.`
+          )
+        ) {
           return;
         }
         rerun.mutate({ organizationId, caseId });

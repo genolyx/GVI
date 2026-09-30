@@ -33,6 +33,7 @@ import {
   type GermlinePanelContent,
 } from "../domain/germlinePanel";
 import { parseVcf } from "../domain/vcf";
+import { annotatedVcfFileName, ensureAnnotatedVcf, VcfAnnotationFailure } from "../domain/vepAnnotate";
 import { variantReingestSet, variantReingestTarget } from "../domain/vcfIngest";
 import { loadHpoIndex, searchHpoTerms } from "../domain/hpoGenes";
 import {
@@ -42,7 +43,7 @@ import {
   vcfFilterSchema,
   type VcfFilterInput,
 } from "../domain/vcfSelection";
-import { storageCreateUploadUrl, storageGetSignedUrl } from "../storage";
+import { storageCreateUploadUrl, storageGetSignedUrl, storagePut } from "../storage";
 
 const caseStatus = z.enum([
   "draft",
@@ -84,9 +85,6 @@ const somaticContextSchema = z.object({
   pairedNormal: z.boolean().default(false),
 });
 
-/** Files at or under this size are ingested synchronously in the submit request. */
-const VCF_SYNC_MAX_BYTES = 15 * 1024 * 1024;
-
 function safeFileName(fileName: string) {
   return fileName
     .normalize("NFKC")
@@ -121,8 +119,9 @@ class VcfIngestFailure extends Error {
 const stoppedJobIds = new Set<number>();
 
 /**
- * Download, verify, parse, and normalize a VCF into variants, then mark the job/case
- * review_ready (or failed). Used after submit for both sync and background paths.
+ * Download, annotate when needed, then normalize a VCF into variants and mark the
+ * job review_ready or failed. Runs after the submit response so VEP does not
+ * block the request.
  */
 async function ingestVcfForJob(params: {
   organizationId: number;
@@ -151,9 +150,108 @@ async function ingestVcfForJob(params: {
     const raw = Buffer.from(await response.arrayBuffer());
     const digest = createHash("sha256").update(raw).digest("hex");
     if (digest !== vcfFile.sha256) throw new Error("VCF checksum mismatch");
-    const text = vcfFile.fileName.endsWith(".gz")
+    const decoded = vcfFile.fileName.endsWith(".gz")
       ? gunzipSync(raw).toString("utf8")
       : raw.toString("utf8");
+    if (stoppedJobIds.has(jobId)) return;
+    const started = await db
+      .update(analysisJobs)
+      .set({ status: "running", startedAt: new Date(), progressPercent: 10 })
+      .where(
+        and(
+          eq(analysisJobs.id, jobId),
+          eq(analysisJobs.organizationId, organizationId),
+          inArray(analysisJobs.status, ["queued", "running"])
+        )
+      )
+      .returning({ id: analysisJobs.id });
+    if (!started.length || stoppedJobIds.has(jobId)) return;
+    await db
+      .update(cases)
+      .set({ status: "running" })
+      .where(
+        and(
+          eq(cases.id, caseId),
+          eq(cases.organizationId, organizationId),
+          inArray(cases.status, ["queued", "running"])
+        )
+      );
+    const annotated = await ensureAnnotatedVcf({
+      text: decoded,
+      referenceBuild,
+      shouldStop: () => stoppedJobIds.has(jobId),
+      onEvent: async (message, progress) => {
+        if (stoppedJobIds.has(jobId)) return;
+        await db.insert(analysisEvents).values({
+          organizationId,
+          jobId,
+          status: "running",
+          message,
+          progressPercent: progress,
+        });
+        await db
+          .update(analysisJobs)
+          .set({ progressPercent: progress })
+          .where(
+            and(
+              eq(analysisJobs.id, jobId),
+              eq(analysisJobs.organizationId, organizationId),
+              inArray(analysisJobs.status, ["queued", "running"])
+            )
+          );
+      },
+    });
+    if (stoppedJobIds.has(jobId)) return;
+    const text = annotated.text;
+    if (annotated.gzip) {
+      const fileName = annotatedVcfFileName(vcfFile.fileName);
+      const sha256 = createHash("sha256").update(annotated.gzip).digest("hex");
+      const stored = await storagePut(
+        `organizations/${organizationId}/cases/${caseId}/files/${fileName}`,
+        annotated.gzip,
+        "application/gzip"
+      );
+      const [job] = await db
+        .select({ createdBy: analysisJobs.createdBy })
+        .from(analysisJobs)
+        .where(
+          and(
+            eq(analysisJobs.id, jobId),
+            eq(analysisJobs.organizationId, organizationId)
+          )
+        )
+        .limit(1);
+      if (!job) throw new Error("Analysis job disappeared before the annotated VCF was saved");
+      await db
+        .delete(caseFiles)
+        .where(
+          and(
+            eq(caseFiles.organizationId, organizationId),
+            eq(caseFiles.caseId, caseId),
+            eq(caseFiles.kind, "annotated_vcf")
+          )
+        );
+      await db.insert(caseFiles).values({
+        organizationId,
+        caseId,
+        kind: "annotated_vcf",
+        fileName,
+        storageKey: stored.key,
+        storageUrl: stored.url,
+        mimeType: "application/gzip",
+        byteSize: annotated.gzip.length,
+        sha256,
+        status: "verified",
+        uploadedBy: job.createdBy,
+      });
+      await db.insert(analysisEvents).values({
+        organizationId,
+        jobId,
+        status: "running",
+        message: `Annotated VCF saved: ${fileName}`,
+        progressPercent: 70,
+      });
+    }
     const panelRows = await db
       .select()
       .from(germlineCasePanels)
@@ -296,7 +394,10 @@ async function ingestVcfForJob(params: {
       status: "failed",
       message,
       progressPercent: 0,
-      metadata: error instanceof VcfIngestFailure ? { lines: error.lines } : null,
+      metadata:
+        error instanceof VcfIngestFailure || error instanceof VcfAnnotationFailure
+          ? { lines: error.lines }
+          : null,
     });
     await db
       .update(cases)
@@ -1513,17 +1614,13 @@ export const casesRouter = router({
           purpose: clinicalCase.purpose,
           vcfFilters: input.vcfFilters ?? null,
         };
-        if (vcfFile.byteSize <= VCF_SYNC_MAX_BYTES) {
-          await ingestVcfForJob(ingestArgs);
-        } else {
-          void ingestVcfForJob(ingestArgs).catch(error => {
-            console.error("[vcf_ingest] background ingest failed", {
-              caseId: input.caseId,
-              jobId,
-              error,
-            });
+        void ingestVcfForJob(ingestArgs).catch(error => {
+          console.error("[vcf_ingest] background ingest failed", {
+            caseId: input.caseId,
+            jobId,
+            error,
           });
-        }
+        });
       }
 
       await writeAuditEvent({
@@ -1540,6 +1637,41 @@ export const casesRouter = router({
         req: ctx.req,
       });
       return { jobId };
+    }),
+
+  downloadFile: protectedProcedure
+    .input(
+      z.object({
+        organizationId: z.number().int().positive(),
+        caseId: z.number().int().positive(),
+        fileId: z.number().int().positive(),
+      })
+    )
+    .query(async ({ ctx, input }) => {
+      await requireOrganizationPermission(
+        ctx.user.id,
+        input.organizationId,
+        "case:read"
+      );
+      const db = await requireDb();
+      const [file] = await db
+        .select()
+        .from(caseFiles)
+        .where(
+          and(
+            eq(caseFiles.id, input.fileId),
+            eq(caseFiles.organizationId, input.organizationId),
+            eq(caseFiles.caseId, input.caseId)
+          )
+        )
+        .limit(1);
+      if (!file) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "File not found" });
+      }
+      return {
+        fileName: file.fileName,
+        url: await storageGetSignedUrl(file.storageKey, file.fileName),
+      };
     }),
 
   rerun: protectedProcedure
@@ -1559,10 +1691,10 @@ export const casesRouter = router({
         input.organizationId,
         input.caseId
       );
-      if (clinicalCase.status !== "failed") {
+      if (clinicalCase.status !== "failed" && clinicalCase.status !== "review_ready") {
         throw new TRPCError({
           code: "CONFLICT",
-          message: "Only a failed case can be run again.",
+          message: "Run again after analysis has finished or failed.",
         });
       }
       const db = await requireDb();
@@ -1643,7 +1775,7 @@ export const casesRouter = router({
           organizationId: input.organizationId,
           jobId: id,
           status: "queued",
-          message: "Analysis rerun queued.",
+          message: "Analysis rerun queued from the original VCF.",
           progressPercent: 0,
         });
         const cas = await tx
@@ -1653,14 +1785,14 @@ export const casesRouter = router({
             and(
               eq(cases.id, input.caseId),
               eq(cases.organizationId, input.organizationId),
-              eq(cases.status, "failed")
+              inArray(cases.status, ["failed", "review_ready"])
             )
           )
           .returning({ id: cases.id });
         if (cas.length !== 1) {
           throw new TRPCError({
             code: "CONFLICT",
-            message: "Only a failed case can be run again.",
+            message: "Run again after analysis has finished or failed.",
           });
         }
         return id;
@@ -1674,17 +1806,13 @@ export const casesRouter = router({
         purpose: clinicalCase.purpose,
         vcfFilters,
       };
-      if (vcfFile.byteSize <= VCF_SYNC_MAX_BYTES) {
-        await ingestVcfForJob(ingestArgs);
-      } else {
-        void ingestVcfForJob(ingestArgs).catch(error => {
-          console.error("[vcf_ingest] background rerun failed", {
-            caseId: input.caseId,
-            jobId,
-            error,
-          });
+      void ingestVcfForJob(ingestArgs).catch(error => {
+        console.error("[vcf_ingest] background rerun failed", {
+          caseId: input.caseId,
+          jobId,
+          error,
         });
-      }
+      });
       await writeAuditEvent({
         organizationId: input.organizationId,
         actorUserId: ctx.user.id,

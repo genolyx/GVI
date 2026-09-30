@@ -61,7 +61,7 @@ export async function selectVcfRecords(
     const info = variant.annotation.info;
     if (!info || typeof info !== "object") continue;
     const record = info as Record<string, unknown>;
-    if (record.AF != null && record.gnomAD_AF == null && record.POP_AF == null) {
+    if (record.AF != null && variant.populationAf == null) {
       afFromInfoOnly += 1;
     }
   }

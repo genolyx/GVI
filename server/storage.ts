@@ -153,10 +153,20 @@ export async function storageGetText(relKey: string): Promise<string> {
   return result.Body.transformToString("utf-8");
 }
 
-export async function storageGetSignedUrl(relKey: string): Promise<string> {
+export async function storageGetSignedUrl(
+  relKey: string,
+  downloadFileName?: string
+): Promise<string> {
   const { client, bucket } = getClient();
   const key = assertSafeKey(relKey);
+  const asciiName = downloadFileName?.replace(/[^\w.\-]+/g, "_");
 
-  const command = new GetObjectCommand({ Bucket: bucket, Key: key });
+  const command = new GetObjectCommand({
+    Bucket: bucket,
+    Key: key,
+    ...(asciiName
+      ? { ResponseContentDisposition: `attachment; filename="${asciiName}"` }
+      : {}),
+  });
   return getSignedUrl(client, command, { expiresIn: 3600 });
 }

@@ -1,3 +1,5 @@
+import { annotationFromInfo, inspectVcfAnnotation } from "./vcfAnnotation";
+
 type ParsedInfo = Record<string, string | true>;
 
 export type ParsedVariant = {
@@ -73,6 +75,9 @@ export function parseVcf(
   maxRecords = 50_000
 ): ParsedVariant[] {
   const records: ParsedVariant[] = [];
+  const annotation = inspectVcfAnnotation(text);
+  const annotationSource = annotation.action === "annotate" ? null : annotation.source;
+  const annotationFields = annotation.action === "annotate" ? [] : annotation.fields;
   const lines = text.replace(/^\uFEFF/, "").split(/\r?\n/);
   for (const line of lines) {
     if (!line || line.startsWith("#")) continue;
@@ -83,13 +88,13 @@ export function parseVcf(
     if (!Number.isInteger(position) || !ref || !altRaw) continue;
     const chromosome = chromRaw.replace(/^chr/i, "");
     const info = parseInfo(infoRaw);
-    const snpEff = parseSnpEff(info);
+    const snpEff = annotationSource ? null : parseSnpEff(info);
     const formatKeys = format?.split(":") || [];
     const sampleValues = sample?.split(":") || [];
     const sampleMap = Object.fromEntries(formatKeys.map((key, index) => [key, sampleValues[index]]));
     const depth = Number(sampleMap.DP || info.DP);
     const alleleDepths = sampleMap.AD?.split(",").map(Number) || [];
-    const populationAf = asNumber(info.gnomAD_AF ?? info.POP_AF);
+    const infoAf = asNumber(info.gnomAD_AF ?? info.POP_AF);
     const siteQuality = quality && quality !== "." ? Number(quality) : null;
 
     const alternateAlleles = altRaw.split(",");
@@ -104,12 +109,24 @@ export function parseVcf(
         : alternateDepth !== null && Number.isFinite(depth) && depth > 0
           ? alternateDepth / depth
           : null;
-      const impactValue = String(snpEff?.impact || info.IMPACT || "UNKNOWN").toUpperCase();
+      const functional = annotationSource
+        ? annotationFromInfo(
+            annotationSource,
+            annotationFields,
+            annotationSource === "vep" ? info.CSQ : info.ANN,
+            alt
+          )
+        : null;
+      const impactValue = String(
+        functional?.impact || snpEff?.impact || info.IMPACT || "UNKNOWN"
+      ).toUpperCase();
       const impact = ["HIGH", "MODERATE", "LOW", "MODIFIER"].includes(impactValue)
         ? (impactValue as ParsedVariant["impact"])
         : "UNKNOWN";
-      const gene = snpEff?.gene || (typeof info.GENE === "string" ? info.GENE : null) ||
+      const gene = functional?.gene || snpEff?.gene ||
+        (typeof info.GENE === "string" ? info.GENE : null) ||
         (typeof info.SYMBOL === "string" ? info.SYMBOL : null);
+      const populationAf = infoAf ?? functional?.populationAf ?? null;
       const genotypeQuality = Number(sampleMap.GQ);
       records.push({
         normalizedId: `${referenceBuild}:${chromosome}:${position}:${ref}:${alt}`,
@@ -119,10 +136,14 @@ export function parseVcf(
         referenceAllele: ref,
         alternateAllele: alt,
         gene,
-        transcript: snpEff?.transcript || (typeof info.TRANSCRIPT === "string" ? info.TRANSCRIPT : null),
-        hgvsC: snpEff?.hgvsC || (typeof info.HGVSC === "string" ? info.HGVSC : null),
-        hgvsP: snpEff?.hgvsP || (typeof info.HGVSP === "string" ? info.HGVSP : null),
-        consequence: snpEff?.consequence || (typeof info.CONSEQUENCE === "string" ? info.CONSEQUENCE : null),
+        transcript: functional?.transcript || snpEff?.transcript ||
+          (typeof info.TRANSCRIPT === "string" ? info.TRANSCRIPT : null),
+        hgvsC: functional?.hgvsC || snpEff?.hgvsC ||
+          (typeof info.HGVSC === "string" ? info.HGVSC : null),
+        hgvsP: functional?.hgvsP || snpEff?.hgvsP ||
+          (typeof info.HGVSP === "string" ? info.HGVSP : null),
+        consequence: functional?.consequence || snpEff?.consequence ||
+          (typeof info.CONSEQUENCE === "string" ? info.CONSEQUENCE : null),
         variantType: variantType(ref, alt),
         zygosity: sampleMap.GT || null,
         populationAf: populationAf === null ? null : String(populationAf),
@@ -131,7 +152,9 @@ export function parseVcf(
         alternateDepth,
         impact,
         clinvarSignificance:
-          typeof info.CLNSIG === "string" ? info.CLNSIG.replaceAll("_", " ") : null,
+          typeof info.CLNSIG === "string"
+            ? info.CLNSIG.replaceAll("_", " ")
+            : functional?.clinvar || null,
         siteQuality: siteQuality !== null && Number.isFinite(siteQuality) ? siteQuality : null,
         genotypeQuality: Number.isFinite(genotypeQuality) ? genotypeQuality : null,
         callFilter: filter && filter !== "." ? filter : null,

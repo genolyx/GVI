@@ -132,6 +132,7 @@ export const caseFileKindEnum = pgEnum("case_file_kind", [
   "panel_bed",
   "coverage",
   "assay_result",
+  "annotated_vcf",
   "other",
 ]);
 export const caseFileStatusEnum = pgEnum("case_file_status", [

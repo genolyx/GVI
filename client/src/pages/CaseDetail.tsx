@@ -343,12 +343,17 @@ export default function CaseDetailPage() {
                   ) : null}
                   {label === "Analysis status" && hasPermission("case:edit") &&
                   (item.status === "failed" ||
+                    item.status === "review_ready" ||
                     item.status === "queued" ||
                     item.status === "running") ? (
                     <Button
                       type="button"
                       size="sm"
-                      variant={item.status === "failed" ? "default" : "outline"}
+                      variant={
+                        item.status === "queued" || item.status === "running"
+                          ? "outline"
+                          : "default"
+                      }
                       className="mt-2"
                       disabled={rerun.isPending || stop.isPending}
                       onClick={() => {
@@ -358,6 +363,14 @@ export default function CaseDetailPage() {
                             organizationId: activeOrganizationId!,
                             caseId: item.id,
                           });
+                          return;
+                        }
+                        if (
+                          item.status === "review_ready" &&
+                          !window.confirm(
+                            `Run ${item.caseNumber} again from the original VCF? Stored variants will be replaced.`
+                          )
+                        ) {
                           return;
                         }
                         rerun.mutate({
@@ -370,9 +383,9 @@ export default function CaseDetailPage() {
                         ? "Running…"
                         : stop.isPending
                           ? "Stopping…"
-                          : item.status === "failed"
-                            ? "Run"
-                            : "Stop"}
+                          : item.status === "queued" || item.status === "running"
+                            ? "Stop"
+                            : "Run"}
                     </Button>
                   ) : null}
                 </div>
@@ -610,12 +623,36 @@ export default function CaseDetailPage() {
                       {file.fileName}
                     </p>
                     <span className="font-mono text-[9px] uppercase text-muted-foreground">
-                      {file.kind}
+                      {file.kind === "annotated_vcf" ? "Annotated VCF" : file.kind}
                     </span>
                   </div>
                   <p className="mt-2 truncate font-mono text-[9px] text-muted-foreground">
                     SHA-256 {file.sha256}
                   </p>
+                  {file.kind === "annotated_vcf" ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="mt-3"
+                      onClick={() => {
+                        void utils.cases.downloadFile
+                          .fetch({
+                            organizationId: activeOrganizationId!,
+                            caseId: item.id,
+                            fileId: file.id,
+                          })
+                          .then(result => {
+                            window.open(result.url, "_blank", "noopener,noreferrer");
+                          })
+                          .catch(error => {
+                            toast.error(error instanceof Error ? error.message : "Download failed");
+                          });
+                      }}
+                    >
+                      Download
+                    </Button>
+                  ) : null}
                 </div>
               ))}
             </CardContent>

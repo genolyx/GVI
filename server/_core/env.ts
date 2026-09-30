@@ -68,6 +68,14 @@ export const ENV = {
   ),
   /** Optional CIViC GraphQL key — lifts the anonymous 3 req/s cap. */
   civicApiKey: process.env.CIVIC_API_KEY ?? "",
+  /**
+   * gx-exome annotate_vcf.sh. A raw VCF is annotated by this script, which
+   * runs the VEP container. Cache and FASTA come from data-dir/data/refs.
+   */
+  gxExomeAnnotateScript:
+    process.env.GX_EXOME_ANNOTATE_SCRIPT ||
+    "/home/ken/gx-exome/src/annotate_vcf.sh",
+  gxExomeDataDir: process.env.GX_EXOME_DATA_DIR || "/home/ken/gx-exome",
 };
 
 function parsePositiveInt(raw: string | undefined, fallback: number): number {
