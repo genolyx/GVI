@@ -73,6 +73,14 @@ describe("empty VCF selection log", () => {
 });
 
 describe("VCF frequency and HPO applicability", () => {
+  it("reads every variant record", () => {
+    const rows = ["#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO"];
+    for (let position = 1; position <= 50_001; position += 1) {
+      rows.push(`1\t${position}\t.\tA\tG\t.\tPASS\t.`);
+    }
+    expect(parseVcf(rows.join("\n"), "GRCh38")).toHaveLength(50_001);
+  });
+
   it("keeps sample INFO AF out of the population frequency", () => {
     const parsed = parseVcf(
       [

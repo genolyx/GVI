@@ -1,8 +1,8 @@
 /**
  * Triage: decide which variants are worth engine time.
  *
- * `parseVcf` accepts up to 50,000 variants per case and the curation engine takes
- * one to five minutes each, so curating everything is not economically possible.
+ * The curation engine takes one to five minutes per variant, so curating every
+ * row in a VCF is not practical.
  * This pass runs in Node against data already in the row — no external calls — and
  * sorts variants into three tiers.
  *

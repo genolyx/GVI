@@ -20,8 +20,6 @@ export const vcfFilterSchema = z.object({
 
 export type VcfFilterInput = z.infer<typeof vcfFilterSchema>;
 
-const PARSE_LIMIT = 200_000;
-
 export async function selectVcfRecords(
   text: string,
   referenceBuild: "GRCh37" | "GRCh38",
@@ -29,7 +27,7 @@ export async function selectVcfRecords(
   panel?: GermlinePanelContent | null,
   lookup: (sites: GnomadSite[]) => Promise<Map<string, number> | null> = lookupLocalGnomad
 ) {
-  const parsed = parseVcf(text, referenceBuild, PARSE_LIMIT);
+  const parsed = parseVcf(text, referenceBuild);
   let genes: VcfFilters["genes"] = null;
   let matches: { id: string; label: string; geneCount: number }[] = [];
   let unmatched: string[] = [];
@@ -104,7 +102,7 @@ export async function selectVcfRecords(
   }
   return {
     parsedCount: parsed.length,
-    truncated: parsed.length >= PARSE_LIMIT,
+    truncated: false,
     filtered: selected,
     gnomadFilled,
     matches,

@@ -72,7 +72,7 @@ function parseSnpEff(info: ParsedInfo) {
 export function parseVcf(
   text: string,
   referenceBuild: "GRCh37" | "GRCh38",
-  maxRecords = 50_000
+  maxRecords?: number
 ): ParsedVariant[] {
   const records: ParsedVariant[] = [];
   const annotation = inspectVcfAnnotation(text);
@@ -160,7 +160,7 @@ export function parseVcf(
         callFilter: filter && filter !== "." ? filter : null,
         annotation: { id, quality, filter, info },
       });
-      if (records.length >= maxRecords) return records;
+      if (maxRecords !== undefined && records.length >= maxRecords) return records;
     }
   }
   return records;

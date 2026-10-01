@@ -6,8 +6,7 @@ import { parsePanelGenes, triageVariant, type TriageTier } from "./triage";
 /**
  * Run the triage rules over a whole case.
  *
- * Batched rather than streamed: a 50,000-variant case is a few megabytes of the
- * narrow column set the rules read, and one pass per batch keeps the update count
+ * Batched rather than streamed. One pass per batch keeps the update count
  * bounded. The pass is idempotent, so re-running after new annotation arrives
  * simply recomputes the tiers.
  */
