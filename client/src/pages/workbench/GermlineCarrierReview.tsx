@@ -3,6 +3,7 @@ import { TableWidthToggle, tableFrameClass, tableWidthClass, type TableWidthMode
 import { AnalysisLogDialog } from "./AnalysisLogDialog";
 import { clinvarShortLabels } from "@/lib/clinvarLabel";
 import { classificationTone, entryAction, entryChip, focusClassifierRun, workbenchStatusClass, workbenchStatusLabel } from "./status";
+import { SortHeader, compareSortValues, type SortDirection } from "./sort";
 import { codingHgvs, displayHgvs, displayTranscript } from "@shared/transcript";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -93,12 +94,74 @@ function classificationClass(label: string) {
   return "vus";
 }
 
+const DISEASE_NAME_LIMIT = 60;
+
+function diseasePreview(name: string): { text: string; title?: string } {
+  if (name.length <= DISEASE_NAME_LIMIT) return { text: name };
+  return { text: `${name.slice(0, DISEASE_NAME_LIMIT - 1)}…`, title: name };
+}
+
+function omimFactsFor(variants: CarrierVariantRow[], gene: string): OmimFact[] {
+  return variants.find(row => (row.gene || "").toUpperCase() === gene)?.omim ?? [];
+}
+
+function clippedHgvs(value: string | null | undefined) {
+  const text = value?.trim() || "";
+  if (!text) return "—";
+  return (
+    <span className="block max-w-[16rem] truncate" title={text.length > 22 ? text : undefined}>
+      {text}
+    </span>
+  );
+}
+
 function formatAf(value: string | null) {
   if (!value) return "—";
   const number = Number(value);
   if (!Number.isFinite(number)) return "—";
   if (number === 0) return "0";
   return number >= 0.001 ? number.toFixed(4) : number.toExponential(2);
+}
+
+type VariantSortKey =
+  | "gene"
+  | "hgvs"
+  | "hgvsp"
+  | "transcript"
+  | "omim"
+  | "inheritance"
+  | "disease"
+  | "effect"
+  | "zygosity"
+  | "depth"
+  | "af"
+  | "clinvar"
+  | "acmg"
+  | "tags";
+
+function variantSortValue(
+  row: CarrierVariantRow,
+  key: VariantSortKey,
+  runStatus: string | undefined
+): string | number | null {
+  if (key === "gene") return row.gene || "";
+  if (key === "hgvs") return codingHgvs(row.hgvsC) || "";
+  if (key === "hgvsp") return row.hgvsP || "";
+  if (key === "transcript") return displayTranscript(row.transcript) || "";
+  if (key === "omim") return (row.omim ?? []).map(item => item.omimId).join(" ");
+  if (key === "inheritance") return (row.omim ?? []).map(item => item.inheritance).filter(Boolean).join(" ");
+  if (key === "disease") return (row.omim ?? []).map(item => item.disease).filter(Boolean).join(" ");
+  if (key === "effect") return row.consequence || "";
+  if (key === "zygosity") return row.zygosity || "";
+  if (key === "depth") return row.readDepth;
+  if (key === "af") {
+    if (!row.populationAf) return null;
+    const number = Number(row.populationAf);
+    return Number.isFinite(number) ? number : null;
+  }
+  if (key === "clinvar") return row.clinvarSignificance || "";
+  if (key === "acmg") return row.germlineClassification || (runStatus ? workbenchStatusLabel(runStatus) : "");
+  return row.reviewStatus === "unreviewed" ? "" : row.reviewStatus;
 }
 
 function alleleDepth(row: CarrierVariantRow) {
@@ -271,6 +334,7 @@ export function GermlineCarrierReview({
   const [noteText, setNoteText] = useState("");
   const [preview, setPreview] = useState(false);
   const [tableWidth, setTableWidth] = useState<TableWidthMode>("full");
+  const [sort, setSort] = useState<{ key: VariantSortKey; direction: SortDirection } | null>(null);
   const [logOpen, setLogOpen] = useState(false);
 
   useEffect(() => {
@@ -352,6 +416,22 @@ export function GermlineCarrierReview({
   const listed = secondary
     ? visible.filter(row => isAcmgSecondaryFindingGene(row.gene))
     : visible;
+  const sortedListed = sort
+    ? [...listed].sort((left, right) =>
+        compareSortValues(
+          variantSortValue(left, sort.key, runByVariant.get(left.id)),
+          variantSortValue(right, sort.key, runByVariant.get(right.id)),
+          sort.direction
+        )
+      )
+    : listed;
+  const toggleSort = (key: VariantSortKey) => {
+    setSort(current =>
+      current?.key === key && current.direction === "asc"
+        ? { key, direction: "desc" }
+        : { key, direction: "asc" }
+    );
+  };
   const notes = new Map((review.data?.notes ?? []).map(row => [row.variantId, row.notes]));
   const knowledge = review.data?.genes ?? [];
 
@@ -453,10 +533,10 @@ export function GermlineCarrierReview({
       <div
         className={`rounded-xl border px-4 py-3 ${
           banner.tone === "detected"
-            ? "border-rose-300 bg-rose-50 text-rose-950 dark:border-rose-300/30 dark:bg-rose-400/10 dark:text-rose-100"
+            ? "border-rose-500/40 bg-rose-50 text-rose-950 dark:bg-card dark:text-rose-300"
             : banner.tone === "uncertain"
-              ? "border-amber-300 bg-amber-50 text-amber-950 dark:border-amber-300/25 dark:bg-amber-300/10 dark:text-amber-100"
-              : "border-emerald-300 bg-emerald-50 text-emerald-950 dark:border-emerald-300/30 dark:bg-emerald-400/10 dark:text-emerald-100"
+              ? "border-amber-500/40 bg-amber-50 text-amber-950 dark:bg-card dark:text-amber-200"
+              : "border-emerald-500/40 bg-emerald-50 text-emerald-950 dark:bg-card dark:text-emerald-300"
         }`}
       >
         <p className="text-sm font-semibold">{banner.title}</p>
@@ -610,13 +690,34 @@ export function GermlineCarrierReview({
               <thead className="bg-muted/50 text-xs uppercase tracking-wide text-muted-foreground">
                 <tr>
                   <th className="px-3 py-2" />
-                  {["Gene", "HGVSc", "HGVSp", "Transcript (NM)", "OMIM", "Inheritance", "Disease", "Effect", "Zygosity", "Allele depth", "gnomAD AF", "ClinVar", "ACMG", "Tags", "Action"].map(
-                    label => (
-                      <th key={label} className="px-3 py-2 font-medium">
-                        {label}
-                      </th>
-                    )
-                  )}
+                  {(
+                    [
+                      ["gene", "Gene"],
+                      ["hgvs", "HGVSc"],
+                      ["hgvsp", "HGVSp"],
+                      ["transcript", "Transcript (NM)"],
+                      ["omim", "OMIM"],
+                      ["inheritance", "Inheritance"],
+                      ["disease", "Disease"],
+                      ["effect", "Effect"],
+                      ["zygosity", "Zygosity"],
+                      ["depth", "Allele depth"],
+                      ["af", "gnomAD AF"],
+                      ["clinvar", "ClinVar"],
+                      ["acmg", "ACMG"],
+                      ["tags", "Tags"],
+                    ] as const
+                  ).map(([key, label]) => (
+                    <SortHeader
+                      key={key}
+                      label={label}
+                      className="px-3 py-2 font-medium"
+                      active={sort?.key === key}
+                      direction={sort?.direction ?? "asc"}
+                      onClick={() => toggleSort(key)}
+                    />
+                  ))}
+                  <th className="px-3 py-2 font-medium">Action</th>
                 </tr>
               </thead>
               <tbody>
@@ -627,7 +728,7 @@ export function GermlineCarrierReview({
                     </td>
                   </tr>
                 ) : listed.length ? (
-                  listed.map(row => (
+                  sortedListed.map(row => (
                     <tr key={row.id} className="border-t border-border/60">
                       <td className="px-3 py-2">
                         <Checkbox
@@ -643,8 +744,8 @@ export function GermlineCarrierReview({
                         />
                       </td>
                       <td className="px-3 py-2">{row.gene || "—"}</td>
-                      <td className="px-3 py-2">{codingHgvs(row.hgvsC) || "—"}</td>
-                      <td className="px-3 py-2">{row.hgvsP || "—"}</td>
+                      <td className="px-3 py-2">{clippedHgvs(codingHgvs(row.hgvsC))}</td>
+                      <td className="px-3 py-2">{clippedHgvs(row.hgvsP)}</td>
                       <td className="px-3 py-2" title={row.transcript || undefined}>
                         {displayTranscript(row.transcript) || "—"}
                       </td>
@@ -1043,12 +1144,23 @@ export function GermlineCarrierReview({
                 {geneScope
                   .filter(gene => {
                     const record = knowledge.find(item => item.gene === gene && item.language === geneLang);
-                    const blob = `${gene} ${record?.disorder || ""} ${record?.functionSummary || ""} ${record?.diseaseAssociation || ""}`.toLowerCase();
+                    const facts = omimFactsFor(variants, gene);
+                    const blob = `${gene} ${record?.disorder || ""} ${record?.omimNumber || ""} ${record?.inheritance || ""} ${record?.functionSummary || ""} ${record?.diseaseAssociation || ""} ${facts.map(item => `${item.omimId} ${item.inheritance} ${item.disease}`).join(" ")}`.toLowerCase();
                     return blob.includes(geneQuery.trim().toLowerCase());
                   })
                   .map(gene => {
                     const record = knowledge.find(item => item.gene === gene && item.language === geneLang);
                     const rows = variants.filter(row => (row.gene || "").toUpperCase() === gene);
+                    const facts = rows[0]?.omim ?? [];
+                    const omimIds = record?.omimNumber?.trim()
+                      ? record.omimNumber.trim().split(/[,\s]+/).filter(Boolean)
+                      : [...new Set(facts.map(item => item.omimId))];
+                    const inheritances = record?.inheritance?.trim()
+                      ? [record.inheritance.trim()]
+                      : [...new Set(facts.map(item => item.inheritance).filter(Boolean))];
+                    const diseases = record?.disorder?.trim()
+                      ? [record.disorder.trim()]
+                      : [...new Set(facts.map(item => item.disease).filter(Boolean))];
                     return (
                       <tr key={gene} className="border-t align-top">
                         <td className="px-3 py-2 font-semibold">{gene}</td>
@@ -1061,11 +1173,52 @@ export function GermlineCarrierReview({
                           ))}
                         </td>
                         <td className="px-3 py-2 font-mono">{displayTranscript(rows[0]?.transcript) || "—"}</td>
-                        <td className="max-w-[10rem] px-3 py-2">{record?.disorder || "—"}</td>
-                        <td className="px-3 py-2">{record?.omimNumber || "—"}</td>
-                        <td className="px-3 py-2">{record?.inheritance || "—"}</td>
+                        <td className="max-w-[16rem] px-3 py-2">
+                          {diseases.length
+                            ? diseases.map(name => {
+                                const label = diseasePreview(name);
+                                return (
+                                  <div key={name} className="whitespace-nowrap" title={label.title}>
+                                    {label.text}
+                                  </div>
+                                );
+                              })
+                            : "—"}
+                        </td>
+                        <td className="px-3 py-2">
+                          {omimIds.length
+                            ? omimIds.map(id => (
+                                <div key={id}>
+                                  <a
+                                    href={facts.find(item => item.omimId === id)?.url || `https://omim.org/entry/${id}`}
+                                    target="_blank"
+                                    rel="noreferrer noopener"
+                                    className="text-primary hover:underline"
+                                  >
+                                    {id}
+                                  </a>
+                                </div>
+                              ))
+                            : "—"}
+                        </td>
+                        <td className="px-3 py-2">
+                          {inheritances.length ? inheritances.map(mode => <div key={mode}>{mode}</div>) : "—"}
+                        </td>
                         <td className="max-w-[14rem] px-3 py-2">{record?.functionSummary || "—"}</td>
-                        <td className="max-w-[14rem] px-3 py-2">{record?.diseaseAssociation || "—"}</td>
+                        <td className="max-w-[16rem] px-3 py-2">
+                          {record?.diseaseAssociation?.trim()
+                            ? record.diseaseAssociation
+                            : diseases.length
+                              ? diseases.map(name => {
+                                  const label = diseasePreview(name);
+                                  return (
+                                    <div key={name} title={label.title}>
+                                      {label.text}
+                                    </div>
+                                  );
+                                })
+                              : "—"}
+                        </td>
                         <td className="px-3 py-2">
                           {rows.map(row => (
                             <button
@@ -1090,11 +1243,11 @@ export function GermlineCarrierReview({
                               setEditGene({
                                 gene,
                                 language: geneLang,
-                                disorder: record?.disorder || "",
-                                omimNumber: record?.omimNumber || "",
-                                inheritance: record?.inheritance || "",
+                                disorder: record?.disorder || diseases.join("; "),
+                                omimNumber: record?.omimNumber || omimIds.join(", "),
+                                inheritance: record?.inheritance || inheritances.join(", "),
                                 functionSummary: record?.functionSummary || "",
-                                diseaseAssociation: record?.diseaseAssociation || "",
+                                diseaseAssociation: record?.diseaseAssociation || diseases.join("; "),
                               })
                             }
                           >

@@ -2,6 +2,7 @@ import { SamVcPanel } from "@/components/curation/SamVcPanel";
 import { StatePanel } from "@/components/StatePanel";
 import { Button } from "@/components/ui/button";
 import { INSTITUTIONAL_CLASSIFICATIONS } from "@shared/curation/institutional";
+import { spliceReviewCriterion } from "@shared/curation/spliceAcmg";
 import { useOrganization } from "@/contexts/OrganizationContext";
 import { trpc } from "@/lib/trpc";
 import { ArrowLeft, ChevronLeft, ChevronRight } from "lucide-react";
@@ -58,6 +59,15 @@ export default function BatchReviewPage() {
   );
   const rsid = identity.rsid || identityQuery.data?.rsid || null;
   const hgvsG = identityQuery.data?.hgvsG || identity.hgvsG;
+  const variantId = documentQuery.data?.variantId ?? null;
+  const criteriaDetail = trpc.variants.detail.useQuery(
+    { organizationId: activeOrganizationId || 0, variantId: variantId || 0 },
+    { enabled: Boolean(activeOrganizationId && variantId) }
+  );
+  const [label, setLabel] = useState("");
+  useEffect(() => {
+    setLabel(entry?.institutionalLabel || "");
+  }, [entry?.id, entry?.institutionalLabel]);
   const saveInstitutional = trpc.workbench.setInstitutional.useMutation({
     onSuccess: async () => {
       await batch.refetch();
@@ -65,14 +75,39 @@ export default function BatchReviewPage() {
     },
     onError: error => toast.error(error.message),
   });
+  const addPvs1 = trpc.variants.applyPvs1.useMutation({
+    onSuccess: async result => {
+      setLabel(result.institutionalLabel);
+      await Promise.all([
+        criteriaDetail.refetch(),
+        batch.refetch(),
+        utils.variants.list.invalidate(),
+        utils.variants.detail.invalidate(),
+      ]);
+      toast.success(
+        result.alreadyApplied
+          ? `PVS1 is already applied. Classification is ${result.classification}.`
+          : `PVS1 added. Classification is now ${result.classification}.`
+      );
+    },
+    onError: error => toast.error(error.message),
+  });
 
   const prev = index > 0 ? entries[index - 1] : undefined;
   const next = index >= 0 && index < entries.length - 1 ? entries[index + 1] : undefined;
 
-  const [label, setLabel] = useState("");
-  useEffect(() => {
-    setLabel(entry?.institutionalLabel || "");
-  }, [entry?.id, entry?.institutionalLabel]);
+  const engineCriteria = documentQuery.data?.document.acmg.criteria ?? [];
+  const spliceReview = spliceReviewCriterion(documentQuery.data?.document.engine.parsedData);
+  const pvs1Strength = spliceReview?.code === "PVS1" ? spliceReview.strength : "very_strong";
+  const pvs1Met =
+    engineCriteria.some(criterion => criterion.baseCode === "PVS1") ||
+    (criteriaDetail.data?.criteria ?? []).some(
+      item => item.code === "PVS1" && item.state === "met"
+    );
+  const call =
+    criteriaDetail.data?.acmgSuggestion?.classification ||
+    documentQuery.data?.document.acmg.classification?.label ||
+    "";
 
   const go = (id: number) => navigate(`/workbench/batches/${batchId}/review/${id}`);
 
@@ -91,8 +126,22 @@ export default function BatchReviewPage() {
     );
   }
 
-  const acmg = documentQuery.data?.document.acmg.classification;
-  const criteria = documentQuery.data?.document.acmg.criteria ?? [];
+  const reviewerCriteria = (criteriaDetail.data?.criteria ?? [])
+    .filter(
+      item =>
+        item.state === "met" &&
+        !engineCriteria.some(criterion => criterion.baseCode === item.code)
+    )
+    .map(item => ({
+      code: item.code,
+      baseCode: item.code,
+      strength: item.strengthOverride || "very_strong",
+      direction: (item.code.startsWith("B") ? "benign" : "pathogenic") as
+        | "pathogenic"
+        | "benign",
+      rationale: item.note || "Added during review.",
+    }));
+  const criteria = [...engineCriteria, ...reviewerCriteria];
   const input = entry.input;
 
   return (
@@ -114,6 +163,23 @@ export default function BatchReviewPage() {
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            {call ? <span className="text-sm font-semibold">{call}</span> : null}
+            {canEdit && variantId && !pvs1Met ? (
+              <Button
+                variant="outline"
+                disabled={addPvs1.isPending}
+                onClick={() =>
+                  addPvs1.mutate({
+                    organizationId: activeOrganizationId!,
+                    variantId,
+                    runId: entry.id,
+                    strength: pvs1Strength,
+                  })
+                }
+              >
+                Add PVS1
+              </Button>
+            ) : null}
             {entries.length > 1 ? (
               <label className="flex items-center gap-2 text-xs text-muted-foreground">
                 Variant
@@ -216,10 +282,35 @@ export default function BatchReviewPage() {
                   </span>
                 )) : <span className="text-sm italic text-muted-foreground">No criteria met</span>}
               </div>
-              <p className="mt-3 text-lg font-semibold">{acmg?.label || "—"}</p>
+              {spliceReview?.code === "PVS1" && !pvs1Met ? (
+                <p className="mt-3 text-sm leading-relaxed text-muted-foreground">{spliceReview.rationale}</p>
+              ) : null}
+              <p className="mt-3 text-lg font-semibold">{call || "—"}</p>
+              {canEdit && variantId && !pvs1Met ? (
+                <Button
+                  className="mt-3"
+                  variant="outline"
+                  disabled={addPvs1.isPending}
+                  onClick={() =>
+                    addPvs1.mutate({
+                      organizationId: activeOrganizationId!,
+                      variantId,
+                      runId: entry.id,
+                      strength: pvs1Strength,
+                    })
+                  }
+                >
+                  Add PVS1
+                </Button>
+              ) : null}
+              {pvs1Met && reviewerCriteria.some(item => item.code === "PVS1") ? (
+                <p className="mt-2 text-xs text-muted-foreground">
+                  PVS1 was added in review. The classification includes it.
+                </p>
+              ) : null}
             </div>
           </div>
-          <AcmgSummary label={acmg?.label ?? null} criteria={criteria} document={documentQuery.data.document} />
+          <AcmgSummary label={call || null} criteria={criteria} document={documentQuery.data.document} />
         </section>
       )}
     </div>

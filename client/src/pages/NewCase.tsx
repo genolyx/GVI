@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Progress } from "@/components/ui/progress";
+import { UploadProgress } from "@/components/UploadProgress";
 import { Textarea } from "@/components/ui/textarea";
 import { useOrganization } from "@/contexts/OrganizationContext";
 import { trpc } from "@/lib/trpc";
@@ -37,6 +37,7 @@ import {
 } from "@shared/germlineOrder";
 import { detectReferenceBuild } from "@shared/vcfAssembly";
 import { readVcfHeader } from "@/lib/readVcfHeader";
+import { putFileWithProgress } from "@/lib/uploadFile";
 
 type FormState = {
   projectId: string;
@@ -118,6 +119,7 @@ export default function NewCasePage() {
   });
   const [vcf, setVcf] = useState<File | null>(null);
   const [progress, setProgress] = useState(0);
+  const [uploadLabel, setUploadLabel] = useState("Submitting");
   const [submissionError, setSubmissionError] = useState("");
   const [filters, setFilters] =
     useState<CaseVcfFilterValues>(defaultVcfFilters);
@@ -151,6 +153,7 @@ export default function NewCasePage() {
     kind: "vcf",
     sampleId?: number
   ) => {
+    setUploadLabel("Preparing upload");
     const ticket = await requestUpload.mutateAsync({
       organizationId: activeOrganizationId!,
       caseId,
@@ -158,13 +161,15 @@ export default function NewCasePage() {
       kind,
       fileName: file.name,
     });
+    setUploadLabel("Reading the file");
     const digest = await sha256(file);
-    const response = await fetch(ticket.uploadUrl, {
-      method: "PUT",
-      headers: { "Content-Type": file.type || "application/octet-stream" },
-      body: file,
+    setUploadLabel(`Uploading ${file.name}`);
+    setProgress(10);
+    await putFileWithProgress(ticket.uploadUrl, file, (loaded, total) => {
+      setProgress(total > 0 ? 10 + (loaded / total) * 75 : 10);
     });
-    if (!response.ok) throw new Error(`Upload failed for ${file.name}`);
+    setUploadLabel("Saving the file");
+    setProgress(88);
     await completeUpload.mutateAsync({
       organizationId: activeOrganizationId!,
       caseId,
@@ -188,6 +193,7 @@ export default function NewCasePage() {
       return;
     try {
       setSubmissionError("");
+      setUploadLabel("Saving the case");
       setProgress(8);
       const created = await createCase.mutateAsync({
         organizationId: activeOrganizationId,
@@ -266,9 +272,9 @@ export default function NewCasePage() {
       });
       setCreatedCaseId(created.id);
       const sampleId = created.sampleIds[0];
-      setProgress(25);
       if (vcf) await upload(created.id, vcf, "vcf", sampleId);
-      setProgress(82);
+      setUploadLabel("Submitting");
+      setProgress(92);
       await submit.mutateAsync({
         organizationId: activeOrganizationId,
         caseId: created.id,
@@ -626,7 +632,12 @@ export default function NewCasePage() {
                   includes more specific terms that contain that word.
                 </p>
               </Field>
-              <GeneListField values={filters} onChange={setFilters} hpo={form.phenotypeText} />
+              <GeneListField
+                organizationId={activeOrganizationId || 0}
+                values={filters}
+                onChange={setFilters}
+                hpo={form.phenotypeText}
+              />
             </>
           ) : (
             <div className="space-y-6 rounded-xl border border-border/70 bg-muted/20 p-5">
@@ -968,14 +979,8 @@ export default function NewCasePage() {
               </span>
             </label>
           ))}
-          {busy ? (
-            <div className="space-y-2">
-              <div className="flex justify-between text-xs">
-                <span>Processing submission</span>
-                <span className="font-mono">{progress}%</span>
-              </div>
-              <Progress value={progress} />
-            </div>
+          {busy || progress > 0 ? (
+            <UploadProgress label={uploadLabel} percent={progress} />
           ) : null}
           {missing.length ? (
             <p className="text-sm text-destructive">

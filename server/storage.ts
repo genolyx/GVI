@@ -118,14 +118,47 @@ export async function storagePut(
   return { key, url: getPublicUrl(key) };
 }
 
+/**
+ * The browser cannot reach MinIO at localhost when the app is opened by its
+ * LAN address. Sign the PUT for the same hostname the page was loaded from.
+ */
+export function browserUploadEndpoint(hostHeader: string | undefined): string | undefined {
+  const endpoint = process.env.AWS_ENDPOINT;
+  if (!endpoint || !hostHeader) return undefined;
+  const host = hostHeader.split(",")[0]?.trim() ?? "";
+  const hostname = host.replace(/:\d+$/, "").replace(/^\[|\]$/g, "");
+  if (!hostname || hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1") {
+    return undefined;
+  }
+  const url = new URL(endpoint);
+  url.hostname = hostname;
+  return url.toString().replace(/\/$/, "");
+}
+
+function clientForEndpoint(endpoint: string) {
+  const config = getS3Config();
+  return new S3Client({
+    region: config.region,
+    endpoint,
+    forcePathStyle: true,
+    credentials: {
+      accessKeyId: config.accessKeyId,
+      secretAccessKey: config.secretAccessKey,
+    },
+  });
+}
+
 export async function storageCreateUploadUrl(
-  relKey: string
+  relKey: string,
+  hostHeader?: string
 ): Promise<{ key: string; uploadUrl: string; accessUrl: string }> {
   const { client, bucket } = getClient();
   const key = assertSafeKey(relKey);
+  const browserEndpoint = browserUploadEndpoint(hostHeader);
+  const signer = browserEndpoint ? clientForEndpoint(browserEndpoint) : client;
 
   const command = new PutObjectCommand({ Bucket: bucket, Key: key });
-  const uploadUrl = await getSignedUrl(client, command, { expiresIn: 3600 });
+  const uploadUrl = await getSignedUrl(signer, command, { expiresIn: 3600 });
 
   return { key, uploadUrl, accessUrl: getPublicUrl(key) };
 }

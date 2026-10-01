@@ -11,6 +11,7 @@ export type FilterableVariant = {
   siteQuality: number | null;
   genotypeQuality: number | null;
   callFilter: string | null;
+  clinvarSignificance?: string | null;
   chromosome?: string;
   position?: number;
   referenceAllele?: string;
@@ -33,6 +34,10 @@ export type VcfFilters = {
   minDepth: number | null;
   passOnly: boolean;
   codingOnly: boolean;
+  /** Drop ClinVar Benign, Likely benign, and Benign/Likely benign. */
+  excludeClinvarBenign: boolean;
+  /** Drop ClinVar Uncertain significance (VUS). */
+  excludeClinvarVus: boolean;
 };
 
 export type FilterReason =
@@ -42,6 +47,9 @@ export type FilterReason =
   | "depth"
   | "af"
   | "impact"
+  | "clinvar"
+  | "vus"
+  | "clinvarMix"
   | "hpo"
   | "panel";
 
@@ -65,6 +73,9 @@ const emptyDrops = (): Record<FilterReason, number> => ({
   depth: 0,
   af: 0,
   impact: 0,
+  clinvar: 0,
+  vus: 0,
+  clinvarMix: 0,
   hpo: 0,
   panel: 0,
 });
@@ -79,6 +90,45 @@ function alleleFrequency(value: string | null): number | null {
   if (value === null || value === "") return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+const BENIGN_CLINVAR = new Set(["benign", "likely benign"]);
+const VUS_CLINVAR = new Set(["uncertain significance", "vus", "variant of uncertain significance"]);
+
+function clinvarTokens(value: string | null | undefined): string[] {
+  if (!value) return [];
+  return value
+    .toLowerCase()
+    .replaceAll("_", " ")
+    .split(/[&/,;]+/)
+    .map(token => token.trim().replace(/\s+/g, " "))
+    .filter(token => token && token !== "." && token !== "not provided");
+}
+
+/** True when every ClinVar call is Benign or Likely benign, including Benign/Likely benign. */
+export function isClinvarBenignCall(value: string | null | undefined): boolean {
+  const tokens = clinvarTokens(value);
+  return tokens.length > 0 && tokens.every(token => BENIGN_CLINVAR.has(token));
+}
+
+/** True when every ClinVar call is Uncertain significance. */
+export function isClinvarVusCall(value: string | null | undefined): boolean {
+  const tokens = clinvarTokens(value);
+  return tokens.length > 0 && tokens.every(token => VUS_CLINVAR.has(token));
+}
+
+/** True when the call mixes VUS with Benign or Likely benign and contains nothing else. */
+export function isClinvarBenignVusMix(value: string | null | undefined): boolean {
+  const tokens = clinvarTokens(value);
+  if (!tokens.length) return false;
+  let benign = false;
+  let vus = false;
+  for (const token of tokens) {
+    if (BENIGN_CLINVAR.has(token)) benign = true;
+    else if (VUS_CLINVAR.has(token)) vus = true;
+    else return false;
+  }
+  return benign && vus;
 }
 
 function firstFail(
@@ -112,6 +162,16 @@ function firstFail(
     (variant.impact === "LOW" || variant.impact === "MODIFIER")
   )
     return "impact";
+  if (filters.excludeClinvarBenign && isClinvarBenignCall(variant.clinvarSignificance))
+    return "clinvar";
+  if (filters.excludeClinvarVus && isClinvarVusCall(variant.clinvarSignificance))
+    return "vus";
+  if (
+    filters.excludeClinvarBenign &&
+    filters.excludeClinvarVus &&
+    isClinvarBenignVusMix(variant.clinvarSignificance)
+  )
+    return "clinvarMix";
   const gene = (variant.gene || "").toUpperCase();
   if (filters.genes && (!gene || !filters.genes.has(gene))) return "hpo";
   const geneMatch =
@@ -185,6 +245,8 @@ export function dropAboveMaxAf<T extends FilterableVariant>(
     minDepth: null,
     passOnly: false,
     codingOnly: false,
+    excludeClinvarBenign: false,
+    excludeClinvarVus: false,
   });
   return {
     ...result,

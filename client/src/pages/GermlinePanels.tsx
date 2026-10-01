@@ -1,3 +1,4 @@
+import { parseGeneList } from "@shared/geneList";
 import { PageHeader } from "@/components/PageHeader";
 import { StatePanel } from "@/components/StatePanel";
 import { Button } from "@/components/ui/button";
@@ -9,6 +10,7 @@ import { trpc } from "@/lib/trpc";
 import { Loader2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { GeneSymbolList } from "./CaseVcfFilters";
 
 export default function GermlinePanelsPage() {
   const { activeOrganizationId, hasPermission } = useOrganization();
@@ -215,9 +217,13 @@ export default function GermlinePanelsPage() {
                 value={genesText}
                 onChange={event => setGenesText(event.target.value)}
                 placeholder="CFTR, HBB, GJB2"
-                className="min-h-40 font-mono text-sm"
+                className="field-sizing-fixed h-20 max-h-20 min-h-0 resize-none overflow-y-auto font-mono text-sm"
                 required
               />
+              {(() => {
+                const genes = parseGeneList(genesText);
+                return genes?.size ? <GeneSymbolList genes={[...genes]} /> : null;
+              })()}
             </div>
           ) : (
             <div className="space-y-2">

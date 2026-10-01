@@ -1,5 +1,6 @@
 import { ClinicalStatus } from "@/components/ClinicalStatus";
 import { PageHeader } from "@/components/PageHeader";
+import { UploadProgress } from "@/components/UploadProgress";
 import { StatePanel } from "@/components/StatePanel";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -16,15 +17,26 @@ import {
   Database,
   Dna,
   FileArchive,
+  FileUp,
   FlaskConical,
+  Loader2,
   Terminal,
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useLocation, useParams } from "wouter";
 import { toast } from "sonner";
 import { formatDateTime } from "@/lib/datetime";
+import { putFileWithProgress } from "@/lib/uploadFile";
 import { GermlineOrderFields } from "./GermlineOrderFields";
 import { HpoTermField } from "./HpoTermField";
+import {
+  CaseVcfFilters,
+  GeneListField,
+  GeneSymbolList,
+  defaultVcfFilters,
+  vcfFiltersPayload,
+  type CaseVcfFilterValues,
+} from "./CaseVcfFilters";
 import {
   defaultGermlineOrder,
   GERMLINE_SERVICE_LABEL,
@@ -33,6 +45,14 @@ import {
   normalizeGermlineOrder,
   type GermlineOrderInput,
 } from "@shared/germlineOrder";
+import { parseGeneList } from "@shared/geneList";
+
+async function sha256(file: File) {
+  const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+  return Array.from(new Uint8Array(digest))
+    .map(value => value.toString(16).padStart(2, "0"))
+    .join("");
+}
 
 function filterSteps(metadata: unknown) {
   if (!metadata || typeof metadata !== "object") return [];
@@ -191,7 +211,16 @@ export default function CaseDetailPage() {
   const [logJobId, setLogJobId] = useState<number | null>(null);
   const [orderDraft, setOrderDraft] =
     useState<GermlineOrderInput>(defaultGermlineOrder);
+  const [draftVcf, setDraftVcf] = useState<File | null>(null);
+  const [draftFilters, setDraftFilters] =
+    useState<CaseVcfFilterValues>(defaultVcfFilters);
+  const [submittingDraft, setSubmittingDraft] = useState(false);
+  const [uploadLabel, setUploadLabel] = useState("Uploading");
+  const [uploadPercent, setUploadPercent] = useState(0);
   const utils = trpc.useUtils();
+  const requestUpload = trpc.cases.requestUpload.useMutation();
+  const completeUpload = trpc.cases.completeUpload.useMutation();
+  const submitCase = trpc.cases.submit.useMutation();
   const resetTimeline = trpc.cases.resetTimeline.useMutation({
     onSuccess: async () => {
       setLogJobId(null);
@@ -211,6 +240,7 @@ export default function CaseDetailPage() {
     },
     onError: error => toast.error(error.message),
   });
+  const applyPanel = trpc.cases.applyPanel.useMutation();
   const saveOrder = trpc.cases.updateGermlineOrder.useMutation({
     onSuccess: async () => {
       toast.success("Order details saved.");
@@ -292,6 +322,97 @@ export default function CaseDetailPage() {
       </div>
     );
   const item = query.data;
+  const draftHasVcf = item.files.some(file => file.kind === "vcf");
+  const applyScope = async (scope: { panelId?: number; genesText?: string }) => {
+    if (!activeOrganizationId) return;
+    const canRun = item.status === "review_ready" || item.status === "failed";
+    if (
+      canRun &&
+      draftHasVcf &&
+      !window.confirm(
+        `Replace the panel on ${item.caseNumber} and run the existing VCF again? The panel is the gene list for this run. HPO terms stay on the order and do not remove variants. Stored variants will be replaced.`
+      )
+    ) {
+      return;
+    }
+    try {
+      await saveOrder.mutateAsync({
+        organizationId: activeOrganizationId,
+        caseId: item.id,
+        ...orderDraft,
+        phenotypeText: requestDraft.phenotypeText,
+        indication: requestDraft.indication,
+        panelName: requestDraft.panelName,
+      });
+      const result = await applyPanel.mutateAsync({
+        organizationId: activeOrganizationId,
+        caseId: item.id,
+        ...scope,
+      });
+      toast.success(
+        result.jobId
+          ? `${result.name} is running on the existing VCF.`
+          : `${result.name} is attached to this order.`
+      );
+      setEditingOrder(false);
+      await Promise.all([query.refetch(), timeline.refetch()]);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not attach that panel.");
+    }
+  };
+  const submitDraft = async () => {
+    if (!activeOrganizationId || submittingDraft) return;
+    if (!draftHasVcf && !draftVcf) return;
+    try {
+      setSubmittingDraft(true);
+      setUploadPercent(0);
+      if (!draftHasVcf && draftVcf) {
+        const sampleId = item.samples[0]?.id;
+        setUploadLabel("Preparing upload");
+        const ticket = await requestUpload.mutateAsync({
+          organizationId: activeOrganizationId,
+          caseId: item.id,
+          sampleId,
+          kind: "vcf",
+          fileName: draftVcf.name,
+        });
+        setUploadLabel("Reading the file");
+        const digest = await sha256(draftVcf);
+        setUploadLabel(`Uploading ${draftVcf.name}`);
+        setUploadPercent(0);
+        await putFileWithProgress(ticket.uploadUrl, draftVcf, (loaded, total) => {
+          setUploadPercent(total > 0 ? (loaded / total) * 100 : 0);
+        });
+        setUploadLabel("Saving the file");
+        await completeUpload.mutateAsync({
+          organizationId: activeOrganizationId,
+          caseId: item.id,
+          sampleId,
+          kind: "vcf",
+          fileName: draftVcf.name,
+          storageKey: ticket.key,
+          accessUrl: ticket.accessUrl,
+          mimeType: draftVcf.type || "application/octet-stream",
+          byteSize: draftVcf.size,
+          sha256: digest,
+        });
+      }
+      setUploadLabel("Submitting");
+      setUploadPercent(100);
+      await submitCase.mutateAsync({
+        organizationId: activeOrganizationId,
+        caseId: item.id,
+        vcfFilters: vcfFiltersPayload(draftFilters, item.phenotypeText ?? ""),
+      });
+      toast.success("Analysis request submitted.");
+      setDraftVcf(null);
+      await Promise.all([query.refetch(), timeline.refetch(), utils.cases.list.invalidate()]);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not submit this case.");
+    } finally {
+      setSubmittingDraft(false);
+    }
+  };
   return (
     <div className="space-y-7">
       <PageHeader
@@ -305,6 +426,24 @@ export default function CaseDetailPage() {
               <ArrowLeft className="mr-2 size-4" />
               Back
             </Button>
+            {item.status === "draft" && hasPermission("case:edit") ? (
+              <Button
+                disabled={
+                  submittingDraft ||
+                  (!item.files.some(file => file.kind === "vcf") && !draftVcf)
+                }
+                onClick={() => {
+                  void submitDraft();
+                }}
+              >
+                {submittingDraft ? (
+                  <Loader2 className="mr-2 size-4 animate-spin" />
+                ) : (
+                  <CheckCircle2 className="mr-2 size-4" />
+                )}
+                {submittingDraft ? "Submitting…" : "Submit analysis request"}
+              </Button>
+            ) : null}
             {item.variantCount > 0 ? (
               <>
                 {item.purpose === "somatic" && hasPermission("report:draft") ? (
@@ -343,6 +482,90 @@ export default function CaseDetailPage() {
             })
           }
         />
+      ) : null}
+      {item.status === "draft" && hasPermission("case:edit") ? (
+        <Card className="clinical-card shadow-none">
+          <CardHeader>
+            <CardTitle className="font-display text-base">Submit analysis</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            <p className="text-sm leading-6 text-muted-foreground">
+              This case is still a draft.
+              {item.germlinePanel
+                ? ` ${item.germlinePanel.name} (${item.germlinePanel.geneCount.toLocaleString()} genes) is already attached and limits the variants.`
+                : ""}{" "}
+              Choose the VCF, then submit. FILTER PASS and coding changes stay on unless you change them below.
+            </p>
+            {draftHasVcf ? (
+              <p className="text-sm">A VCF is already on this case.</p>
+            ) : (
+              <label
+                className={`flex cursor-pointer items-center gap-4 rounded-xl border border-dashed p-4 ${
+                  draftVcf
+                    ? "border-primary/40 bg-primary/[0.035]"
+                    : "border-border hover:border-primary/30"
+                }`}
+              >
+                <div className="grid size-10 place-items-center rounded-xl bg-muted text-muted-foreground">
+                  <FileUp className="size-4" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium">
+                    {draftVcf ? draftVcf.name : "VCF or VCF.GZ"}
+                    {!draftVcf ? <span className="text-destructive"> *</span> : null}
+                  </p>
+                  <p className="mt-1 truncate text-[11px] text-muted-foreground">
+                    {draftVcf
+                      ? `${(draftVcf.size / 1024 / 1024).toFixed(2)} MB`
+                      : "Click to select file"}
+                  </p>
+                </div>
+                {draftVcf ? <CheckCircle2 className="size-4 text-emerald-600" /> : null}
+                <input
+                  type="file"
+                  accept=".vcf,.vcf.gz"
+                  className="hidden"
+                  onChange={event => setDraftVcf(event.target.files?.[0] || null)}
+                />
+              </label>
+            )}
+            {activeOrganizationId &&
+            (item.referenceBuild === "GRCh37" || item.referenceBuild === "GRCh38") ? (
+              <CaseVcfFilters
+                organizationId={activeOrganizationId}
+                referenceBuild={item.referenceBuild}
+                file={draftVcf}
+                hpo={item.phenotypeText ?? ""}
+                values={draftFilters}
+                onChange={setDraftFilters}
+                panelScope={
+                  item.germlinePanel?.panelId
+                    ? { panelId: item.germlinePanel.panelId }
+                    : null
+                }
+              />
+            ) : null}
+            {submittingDraft ? (
+              <UploadProgress label={uploadLabel} percent={uploadPercent} />
+            ) : null}
+            <div className="flex justify-end border-t border-border/70 pt-5">
+              <Button
+                size="lg"
+                disabled={submittingDraft || (!draftHasVcf && !draftVcf)}
+                onClick={() => {
+                  void submitDraft();
+                }}
+              >
+                {submittingDraft ? (
+                  <Loader2 className="mr-2 size-4 animate-spin" />
+                ) : (
+                  <CheckCircle2 className="mr-2 size-4" />
+                )}
+                {submittingDraft ? "Submitting…" : "Submit analysis request"}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
       ) : null}
       <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {[
@@ -487,6 +710,18 @@ export default function CaseDetailPage() {
               panelName: requestDraft.panelName,
             })
           }
+          organizationId={activeOrganizationId || 0}
+          currentPanel={
+            item.germlinePanel
+              ? `${item.germlinePanel.name} · ${item.germlinePanel.geneCount.toLocaleString()} genes`
+              : null
+          }
+          caseStatus={item.status}
+          hasVcf={draftHasVcf}
+          applyingScope={applyPanel.isPending || saveOrder.isPending}
+          onApplyScope={scope => {
+            void applyScope(scope);
+          }}
         />
       ) : null}
       <section id="analysis-timeline" className="grid gap-5 xl:grid-cols-[1.1fr_.9fr]">
@@ -679,6 +914,17 @@ export default function CaseDetailPage() {
   );
 }
 
+function GeneListValue({ text }: { text: string }) {
+  const genes = parseGeneList(text);
+  if (!genes?.size) return <span>{dash(text)}</span>;
+  return (
+    <div className="space-y-2">
+      <p className="text-xs text-muted-foreground">{genes.size.toLocaleString()} genes</p>
+      <GeneSymbolList genes={[...genes]} />
+    </div>
+  );
+}
+
 function dash(value: string | null | undefined) {
   return value && value.trim() ? value : "—";
 }
@@ -701,6 +947,19 @@ function appliedFilterRows(jobs: Array<{ manifest: unknown }>): Array<[string, s
     ["Minimum genotype quality", numberOrBlank(filters.minGenotypeQuality, "No minimum")],
     ["Minimum read depth", numberOrBlank(filters.minDepth, "No minimum")],
   ];
+  if (typeof filters.excludeClinvarBenign === "boolean") {
+    rows.splice(3, 0, [
+      "ClinVar benign calls excluded",
+      filters.excludeClinvarBenign ? "Yes" : "No",
+    ]);
+  }
+  if (typeof filters.excludeClinvarVus === "boolean") {
+    const benignShown = typeof filters.excludeClinvarBenign === "boolean";
+    rows.splice(benignShown ? 4 : 3, 0, [
+      "ClinVar VUS excluded",
+      filters.excludeClinvarVus ? "Yes" : "No",
+    ]);
+  }
   if (typeof filters.genes === "string" && filters.genes.trim()) {
     rows.push(["Gene list", filters.genes.trim()]);
   }
@@ -831,7 +1090,13 @@ function OrderCard({
               <dt className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                 {label}
               </dt>
-              <dd className="mt-1 whitespace-pre-wrap text-sm">{dash(value)}</dd>
+              <dd className="mt-1 text-sm">
+                {label === "Gene list" ? (
+                  <GeneListValue text={value} />
+                ) : (
+                  <span className="whitespace-pre-wrap">{dash(value)}</span>
+                )}
+              </dd>
             </div>
           ))}
         </dl>
@@ -855,6 +1120,12 @@ function GermlineOrderSection({
   onRequestChange,
   onSave,
   hpoGenes,
+  organizationId,
+  currentPanel,
+  caseStatus,
+  hasVcf,
+  applyingScope,
+  onApplyScope,
 }: {
   order: { [K in keyof Omit<GermlineOrderInput, "service">]: string } | null;
   patientAlias: string;
@@ -878,7 +1149,18 @@ function GermlineOrderSection({
   onRequestChange: (patch: Partial<CaseRequestDraft>) => void;
   onSave: () => void;
   hpoGenes: Array<{ query: string; id: string; label: string; genes: string[] }>;
+  organizationId: number;
+  currentPanel: string | null;
+  caseStatus: string;
+  hasVcf: boolean;
+  applyingScope: boolean;
+  onApplyScope: (scope: { panelId?: number; genesText?: string }) => void;
 }) {
+  const [scopeFilters, setScopeFilters] =
+    useState<CaseVcfFilterValues>(defaultVcfFilters);
+  const [scopePanelId, setScopePanelId] = useState("");
+  const canRun = caseStatus === "review_ready" || caseStatus === "failed";
+  const scopeReady = Boolean(scopePanelId || scopeFilters.genes.trim());
   const empty: Record<keyof GermlineOrderInput, string> = {
     ...defaultGermlineOrder,
     service: "",
@@ -926,9 +1208,43 @@ function GermlineOrderSection({
           <section className="space-y-4 rounded-xl border border-border/70 p-4">
             <h3 className="text-sm font-semibold">Case request</h3>
             <p className="text-xs leading-5 text-muted-foreground">
-              Project, reference build, and the filters already used stay as they were for this analysis.
-              Assay, HPO terms, and clinical indication can be corrected here. Saving them does not re-run the VCF.
+              Assay, HPO terms, and clinical indication can be corrected here. Saving the order does not re-run the VCF.
+              A panel or gene list is the gene filter for this run. HPO terms stay on the order and do not remove variants.
+              {hasVcf && canRun ? " The VCF already stored here is used." : ""}
             </p>
+            <div className="space-y-3 rounded-xl border border-border/70 p-4">
+              <p className="text-sm font-medium">Panel or gene list</p>
+              <p className="text-xs leading-5 text-muted-foreground">
+                {currentPanel ? `Current panel: ${currentPanel}.` : "No panel is attached."}
+                {" "}Choose a saved list or paste genes. The existing VCF stays on the case.
+              </p>
+              <GeneListField
+                organizationId={organizationId}
+                values={scopeFilters}
+                hpo=""
+                onChange={values => {
+                  setScopeFilters(values);
+                  setScopePanelId("");
+                }}
+                onListId={setScopePanelId}
+              />
+              <Button
+                type="button"
+                disabled={!scopeReady || applyingScope || caseStatus === "queued" || caseStatus === "running"}
+                onClick={() =>
+                  onApplyScope({
+                    panelId: scopePanelId ? Number(scopePanelId) : undefined,
+                    genesText: scopeFilters.genes.trim() || undefined,
+                  })
+                }
+              >
+                {applyingScope
+                  ? "Applying…"
+                  : hasVcf && canRun
+                    ? "Apply and run the existing VCF"
+                    : "Attach to this order"}
+              </Button>
+            </div>
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <p className="text-sm font-medium">Assay</p>
@@ -966,6 +1282,7 @@ function GermlineOrderSection({
               ["Patient alias", request.patientAlias],
               ["Reference build", request.referenceBuild],
               ["Assay", request.panelName],
+              ["Panel", currentPanel ?? ""],
               ["HPO terms", request.phenotypeText],
               ["Clinical indication", request.indication],
             ]}

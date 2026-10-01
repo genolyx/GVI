@@ -8,6 +8,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { EngineMarkup } from "@/lib/engineMarkup";
 import { trpc } from "@/lib/trpc";
 import type { CurationDocument } from "@shared/curation/document";
+import { criteriaWithSpliceReview } from "@shared/curation/spliceAcmg";
 import {
   junctionAlignSchema,
   literatureSchema,
@@ -15,7 +16,7 @@ import {
   spliceVizSchema,
 } from "@shared/curation/viz";
 import { AlertTriangle, Loader2 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 /**
@@ -203,15 +204,35 @@ function AcmgPanel({
   organizationId: number;
   accept?: CurationAcceptTarget;
 }) {
+  const [acceptedCall, setAcceptedCall] = useState<string | null>(null);
+  useEffect(() => {
+    setAcceptedCall(null);
+  }, [document]);
   const saveCriterion = trpc.variants.saveCriterion.useMutation({
-    onSuccess: async () => {
+    onSuccess: async result => {
+      setAcceptedCall(result.classification);
       await accept?.onAccepted();
-      toast.success("Criterion recorded as reviewer-confirmed.");
+      toast.success(`Criterion saved. Classification is now ${result.classification}.`);
     },
     onError: error => toast.error(error.message),
   });
 
   const classification = document.acmg.classification;
+  const criteria = useMemo(
+    () => criteriaWithSpliceReview(document.acmg.criteria, document.engine.parsedData),
+    [document]
+  );
+  const splicePending = criteria.some(criterion => {
+    const fromSplice = !document.acmg.criteria.some(item => item.code === criterion.code);
+    const met = accept?.criteria?.find(item => item.code === criterion.baseCode)?.state === "met";
+    return fromSplice && !met;
+  });
+  const shownLabel = acceptedCall || accept?.classification || classification?.label || "No classification produced";
+  const callUpdated = Boolean(
+    (acceptedCall || accept?.classification) &&
+      classification?.label &&
+      shownLabel !== classification.label
+  );
 
   return (
     <div className="space-y-3">
@@ -222,11 +243,17 @@ function AcmgPanel({
               Engine suggestion
             </p>
             <p className="mt-1.5 text-sm font-semibold text-indigo-950 dark:text-indigo-50">
-              {classification?.label || "No classification produced"}
+              {shownLabel}
             </p>
             <p className="mt-1 text-[10px] text-indigo-800/80 dark:text-indigo-100/75">
-              {document.acmg.criteria.length} criteria · engine {document.meta.engineVersion}
+              {criteria.length} criteria · engine {document.meta.engineVersion}
+              {callUpdated ? " · updated from saved criteria" : ""}
             </p>
+            {splicePending ? (
+              <p className="mt-1 text-[10px] leading-4 text-indigo-800/80 dark:text-indigo-100/75">
+                The splice calculation meets PVS1. This call stays {classification?.label || "as saved"} until you accept it.
+              </p>
+            ) : null}
           </div>
           <Badge variant="outline" className="border-indigo-300 bg-white/70 text-[9px] text-indigo-700 dark:border-indigo-300/40 dark:bg-indigo-400/15 dark:text-indigo-100">
             Advisory only
@@ -255,8 +282,12 @@ function AcmgPanel({
       ) : null}
 
       <div className="space-y-2">
-        {document.acmg.criteria.length ? (
-          document.acmg.criteria.map(criterion => (
+        {criteria.length ? (
+          criteria.map(criterion => {
+            const saved = accept?.criteria?.find(item => item.code === criterion.baseCode);
+            const savedMet = saved?.state === "met";
+            const fromSpliceReview = !document.acmg.criteria.some(item => item.code === criterion.code);
+            return (
             <Card key={criterion.code} className="shadow-none">
               <CardContent className="p-3">
                 <div className="flex items-start justify-between gap-3">
@@ -285,7 +316,7 @@ function AcmgPanel({
                       size="sm"
                       variant="outline"
                       className="h-6 shrink-0 text-[9px]"
-                      disabled={saveCriterion.isPending}
+                      disabled={saveCriterion.isPending || savedMet}
                       onClick={() =>
                         saveCriterion.mutate({
                           organizationId,
@@ -300,6 +331,8 @@ function AcmgPanel({
                     >
                       {saveCriterion.isPending ? (
                         <Loader2 className="size-3 animate-spin" />
+                      ) : savedMet ? (
+                        "Saved"
                       ) : (
                         "Accept"
                       )}
@@ -311,9 +344,15 @@ function AcmgPanel({
                     {criterion.rationale}
                   </p>
                 ) : null}
+                {fromSpliceReview && !savedMet ? (
+                  <p className="mt-1.5 text-[10px] text-indigo-800/80 dark:text-indigo-100/75">
+                    From the splice calculation review. Accepting it updates the classification above.
+                  </p>
+                ) : null}
               </CardContent>
             </Card>
-          ))
+          );
+          })
         ) : (
           <p className="rounded-lg border border-dashed py-6 text-center text-[10px] text-muted-foreground">
             The engine applied no ACMG criteria to this variant.
@@ -518,7 +557,13 @@ const SECTIONS: [Section, string][] = [
   ["narrative", "Narrative"],
 ];
 /** Where a reviewer can accept an engine criterion into a draft interpretation. */
-export type CurationAcceptTarget = { interpretationId: number; onAccepted: () => void | Promise<unknown> };
+export type CurationAcceptTarget = {
+  interpretationId: number;
+  onAccepted: () => void | Promise<unknown>;
+  /** Saved germline call. Shown in place of the frozen engine label after a criterion is accepted. */
+  classification?: string | null;
+  criteria?: { code: string; state: string }[];
+};
 
 export function CurationDocumentView({
   document,

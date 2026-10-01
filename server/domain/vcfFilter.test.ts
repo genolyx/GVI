@@ -1,7 +1,7 @@
 import { parseGeneList } from "@shared/geneList";
 import { describe, expect, it } from "vitest";
 import { parseVcf } from "./vcf";
-import { applyVcfFilters } from "./vcfFilter";
+import { applyVcfFilters, isClinvarBenignCall, isClinvarBenignVusMix, isClinvarVusCall } from "./vcfFilter";
 
 const VCF = [
   "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE",
@@ -28,6 +28,8 @@ describe("VCF workbench filters", () => {
       minDepth: 10,
       passOnly: true,
       codingOnly: true,
+      excludeClinvarBenign: true,
+      excludeClinvarVus: true,
     });
     expect(result.classifiable.map(row => `${row.gene} ${row.hgvsC}`)).toEqual([
       "TP53 c.524G>A",
@@ -58,6 +60,8 @@ describe("VCF workbench filters", () => {
         minDepth: 10,
         passOnly: true,
         codingOnly: true,
+        excludeClinvarBenign: true,
+        excludeClinvarVus: true,
       },
     );
     expect(result.classifiable).toHaveLength(1);
@@ -73,6 +77,8 @@ describe("VCF workbench filters", () => {
       minDepth: null,
       passOnly: false,
       codingOnly: false,
+      excludeClinvarBenign: false,
+      excludeClinvarVus: false,
     });
     expect(result.classifiable.map(row => row.gene)).toEqual(["TP53"]);
     expect(result.dropped.panel).toBe(1);
@@ -89,8 +95,82 @@ describe("VCF workbench filters", () => {
       minDepth: null,
       passOnly: false,
       codingOnly: false,
+      excludeClinvarBenign: false,
+      excludeClinvarVus: false,
     });
     expect(result.kept.map(row => row.gene).sort()).toEqual(["BRCA1", "TP53"]);
+  });
+
+  it("drops ClinVar Benign, Likely benign, and Benign/Likely benign before classification", () => {
+    expect(isClinvarBenignCall("Benign")).toBe(true);
+    expect(isClinvarBenignCall("Likely_benign")).toBe(true);
+    expect(isClinvarBenignCall("Benign/Likely benign")).toBe(true);
+    expect(isClinvarBenignCall("Benign&Likely_benign")).toBe(true);
+    expect(isClinvarBenignCall("Pathogenic")).toBe(false);
+    expect(isClinvarBenignCall("Likely pathogenic")).toBe(false);
+    expect(isClinvarBenignCall("Uncertain significance")).toBe(false);
+    expect(isClinvarBenignCall("Conflicting interpretations of pathogenicity")).toBe(false);
+    expect(isClinvarBenignCall("Benign/Likely pathogenic")).toBe(false);
+    expect(isClinvarBenignCall(null)).toBe(false);
+    expect(isClinvarVusCall("Uncertain significance")).toBe(true);
+    expect(isClinvarVusCall("Uncertain_significance")).toBe(true);
+    expect(isClinvarVusCall("VUS")).toBe(true);
+    expect(isClinvarVusCall("Pathogenic")).toBe(false);
+    expect(isClinvarVusCall("Benign")).toBe(false);
+    expect(isClinvarVusCall("Conflicting interpretations of pathogenicity")).toBe(false);
+    expect(isClinvarVusCall("Uncertain significance/Likely pathogenic")).toBe(false);
+    expect(isClinvarVusCall(null)).toBe(false);
+    expect(isClinvarBenignVusMix("Uncertain significance/Likely benign")).toBe(true);
+    expect(isClinvarBenignVusMix("VUS&Likely_benign")).toBe(true);
+    expect(isClinvarBenignVusMix("Benign")).toBe(false);
+    expect(isClinvarBenignVusMix("Uncertain significance")).toBe(false);
+    expect(isClinvarBenignVusMix("Uncertain significance/Likely pathogenic")).toBe(false);
+    expect(isClinvarBenignVusMix("Benign/Likely pathogenic")).toBe(false);
+
+    const result = applyVcfFilters(
+      [
+        { ...parsed[0], clinvarSignificance: "Benign" },
+        { ...parsed[2], clinvarSignificance: "Benign/Likely benign" },
+        { ...parsed[0], gene: "SCN1A", hgvsC: "c.2A>G", clinvarSignificance: "Pathogenic" },
+        { ...parsed[0], gene: "KCNQ2", hgvsC: "c.3A>G", clinvarSignificance: null },
+        { ...parsed[0], gene: "TULP1", hgvsC: "c.4A>G", clinvarSignificance: "Uncertain significance" },
+        { ...parsed[0], gene: "RP1", hgvsC: "c.5A>G", clinvarSignificance: "Uncertain significance/Likely benign" },
+        { ...parsed[0], gene: "ABCA4", hgvsC: "c.6A>G", clinvarSignificance: "Benign/Likely pathogenic" },
+      ],
+      {
+        genes: null,
+        maxAf: null,
+        minQual: null,
+        minGenotypeQuality: null,
+        minDepth: null,
+        passOnly: false,
+        codingOnly: false,
+        excludeClinvarBenign: true,
+        excludeClinvarVus: true,
+      }
+    );
+    expect(result.kept.map(row => row.gene)).toEqual(["SCN1A", "KCNQ2", "ABCA4"]);
+    expect(result.classifiable.map(row => row.gene)).toEqual(["SCN1A", "KCNQ2", "ABCA4"]);
+    expect(result.dropped.clinvar).toBe(2);
+    expect(result.dropped.vus).toBe(1);
+    expect(result.dropped.clinvarMix).toBe(1);
+
+    const benignOnly = applyVcfFilters(
+      [{ ...parsed[0], clinvarSignificance: "Uncertain significance/Likely benign" }],
+      {
+        genes: null,
+        maxAf: null,
+        minQual: null,
+        minGenotypeQuality: null,
+        minDepth: null,
+        passOnly: false,
+        codingOnly: false,
+        excludeClinvarBenign: true,
+        excludeClinvarVus: false,
+      }
+    );
+    expect(benignOnly.kept).toHaveLength(1);
+    expect(benignOnly.dropped.clinvarMix).toBe(0);
   });
 
   it("reads a panel file and a comma-separated list as gene symbols", () => {

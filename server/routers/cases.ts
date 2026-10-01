@@ -1,5 +1,6 @@
 import { TRPCError } from "@trpc/server";
 import { and, asc, count, desc, eq, inArray, like, or } from "drizzle-orm";
+import type { Request } from "express";
 import { createHash, randomUUID } from "node:crypto";
 import { gunzipSync } from "node:zlib";
 import { z } from "zod";
@@ -31,10 +32,16 @@ import { runTriagePass } from "../domain/triagePass";
 import {
   germlinePanelHash,
   parseGermlineBed,
+  parseGermlineGeneText,
   type GermlinePanelContent,
 } from "../domain/germlinePanel";
 import { parseVcf } from "../domain/vcf";
-import { annotatedVcfFileName, ensureAnnotatedVcf, VcfAnnotationFailure } from "../domain/vepAnnotate";
+import {
+  annotatedVcfFileName,
+  ensureAnnotatedVcf,
+  vcfFileForRun,
+  VcfAnnotationFailure,
+} from "../domain/vepAnnotate";
 import { variantReingestSet, variantReingestTarget } from "../domain/vcfIngest";
 import { hpoGeneGroupsForText, loadHpoIndex, searchHpoTerms } from "../domain/hpoGenes";
 import {
@@ -103,6 +110,120 @@ async function requireCase(organizationId: number, caseId: number) {
   if (!rows[0])
     throw new TRPCError({ code: "NOT_FOUND", message: "Case not found" });
   return rows[0];
+}
+
+async function startOriginalVcfRun(args: {
+  organizationId: number;
+  caseId: number;
+  actorUserId: number;
+  req: Request;
+  panelName: string | null;
+  purpose: "germline" | "somatic";
+  referenceBuild: "GRCh37" | "GRCh38";
+  vcfFilters: VcfFilterInput | null;
+}) {
+  const { organizationId, caseId } = args;
+  const db = await requireDb();
+  const files = await db
+    .select()
+    .from(caseFiles)
+    .where(
+      and(eq(caseFiles.organizationId, organizationId), eq(caseFiles.caseId, caseId))
+    );
+  const vcfFile = vcfFileForRun(files);
+  if (!vcfFile) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "A VCF file is required",
+    });
+  }
+  await db
+    .delete(variants)
+    .where(
+      and(eq(variants.organizationId, organizationId), eq(variants.caseId, caseId))
+    );
+  const idempotencyKey = randomUUID();
+  const manifest = {
+    schemaVersion: "1.0",
+    serviceCode: "gvi_vcf_ingest",
+    organizationId,
+    caseId,
+    purpose: args.purpose,
+    referenceBuild: args.referenceBuild,
+    panelName: args.panelName,
+    files: files.map(file => ({
+      id: file.id,
+      kind: file.kind,
+      storageKey: file.storageKey,
+      sha256: file.sha256,
+    })),
+    vcfFilters: args.vcfFilters,
+  };
+  const jobId = await db.transaction(async tx => {
+    const result = await tx
+      .insert(analysisJobs)
+      .values({
+        organizationId,
+        caseId,
+        pipeline: "vcf_ingest",
+        status: "queued",
+        progressPercent: 0,
+        idempotencyKey,
+        manifest,
+        createdBy: args.actorUserId,
+      })
+      .returning({ id: analysisJobs.id });
+    const id = result[0].id;
+    await tx.insert(analysisEvents).values({
+      organizationId,
+      jobId: id,
+      status: "queued",
+      message:
+        vcfFile.kind === "annotated_vcf"
+          ? "Analysis rerun queued from the annotated VCF already on this case."
+          : "Analysis rerun queued from the original VCF.",
+      progressPercent: 0,
+    });
+    const cas = await tx
+      .update(cases)
+      .set({ status: "queued" })
+      .where(
+        and(
+          eq(cases.id, caseId),
+          eq(cases.organizationId, organizationId),
+          inArray(cases.status, ["failed", "review_ready"])
+        )
+      )
+      .returning({ id: cases.id });
+    if (cas.length !== 1) {
+      throw new TRPCError({
+        code: "CONFLICT",
+        message: "Run again after analysis has finished or failed.",
+      });
+    }
+    return id;
+  });
+  void ingestVcfForJob({
+    organizationId,
+    caseId,
+    jobId,
+    vcfFile,
+    referenceBuild: args.referenceBuild,
+    purpose: args.purpose,
+    vcfFilters: args.vcfFilters,
+  }).catch(error => {
+    console.error("[vcf_ingest] background rerun failed", { caseId, jobId, error });
+  });
+  await writeAuditEvent({
+    organizationId,
+    actorUserId: args.actorUserId,
+    action: "case.rerun",
+    entityType: "analysis_job",
+    entityId: jobId,
+    after: { caseId, idempotencyKey },
+    req: args.req,
+  });
+  return { jobId };
 }
 
 type CaseFileRow = typeof caseFiles.$inferSelect;
@@ -280,6 +401,8 @@ async function ingestVcfForJob(params: {
             minDepth: null,
             passOnly: false,
             codingOnly: false,
+            excludeClinvarBenign: false,
+            excludeClinvarVus: false,
           },
           panelScope
         )
@@ -313,6 +436,8 @@ async function ingestVcfForJob(params: {
           minDepth: null,
           passOnly: false,
           codingOnly: false,
+          excludeClinvarBenign: false,
+          excludeClinvarVus: false,
         },
         geneCount: selection.geneCount,
         recordsWithoutGene: selection.recordsWithoutGene,
@@ -451,6 +576,21 @@ async function ingestVcfForJob(params: {
   } finally {
     stoppedJobIds.delete(jobId);
   }
+}
+
+function caseNumberTaken(error: unknown): boolean {
+  let current: unknown = error;
+  for (let depth = 0; depth < 5 && current instanceof Error; depth += 1) {
+    const row = current as Error & { code?: string; constraint?: string };
+    if (
+      row.constraint === "cases_org_number_uq" ||
+      row.message.includes("cases_org_number_uq")
+    ) {
+      return true;
+    }
+    current = row.cause;
+  }
+  return false;
 }
 
 export const casesRouter = router({
@@ -675,6 +815,7 @@ export const casesRouter = router({
             .limit(1),
           db
             .select({
+              panelId: germlineCasePanels.panelId,
               name: germlineCasePanels.name,
               genomeBuild: germlineCasePanels.genomeBuild,
               contentHash: germlineCasePanels.contentHash,
@@ -727,6 +868,7 @@ export const casesRouter = router({
         somaticContext: somaticContextRows[0] ?? null,
         germlinePanel: attachedPanel
           ? {
+              panelId: attachedPanel.panelId,
               name: attachedPanel.name,
               genomeBuild: attachedPanel.genomeBuild,
               contentHash: attachedPanel.contentHash,
@@ -922,7 +1064,11 @@ export const casesRouter = router({
           code: "NOT_FOUND",
           message: "Project not found",
         });
-      const { caseId, sampleIds } = await db.transaction(async tx => {
+      let caseId: number;
+      let sampleIds: number[];
+      let resumedDraft = false;
+      try {
+      const created = await db.transaction(async tx => {
         let tumorTypeId: number | null = null;
         let panelVersionId: number | null = null;
         if (input.somaticContext) {
@@ -1161,6 +1307,94 @@ export const casesRouter = router({
           .returning({ id: samples.id });
         return { caseId: id, sampleIds: sampleResult.map(row => row.id) };
       });
+      caseId = created.caseId;
+      sampleIds = created.sampleIds;
+      } catch (error) {
+        if (!caseNumberTaken(error)) throw error;
+        const existing = await db
+          .select({
+            id: cases.id,
+            status: cases.status,
+            panelName: cases.panelName,
+            indication: cases.indication,
+            phenotypeText: cases.phenotypeText,
+          })
+          .from(cases)
+          .where(
+            and(
+              eq(cases.organizationId, input.organizationId),
+              eq(cases.caseNumber, input.caseNumber)
+            )
+          )
+          .limit(1);
+        const draft = existing[0];
+        if (!draft || draft.status !== "draft") {
+          throw new TRPCError({
+            code: "CONFLICT",
+            message: `Case number ${input.caseNumber} already exists.`,
+          });
+        }
+        if (germlineScope) {
+          const linked = await db
+            .select({ id: germlineCasePanels.id })
+            .from(germlineCasePanels)
+            .where(
+              and(
+                eq(germlineCasePanels.organizationId, input.organizationId),
+                eq(germlineCasePanels.caseId, draft.id)
+              )
+            )
+            .limit(1);
+          if (!linked[0]) {
+            await db.insert(germlineCasePanels).values({
+              organizationId: input.organizationId,
+              caseId: draft.id,
+              panelId: germlineScope.panelId,
+              name: germlineScope.name,
+              genes: germlineScope.content.genes,
+              regions: germlineScope.content.regions,
+              genomeBuild: germlineScope.genomeBuild,
+              contentHash: germlinePanelHash(
+                germlineScope.content,
+                germlineScope.genomeBuild
+              ),
+            });
+          }
+        }
+        const panelName = germlineScope?.name || input.panelName || null;
+        if (
+          (!draft.panelName && panelName) ||
+          (!draft.indication && input.indication) ||
+          (!draft.phenotypeText && input.phenotypeText)
+        ) {
+          await db
+            .update(cases)
+            .set({
+              panelName: draft.panelName || panelName,
+              indication: draft.indication || input.indication || null,
+              phenotypeText: draft.phenotypeText || input.phenotypeText || null,
+            })
+            .where(
+              and(
+                eq(cases.id, draft.id),
+                eq(cases.organizationId, input.organizationId)
+              )
+            );
+        }
+        const sampleRows = await db
+          .select({ id: samples.id })
+          .from(samples)
+          .where(
+            and(
+              eq(samples.organizationId, input.organizationId),
+              eq(samples.caseId, draft.id)
+            )
+          );
+        caseId = draft.id;
+        sampleIds = sampleRows.map(row => row.id);
+        resumedDraft = true;
+      }
+      if (!resumedDraft) {
       await writeAuditEvent({
         organizationId: input.organizationId,
         actorUserId: ctx.user.id,
@@ -1174,6 +1408,7 @@ export const casesRouter = router({
         },
         req: ctx.req,
       });
+      }
       return { id: caseId, sampleIds };
     }),
 
@@ -1328,7 +1563,8 @@ export const casesRouter = router({
           });
       }
       const key = `organizations/${input.organizationId}/cases/${input.caseId}/files/${randomUUID()}-${safeFileName(input.fileName)}`;
-      return storageCreateUploadUrl(key);
+      const host = ctx.req.headers.host;
+      return storageCreateUploadUrl(key, Array.isArray(host) ? host[0] : host);
     }),
 
   completeUpload: protectedProcedure
@@ -1762,114 +1998,183 @@ export const casesRouter = router({
           )
         : null;
       const vcfFilters = storedFilters?.success ? storedFilters.data : null;
-      const files = await db
-        .select()
-        .from(caseFiles)
-        .where(
-          and(
-            eq(caseFiles.organizationId, input.organizationId),
-            eq(caseFiles.caseId, input.caseId)
-          )
-        );
-      const vcfFile = files.find(file => file.kind === "vcf");
-      if (!vcfFile) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: "A VCF file is required",
-        });
-      }
-      await db
-        .delete(variants)
-        .where(
-          and(
-            eq(variants.organizationId, input.organizationId),
-            eq(variants.caseId, input.caseId)
-          )
-        );
-      const idempotencyKey = randomUUID();
-      const manifest = {
-        schemaVersion: "1.0",
-        serviceCode: "gvi_vcf_ingest",
+      return startOriginalVcfRun({
         organizationId: input.organizationId,
         caseId: input.caseId,
+        actorUserId: ctx.user.id,
+        req: ctx.req,
+        panelName: clinicalCase.panelName,
         purpose: clinicalCase.purpose,
         referenceBuild: clinicalCase.referenceBuild,
-        panelName: clinicalCase.panelName,
-        files: files.map(file => ({
-          id: file.id,
-          kind: file.kind,
-          storageKey: file.storageKey,
-          sha256: file.sha256,
-        })),
         vcfFilters,
-      };
-      const jobId = await db.transaction(async tx => {
-        const result = await tx
-          .insert(analysisJobs)
-          .values({
-            organizationId: input.organizationId,
-            caseId: input.caseId,
-            pipeline: "vcf_ingest",
-            status: "queued",
-            progressPercent: 0,
-            idempotencyKey,
-            manifest,
-            createdBy: ctx.user.id,
-          })
-          .returning({ id: analysisJobs.id });
-        const id = result[0].id;
-        await tx.insert(analysisEvents).values({
-          organizationId: input.organizationId,
-          jobId: id,
-          status: "queued",
-          message: "Analysis rerun queued from the original VCF.",
-          progressPercent: 0,
+      });
+    }),
+
+  applyPanel: protectedProcedure
+    .input(
+      z.object({
+        organizationId: z.number().int().positive(),
+        caseId: z.number().int().positive(),
+        panelId: z.number().int().positive().optional(),
+        genesText: z.string().max(500_000).optional(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      await requireOrganizationPermission(
+        ctx.user.id,
+        input.organizationId,
+        "case:edit"
+      );
+      const genesText = input.genesText?.trim() ?? "";
+      if (input.panelId == null && !genesText) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Choose a saved panel or enter a gene list.",
         });
-        const cas = await tx
+      }
+      const clinicalCase = await requireCase(
+        input.organizationId,
+        input.caseId
+      );
+      if (clinicalCase.purpose !== "germline") {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "A gene panel can be attached to a germline case.",
+        });
+      }
+      if (clinicalCase.status === "queued" || clinicalCase.status === "running") {
+        throw new TRPCError({
+          code: "CONFLICT",
+          message: "Wait until the current analysis finishes before changing the panel.",
+        });
+      }
+      const db = await requireDb();
+      let scopeName = "Gene list";
+      let content: GermlinePanelContent = { genes: [], regions: null };
+      let panelId: number | null = null;
+      let genomeBuild: "GRCh37" | "GRCh38" | null = clinicalCase.referenceBuild;
+      if (input.panelId != null) {
+        const rows = await db
+          .select()
+          .from(germlinePanels)
+          .where(
+            and(
+              eq(germlinePanels.id, input.panelId),
+              eq(germlinePanels.organizationId, input.organizationId)
+            )
+          )
+          .limit(1);
+        const panel = rows[0];
+        if (!panel) {
+          throw new TRPCError({
+            code: "NOT_FOUND",
+            message: "Germline panel not found.",
+          });
+        }
+        if (panel.genomeBuild && panel.genomeBuild !== clinicalCase.referenceBuild) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: "The saved panel reference build does not match this case.",
+          });
+        }
+        panelId = panel.id;
+        scopeName = panel.name;
+        content = { genes: panel.genes, regions: panel.regions };
+        genomeBuild = panel.genomeBuild;
+      } else {
+        try {
+          content = { genes: parseGermlineGeneText(genesText), regions: null };
+        } catch (error) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: error instanceof Error ? error.message : "Invalid gene list.",
+          });
+        }
+      }
+      await db.transaction(async tx => {
+        await tx
+          .delete(germlineCasePanels)
+          .where(
+            and(
+              eq(germlineCasePanels.organizationId, input.organizationId),
+              eq(germlineCasePanels.caseId, input.caseId)
+            )
+          );
+        await tx.insert(germlineCasePanels).values({
+          organizationId: input.organizationId,
+          caseId: input.caseId,
+          panelId,
+          name: scopeName,
+          genes: content.genes,
+          regions: content.regions,
+          genomeBuild,
+          contentHash: germlinePanelHash(content, genomeBuild),
+        });
+        await tx
           .update(cases)
-          .set({ status: "queued" })
+          .set({ panelName: scopeName })
           .where(
             and(
               eq(cases.id, input.caseId),
-              eq(cases.organizationId, input.organizationId),
-              inArray(cases.status, ["failed", "review_ready"])
+              eq(cases.organizationId, input.organizationId)
             )
-          )
-          .returning({ id: cases.id });
-        if (cas.length !== 1) {
-          throw new TRPCError({
-            code: "CONFLICT",
-            message: "Run again after analysis has finished or failed.",
-          });
-        }
-        return id;
-      });
-      const ingestArgs = {
-        organizationId: input.organizationId,
-        caseId: input.caseId,
-        jobId,
-        vcfFile,
-        referenceBuild: clinicalCase.referenceBuild,
-        purpose: clinicalCase.purpose,
-        vcfFilters,
-      };
-      void ingestVcfForJob(ingestArgs).catch(error => {
-        console.error("[vcf_ingest] background rerun failed", {
-          caseId: input.caseId,
-          jobId,
-          error,
-        });
+          );
       });
       await writeAuditEvent({
         organizationId: input.organizationId,
         actorUserId: ctx.user.id,
-        action: "case.rerun",
-        entityType: "analysis_job",
-        entityId: jobId,
-        after: { caseId: input.caseId, idempotencyKey },
+        action: "germline.panel.applied",
+        entityType: "case",
+        entityId: input.caseId,
+        after: { name: scopeName, panelId, geneCount: content.genes.length },
         req: ctx.req,
       });
-      return { jobId };
+      const canRun =
+        clinicalCase.status === "failed" || clinicalCase.status === "review_ready";
+      if (!canRun) {
+        return { name: scopeName, geneCount: content.genes.length, jobId: null };
+      }
+      const [latest] = await db
+        .select({ manifest: analysisJobs.manifest })
+        .from(analysisJobs)
+        .where(
+          and(
+            eq(analysisJobs.organizationId, input.organizationId),
+            eq(analysisJobs.caseId, input.caseId)
+          )
+        )
+        .orderBy(desc(analysisJobs.createdAt))
+        .limit(1);
+      const stored = latest
+        ? vcfFilterSchema.safeParse(
+            (latest.manifest as { vcfFilters?: unknown }).vcfFilters
+          )
+        : null;
+      const previous = stored?.success ? stored.data : null;
+      const extraGenes = input.panelId != null ? genesText : "";
+      const vcfFilters: VcfFilterInput = {
+        hpo: "",
+        genes: extraGenes,
+        maxAf: previous?.maxAf ?? null,
+        minQual: previous?.minQual ?? null,
+        minGenotypeQuality: previous?.minGenotypeQuality ?? null,
+        minDepth: previous?.minDepth ?? null,
+        passOnly: previous?.passOnly ?? true,
+        codingOnly: previous?.codingOnly ?? true,
+        excludeClinvarBenign: previous?.excludeClinvarBenign ?? true,
+        excludeClinvarVus: previous?.excludeClinvarVus ?? true,
+      };
+      const run = await startOriginalVcfRun({
+        organizationId: input.organizationId,
+        caseId: input.caseId,
+        actorUserId: ctx.user.id,
+        req: ctx.req,
+        panelName: scopeName,
+        purpose: clinicalCase.purpose,
+        referenceBuild: clinicalCase.referenceBuild,
+        vcfFilters,
+      });
+      return { name: scopeName, geneCount: content.genes.length, jobId: run.jobId };
     }),
 
   stop: protectedProcedure

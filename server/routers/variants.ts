@@ -5,6 +5,7 @@ import {
   aiConversations,
   auditEvents,
   criteriaAssessments,
+  curationRuns,
   evidenceItems,
   interpretations,
   variants,
@@ -26,6 +27,10 @@ import {
 } from "../domain/acmg";
 import type { AmpSuggestion } from "../domain/amp";
 import { writeAuditEvent } from "../domain/audit";
+import {
+  institutionalClassForLabel,
+  institutionalLabelForAcmg,
+} from "../../shared/curation/institutional";
 import { loadOmimCatalog, omimForGene } from "../domain/omimCatalog";
 import { collectPublicEvidence } from "../domain/publicEvidence";
 import { requireDb, requireOrganizationPermission } from "../domain/tenant";
@@ -64,6 +69,83 @@ function evidenceDedupeKey(
 ) {
   if (sourceRecordId) return `${source}::${sourceRecordId}`;
   return `${source}::title::${title}`;
+}
+
+type AppDb = Awaited<ReturnType<typeof requireDb>>;
+
+/** Write the ACMG combination onto the interpretation and the latest review call. */
+async function recomputeGermlineClassification(
+  db: AppDb,
+  organizationId: number,
+  interpretationId: number,
+  variantId: number,
+  runId?: number
+) {
+  const criteria = await db
+    .select()
+    .from(criteriaAssessments)
+    .where(
+      and(
+        eq(criteriaAssessments.organizationId, organizationId),
+        eq(criteriaAssessments.interpretationId, interpretationId)
+      )
+    );
+  const metCriteria = criteria
+    .filter(
+      item =>
+        item.state === "met" && ACMG_CRITERIA.includes(item.code as AcmgCode)
+    )
+    .map(item => ({
+      code: item.code,
+      strength: toAcmgStrength(item.strengthOverride),
+    }));
+  const suggestion = suggestAcmgClassification(metCriteria);
+  await db
+    .update(interpretations)
+    .set({ germlineClassification: suggestion.classification })
+    .where(
+      and(
+        eq(interpretations.id, interpretationId),
+        eq(interpretations.organizationId, organizationId)
+      )
+    );
+  const label = institutionalLabelForAcmg(suggestion.classification);
+  const cssClass = institutionalClassForLabel(label);
+  const latestRunId = runId
+    ? runId
+    : (
+        await db
+          .select({ id: curationRuns.id })
+          .from(curationRuns)
+          .where(
+            and(
+              eq(curationRuns.organizationId, organizationId),
+              eq(curationRuns.variantId, variantId),
+              eq(curationRuns.status, "succeeded")
+            )
+          )
+          .orderBy(desc(curationRuns.completedAt))
+          .limit(1)
+      )[0]?.id;
+  if (latestRunId) {
+    await db
+      .update(curationRuns)
+      .set({
+        institutionalLabel: label,
+        institutionalClass: cssClass,
+      })
+      .where(
+        and(
+          eq(curationRuns.organizationId, organizationId),
+          eq(curationRuns.id, latestRunId),
+          eq(curationRuns.variantId, variantId)
+        )
+      );
+  }
+  return {
+    classification: suggestion.classification,
+    institutionalLabel: label,
+  };
 }
 
 export const variantsRouter = router({
@@ -797,6 +879,12 @@ export const variantsRouter = router({
             updatedBy: ctx.user.id,
           },
         });
+      const updated = await recomputeGermlineClassification(
+        db,
+        input.organizationId,
+        input.interpretationId,
+        interpretation[0].variantId
+      );
       await writeAuditEvent({
         organizationId: input.organizationId,
         actorUserId: ctx.user.id,
@@ -807,10 +895,137 @@ export const variantsRouter = router({
           code: input.code,
           state: input.state,
           evidenceIds: input.evidenceIds,
+          germlineClassification: updated.classification,
         },
         req: ctx.req,
       });
-      return { success: true };
+      return { success: true, ...updated };
+    }),
+
+  applyPvs1: protectedProcedure
+    .input(
+      z.object({
+        organizationId: z.number().int().positive(),
+        variantId: z.number().int().positive(),
+        runId: z.number().int().positive().optional(),
+        strength: z.enum(["very_strong", "strong"]).optional(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      await requireOrganizationPermission(
+        ctx.user.id,
+        input.organizationId,
+        "interpretation:edit"
+      );
+      const record = await requireVariant(
+        input.organizationId,
+        input.variantId
+      );
+      if (record.clinicalCase.purpose !== "germline") {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "PVS1 applies to germline classification",
+        });
+      }
+      const db = await requireDb();
+      const existing = await db
+        .select()
+        .from(interpretations)
+        .where(
+          and(
+            eq(interpretations.organizationId, input.organizationId),
+            eq(interpretations.variantId, input.variantId),
+            eq(interpretations.mode, "germline")
+          )
+        )
+        .orderBy(desc(interpretations.version))
+        .limit(1);
+      let interpretation = existing[0];
+      if (interpretation?.status === "approved") {
+        throw new TRPCError({
+          code: "CONFLICT",
+          message:
+            "This interpretation is approved. PVS1 cannot be added to it.",
+        });
+      }
+      if (!interpretation) {
+        const inserted = await db
+          .insert(interpretations)
+          .values({
+            organizationId: input.organizationId,
+            variantId: input.variantId,
+            mode: "germline",
+            rationale:
+              "Reviewer applied PVS1. The classification was recomputed from the met criteria.",
+            status: "draft",
+            version: 1,
+            origin: "human",
+            createdBy: ctx.user.id,
+          })
+          .returning();
+        interpretation = inserted[0];
+      }
+      const strength = input.strength ?? "very_strong";
+      const prior = await db
+        .select({ state: criteriaAssessments.state })
+        .from(criteriaAssessments)
+        .where(
+          and(
+            eq(criteriaAssessments.organizationId, input.organizationId),
+            eq(criteriaAssessments.interpretationId, interpretation.id),
+            eq(criteriaAssessments.code, "PVS1")
+          )
+        )
+        .limit(1);
+      await db
+        .insert(criteriaAssessments)
+        .values({
+          organizationId: input.organizationId,
+          interpretationId: interpretation.id,
+          code: "PVS1",
+          state: "met",
+          strengthOverride: strength,
+          evidenceIds: [],
+          note: "Reviewer applied PVS1.",
+          origin: "human",
+          updatedBy: ctx.user.id,
+        })
+        .onConflictDoUpdate({
+          target: [
+            criteriaAssessments.organizationId,
+            criteriaAssessments.interpretationId,
+            criteriaAssessments.code,
+          ],
+          set: {
+            state: "met",
+            strengthOverride: strength,
+            note: "Reviewer applied PVS1.",
+            origin: sql`case when ${criteriaAssessments.origin} = 'human' then 'human' else 'human_confirmed' end::evidence_origin`,
+            updatedBy: ctx.user.id,
+          },
+        });
+      const updated = await recomputeGermlineClassification(
+        db,
+        input.organizationId,
+        interpretation.id,
+        input.variantId,
+        input.runId
+      );
+      await writeAuditEvent({
+        organizationId: input.organizationId,
+        actorUserId: ctx.user.id,
+        action: "criterion.assessed",
+        entityType: "interpretation",
+        entityId: interpretation.id,
+        after: {
+          code: "PVS1",
+          state: "met",
+          strength,
+          germlineClassification: updated.classification,
+        },
+        req: ctx.req,
+      });
+      return { alreadyApplied: prior[0]?.state === "met", ...updated };
     }),
 
   approveInterpretation: protectedProcedure

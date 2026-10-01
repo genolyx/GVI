@@ -6,7 +6,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { trpc } from "@/lib/trpc";
 import { parseGeneList } from "@shared/geneList";
 import { Loader2 } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 export type CaseVcfFilterValues = {
@@ -17,6 +17,8 @@ export type CaseVcfFilterValues = {
   minDepth: string;
   passOnly: boolean;
   codingOnly: boolean;
+  excludeClinvarBenign: boolean;
+  excludeClinvarVus: boolean;
 };
 
 export const defaultVcfFilters: CaseVcfFilterValues = {
@@ -27,6 +29,8 @@ export const defaultVcfFilters: CaseVcfFilterValues = {
   minDepth: "",
   passOnly: true,
   codingOnly: true,
+  excludeClinvarBenign: true,
+  excludeClinvarVus: true,
 };
 
 function optionalNumber(value: string): number | null {
@@ -46,6 +50,8 @@ export function vcfFiltersPayload(values: CaseVcfFilterValues, hpo: string) {
     minDepth: optionalNumber(values.minDepth),
     passOnly: values.passOnly,
     codingOnly: values.codingOnly,
+    excludeClinvarBenign: values.excludeClinvarBenign,
+    excludeClinvarVus: values.excludeClinvarVus,
   };
 }
 
@@ -66,19 +72,85 @@ const DROP_LABELS: Record<string, string> = {
   depth: "read depth",
   filter: "FILTER not PASS",
   impact: "low-impact or modifier",
+  clinvar: "ClinVar benign or likely benign",
+  vus: "ClinVar VUS",
+  clinvarMix: "ClinVar VUS with benign",
 };
 
+function geneListCode(name: string, taken: Set<string>): string {
+  const base = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 72);
+  let code = base.length >= 2 && /^[a-z0-9]/.test(base) ? base : "genes";
+  if (!taken.has(code)) return code;
+  let suffix = 2;
+  while (taken.has(`${code}-${suffix}`)) suffix += 1;
+  return `${code}-${suffix}`.slice(0, 80);
+}
+
+export function GeneSymbolList({ genes }: { genes: string[] }) {
+  const sorted = [...genes].sort();
+  return (
+    <div className="max-h-40 overflow-y-auto rounded-lg border border-border/70 p-2">
+      <ul className="grid grid-cols-[repeat(auto-fill,minmax(5.5rem,1fr))] gap-1">
+        {sorted.map(gene => (
+          <li
+            key={gene}
+            className="truncate rounded-md bg-muted px-1.5 py-0.5 font-mono text-[11px] text-foreground"
+            title={gene}
+          >
+            {gene}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export function GeneListField({
+  organizationId,
   values,
   onChange,
   hpo,
+  onListId,
 }: {
+  organizationId: number;
   values: CaseVcfFilterValues;
   onChange: (values: CaseVcfFilterValues) => void;
   hpo: string;
+  onListId?: (panelId: string) => void;
 }) {
+  const utils = trpc.useUtils();
   const panelFileRef = useRef<HTMLInputElement>(null);
+  const [listName, setListName] = useState("");
+  const [savedId, setSavedId] = useState("");
+  const [editingText, setEditingText] = useState(false);
   const listedGenes = parseGeneList(values.genes);
+  const saved = trpc.germlinePanels.list.useQuery(
+    { organizationId },
+    { enabled: organizationId > 0 }
+  );
+  const geneLists = (saved.data ?? []).filter(panel => panel.geneCount > 0 && panel.regionCount === 0);
+  const deleteList = trpc.germlinePanels.remove.useMutation({
+    onSuccess: async result => {
+      toast.success(`Deleted “${result.name}”.`);
+      setSavedId("");
+      await utils.germlinePanels.list.invalidate();
+    },
+    onError: error => toast.error(error.message),
+  });
+  const saveList = trpc.germlinePanels.create.useMutation({
+    onSuccess: async result => {
+      toast.success(`Saved “${listName.trim()}”.`);
+      setListName("");
+      setSavedId(String(result.id));
+      await utils.germlinePanels.list.invalidate();
+    },
+    onError: error => toast.error(error.message),
+  });
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -99,19 +171,106 @@ export function GeneListField({
               const text = await chosen.text();
               const combined = [values.genes.trim(), text.trim()].filter(Boolean).join("\n");
               onChange({ ...values, genes: combined });
+              setEditingText(false);
             } catch {
               toast.error("Could not read that gene list.");
             }
           }}
         />
       </div>
-      <Textarea
-        id="case-genes"
-        value={values.genes}
-        onChange={event => onChange({ ...values, genes: event.target.value })}
-        placeholder="SCN1A, KCNQ2, STXBP1"
-        className="min-h-24 font-mono text-sm"
-      />
+      <div className="flex flex-wrap items-center gap-2">
+        <select
+          aria-label="Saved gene lists"
+          value={savedId}
+          onChange={async event => {
+            const id = event.target.value;
+            setSavedId(id);
+            if (!id || !organizationId) {
+              onListId?.("");
+              return;
+            }
+            try {
+              const panel = await utils.germlinePanels.get.fetch({
+                organizationId,
+                panelId: Number(id),
+              });
+              onChange({ ...values, genes: panel.genes.join("\n") });
+              setEditingText(false);
+              onListId?.(id);
+            } catch {
+              toast.error("Could not load that gene list.");
+            }
+          }}
+          className="h-9 min-w-48 rounded-lg border border-input bg-background px-3 text-sm"
+        >
+          <option value="">Use a saved list</option>
+          {geneLists.map(panel => (
+            <option key={panel.id} value={panel.id}>
+              {panel.name} · {panel.geneCount.toLocaleString()} genes
+            </option>
+          ))}
+        </select>
+        <Input
+          value={listName}
+          onChange={event => setListName(event.target.value)}
+          placeholder="Name this list"
+          aria-label="Gene list name"
+          className="h-9 w-44"
+        />
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={!listName.trim() || !listedGenes?.size || saveList.isPending || !organizationId}
+          onClick={() => {
+            if (!listedGenes?.size) return;
+            const taken = new Set((saved.data ?? []).map(panel => panel.code));
+            saveList.mutate({
+              organizationId,
+              code: geneListCode(listName, taken),
+              name: listName.trim(),
+              genomeBuild: null,
+              genesText: values.genes,
+            });
+          }}
+        >
+          {saveList.isPending ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+          Save list
+        </Button>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={!savedId || deleteList.isPending}
+          onClick={() => {
+            if (!savedId) return;
+            deleteList.mutate({ organizationId, panelId: Number(savedId) });
+          }}
+        >
+          Delete list
+        </Button>
+      </div>
+      {listedGenes && listedGenes.size > 0 && !editingText ? (
+        <GeneSymbolList genes={[...listedGenes]} />
+      ) : (
+        <Textarea
+          id="case-genes"
+          value={values.genes}
+          onChange={event => {
+            onChange({ ...values, genes: event.target.value });
+            onListId?.("");
+          }}
+          placeholder="SCN1A, KCNQ2, STXBP1"
+          className="field-sizing-fixed h-20 max-h-20 min-h-0 resize-none overflow-y-auto font-mono text-sm"
+        />
+      )}
+      {listedGenes && listedGenes.size > 0 ? (
+        <div className="flex justify-end">
+          <Button type="button" variant="ghost" size="sm" onClick={() => setEditingText(current => !current)}>
+            {editingText ? "Show gene list" : "Edit as text"}
+          </Button>
+        </div>
+      ) : null}
       <p className="text-xs leading-5 text-muted-foreground">
         {listedGenes === null
           ? "Paste symbols or load a file. Commas, spaces, and new lines all work. Leave this empty to keep every gene."
@@ -183,7 +342,24 @@ export function CaseVcfFilters({
           <Checkbox checked={values.codingOnly} onCheckedChange={checked => set({ codingOnly: checked === true })} />
           Coding changes only
         </label>
+        <label className="flex items-center gap-2.5 text-sm">
+          <Checkbox
+            checked={values.excludeClinvarBenign}
+            onCheckedChange={checked => set({ excludeClinvarBenign: checked === true })}
+          />
+          Exclude ClinVar Benign, Likely benign, and Benign/Likely benign
+        </label>
+        <label className="flex items-center gap-2.5 text-sm">
+          <Checkbox
+            checked={values.excludeClinvarVus}
+            onCheckedChange={checked => set({ excludeClinvarVus: checked === true })}
+          />
+          Exclude ClinVar VUS
+        </label>
       </div>
+      <p className="text-xs leading-5 text-muted-foreground">
+        Checked ClinVar calls are removed before classification. With both ClinVar boxes checked, a call that is only VUS together with Benign or Likely benign is removed too. Other ClinVar calls, and variants with no ClinVar entry, stay.
+      </p>
       <Button
         type="button"
         variant="outline"

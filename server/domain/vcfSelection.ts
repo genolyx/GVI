@@ -16,6 +16,8 @@ export const vcfFilterSchema = z.object({
   minDepth: z.number().int().min(0).max(100_000).nullable(),
   passOnly: z.boolean(),
   codingOnly: z.boolean(),
+  excludeClinvarBenign: z.boolean().default(true),
+  excludeClinvarVus: z.boolean().default(true),
 });
 
 export type VcfFilterInput = z.infer<typeof vcfFilterSchema>;
@@ -77,6 +79,8 @@ export async function selectVcfRecords(
     minDepth: filters.minDepth,
     passOnly: filters.passOnly,
     codingOnly: filters.codingOnly,
+    excludeClinvarBenign: filters.excludeClinvarBenign,
+    excludeClinvarVus: filters.excludeClinvarVus,
   });
   const gnomadFilled = await fillMissingPopulationAf(
     filtered.kept,
@@ -161,6 +165,9 @@ const DROP_ORDER: FilterReason[] = [
   "depth",
   "af",
   "impact",
+  "clinvar",
+  "vus",
+  "clinvarMix",
   "hpo",
   "panel",
 ];
@@ -221,6 +228,27 @@ export function filterTimelineSteps(input: {
       detail: null,
     });
   }
+  if (input.filters.excludeClinvarBenign) {
+    enabled.push({
+      reason: "clinvar",
+      label: "ClinVar is not Benign, Likely benign, or Benign/Likely benign",
+      detail: "These calls are removed and are not classified. Other ClinVar calls, and variants with no ClinVar entry, stay.",
+    });
+  }
+  if (input.filters.excludeClinvarVus) {
+    enabled.push({
+      reason: "vus",
+      label: "ClinVar is not Uncertain significance (VUS)",
+      detail: "Uncertain significance is removed and is not classified. Other ClinVar calls, and variants with no ClinVar entry, stay.",
+    });
+  }
+  if (input.filters.excludeClinvarBenign && input.filters.excludeClinvarVus) {
+    enabled.push({
+      reason: "clinvarMix",
+      label: "ClinVar is only VUS with Benign or Likely benign",
+      detail: "A call such as Uncertain significance/Likely benign is removed and is not classified. A call that also includes pathogenic stays.",
+    });
+  }
   if (input.hpoApplied) {
     enabled.push({
       reason: "hpo",
@@ -250,6 +278,9 @@ function dropReason(reason: FilterReason, filters: VcfFilterInput): string {
   if (reason === "depth") return `read depth was below ${filters.minDepth}`;
   if (reason === "af") return `allele frequency was above ${filters.maxAf}`;
   if (reason === "impact") return "the consequence was low-impact or modifier";
+  if (reason === "clinvar") return "ClinVar was Benign, Likely benign, or Benign/Likely benign";
+  if (reason === "vus") return "ClinVar was Uncertain significance (VUS)";
+  if (reason === "clinvarMix") return "ClinVar was only VUS with Benign or Likely benign";
   if (reason === "hpo") return "the gene was missing or outside the HPO list";
   return "the variant was outside the gene list or panel";
 }

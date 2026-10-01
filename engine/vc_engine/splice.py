@@ -7865,10 +7865,9 @@ def _junction_align_acceptor_intron_flank(parsed_data, cx, win):
         r = http_session.get(url, timeout=60)
         if getattr(r, 'status_code', 0) != 200:
             return None, None
-        raw = (getattr(r, 'text', None) or '').strip().replace('\n', '').upper()
-        if len(raw) < need:
+        seq = _junction_align_region_dna(getattr(r, 'text', None), strand, need)
+        if not seq:
             return None, None
-        seq = _dna_revcomp(raw) if strand == -1 else raw
         # seq (transcript orientation) = [intron far … intron near][A][G]
         return seq[need - 2:need], seq[:need - 2]
     except Exception as exc:
@@ -9691,6 +9690,31 @@ def _junction_align_resolve_skipped_exon_cx(parsed_data, coding_exons):
     return cx_skip
 
 
+def _junction_align_region_dna(text, strand, need):
+    """DNA from an Ensembl region body, in transcript orientation.
+
+    The shared HTTP client asks for JSON, so a minus-strand flank used to
+    reverse the whole response. The closing ``"}`` then landed in the map as
+    the donor bases. Read the ``seq`` field first, then keep only nucleotides.
+    """
+    raw = (text or "").strip()
+    if raw[:1] in "{[":
+        try:
+            data = json.loads(raw)
+        except (TypeError, ValueError):
+            data = None
+        if isinstance(data, dict) and data.get("seq"):
+            raw = str(data["seq"])
+        elif isinstance(data, str):
+            raw = data
+    seq = re.sub(r"[^ACGTN]", "", raw.upper())
+    if len(seq) < int(need or 0):
+        return None
+    if int(strand or 1) == -1:
+        seq = _dna_revcomp(seq)
+    return seq[: int(need)]
+
+
 def _junction_align_donor_intron_flank(parsed_data, cx, win):
     """Real genomic donor dinucleotide + downstream intron bases for the 5′ donor
     of coding exon ``cx``.
@@ -9722,10 +9746,9 @@ def _junction_align_donor_intron_flank(parsed_data, cx, win):
         r = http_session.get(url, timeout=60)
         if getattr(r, 'status_code', 0) != 200:
             return None, None
-        raw = (getattr(r, 'text', None) or '').strip().replace('\n', '').upper()
-        if len(raw) < need:
+        seq = _junction_align_region_dna(getattr(r, 'text', None), strand, need)
+        if not seq:
             return None, None
-        seq = _dna_revcomp(raw) if strand == -1 else raw
         return seq[:2], seq[2:need]
     except Exception as exc:
         print(f"[junction-align] donor intron flank fetch failed: {exc}")

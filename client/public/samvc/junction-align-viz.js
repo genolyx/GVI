@@ -13,8 +13,8 @@
         utr_extension: { bg: 'rgba(56,189,248,0.35)', border: '#38bdf8', color: '#e0f2fe' },
         exon_extension_intronic: { bg: 'rgba(16,185,129,0.28)', border: '#059669', color: '#a7f3d0' },
         exon_extension_prior_exon: { bg: 'rgba(52,211,153,0.45)', border: '#34d399', color: '#ecfdf5' },
-        splice_ag: { bg: 'rgba(251,191,36,0.55)', border: '#f59e0b', color: '#fef3c7' },
-        splice_gt: { bg: 'rgba(251,191,36,0.55)', border: '#f59e0b', color: '#fef3c7' },
+        splice_ag: { bg: '#fbbf24', border: '#d97706', color: '#1c1917' },
+        splice_gt: { bg: '#fbbf24', border: '#d97706', color: '#1c1917' },
         splice_loss: { bg: 'rgba(239,68,68,0.6)', border: '#ef4444', color: '#fee2e2' },
         splice_gain: { bg: 'rgba(16,185,129,0.6)', border: '#10b981', color: '#d1fae5' },
         exon_deleted: { bg: 'rgba(100,116,139,0.2)', border: '#64748b', color: '#94a3b8' },
@@ -184,7 +184,8 @@
         }
         const tip = (hgvs ? hgvs + ' · ' : '') + nt;
         return '<span title="' + esc(tip) + '" style="display:inline-block;width:' + w + 'px;text-align:center;'
-            + 'box-sizing:border-box;padding:2px 0;margin:0;border-radius:1px;'
+            + 'box-sizing:border-box;padding:1px 0;margin:0;border-radius:1px;'
+            + 'font-weight:700;font-size:12px;line-height:16px;'
             + 'background:' + st.bg + ';border:1px solid ' + st.border + ';color:' + st.color + ';'
             + underline + extra + '">' + esc(nt) + '</span>';
     }
@@ -400,8 +401,80 @@
             + '</div>';
     }
 
+    function isDnaBase(nt) {
+        return /^[ACGTN]$/i.test(String(nt || ''));
+    }
+
+    /**
+     * A minus-strand Ensembl JSON body used to be reversed whole, so the
+     * closing "} landed in the donor slots. Drop those characters and slide
+     * the real GT/AG (and their c.N+k labels) back into place.
+     */
+    function repairJunctionTrack(track) {
+        const bases = track.bases || [];
+        if (!bases.some(function (b) { return b && b.nt && !isDnaBase(b.nt); })) return track;
+        const cleaned = [];
+        const indexMap = [];
+        let pending = 0;
+        let pendingKind = null;
+        let dropped = 0;
+        bases.forEach(function (b) {
+            if (!isDnaBase(b.nt)) {
+                indexMap.push(cleaned.length);
+                dropped += 1;
+                if (b.kind === 'splice_gt' || b.kind === 'splice_ag') {
+                    pending += 1;
+                    pendingKind = b.kind;
+                }
+                return;
+            }
+            const copy = Object.assign({}, b);
+            if (dropped && /^c\.\d+\+\d+$/i.test(String(copy.hgvs || ''))) {
+                copy.hgvs = String(copy.hgvs).replace(/\+(\d+)$/, function (_, n) {
+                    return '+' + String(Math.max(1, Number(n) - dropped));
+                });
+            }
+            if (pending > 0 && pendingKind && copy.kind === 'intron') {
+                copy.kind = pendingKind;
+                pending -= 1;
+            }
+            indexMap.push(cleaned.length);
+            cleaned.push(copy);
+        });
+        function mapIndex(i) {
+            if (i == null || i < 0) return i;
+            if (i < indexMap.length) return indexMap[i];
+            return cleaned.length;
+        }
+        const spans = (track.spans || []).map(function (sp) {
+            return Object.assign({}, sp, { start: mapIndex(sp.start), end: mapIndex(sp.end) });
+        }).filter(function (sp) { return sp.end > sp.start; });
+        const markers = (track.markers || []).map(function (m) {
+            if (m.index == null) return m;
+            return Object.assign({}, m, { index: mapIndex(m.index) });
+        });
+        return Object.assign({}, track, { bases: cleaned, spans: spans, markers: markers });
+    }
+
+    function repairJunctionPayload(payload) {
+        const tracks = payload.tracks || [];
+        if (!tracks.some(function (t) {
+            return (t.bases || []).some(function (b) { return b && b.nt && !isDnaBase(b.nt); });
+        })) return payload;
+        const repaired = tracks.map(repairJunctionTrack);
+        const ref = repaired.find(function (t) { return t.id === 'reference'; }) || repaired[0];
+        const ruler = [];
+        (ref.bases || []).forEach(function (b, i) {
+            if (i !== 0 && i !== ref.bases.length - 1 && i % 10 !== 0) return;
+            const label = String(b.hgvs || '').replace(/^c\./i, '');
+            if (label) ruler.push({ index: i, label: label });
+        });
+        return Object.assign({}, payload, { tracks: repaired, ruler: ruler });
+    }
+
     function openJunctionAlignModal(payload) {
         if (!payload || !payload.eligible) return;
+        payload = repairJunctionPayload(payload);
         ensureModalShell();
         const modal = document.getElementById('junctionAlignModal');
         const bodyEl = document.getElementById('jaModalBody');

@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { parseVcf } from "./vcf";
 import { inspectVcfAnnotation } from "./vcfAnnotation";
-import { annotatedVcfFileName, buildAnnotationCommand, VcfAnnotationFailure } from "./vepAnnotate";
+import {
+  annotatedVcfFileName,
+  buildAnnotationCommand,
+  vcfFileForRun,
+  VcfAnnotationFailure,
+} from "./vepAnnotate";
 
 const VEP_FORMAT =
   "Allele|Consequence|IMPACT|SYMBOL|Gene|Feature|HGVSc|HGVSp|MANE_SELECT|CANONICAL|gnomADe_AF|gnomADg_AF|CLIN_SIG";
@@ -178,6 +183,15 @@ describe("VEP annotation command", () => {
       "Eugenia_Molina_Alfaro_10263548.annotated.vcf.gz"
     );
     expect(annotatedVcfFileName("sample.vcf.gz")).toBe("sample.annotated.vcf.gz");
+  });
+
+  it("reads the stored annotated VCF when it matches the uploaded file", () => {
+    const original = { kind: "vcf", fileName: "sample.vcf" };
+    const annotated = { kind: "annotated_vcf", fileName: "sample.annotated.vcf.gz" };
+    const other = { kind: "annotated_vcf", fileName: "other.annotated.vcf.gz" };
+    expect(vcfFileForRun([original, other, annotated])).toBe(annotated);
+    expect(vcfFileForRun([original, other])).toBe(original);
+    expect(vcfFileForRun([other])).toBeUndefined();
   });
 
   it("refuses a raw VCF when the gx-exome script or data dir is missing", () => {

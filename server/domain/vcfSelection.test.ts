@@ -17,6 +17,8 @@ const filters: VcfFilterInput = {
   minDepth: null,
   passOnly: true,
   codingOnly: true,
+  excludeClinvarBenign: true,
+  excludeClinvarVus: true,
 };
 
 const dropped = {
@@ -26,6 +28,9 @@ const dropped = {
   depth: 0,
   af: 3,
   impact: 0,
+  clinvar: 0,
+  vus: 0,
+  clinvarMix: 0,
   hpo: 0,
   panel: 0,
 };
@@ -105,6 +110,9 @@ describe("VCF frequency and HPO applicability", () => {
           depth: 0,
           af: 30,
           impact: 20,
+          clinvar: 5,
+          vus: 0,
+          clinvarMix: 0,
           hpo: 25,
           panel: 0,
         },
@@ -117,6 +125,8 @@ describe("VCF frequency and HPO applicability", () => {
           minDepth: null,
           passOnly: true,
           codingOnly: true,
+          excludeClinvarBenign: true,
+          excludeClinvarVus: true,
         },
         hpoApplied: true,
         hpoGeneCount: 458,
@@ -126,7 +136,10 @@ describe("VCF frequency and HPO applicability", () => {
       "FILTER is PASS | 90",
       "gnomAD allele frequency is at most 0.01 | 60",
       "Consequence is HIGH or MODERATE | 40",
-      "Gene is in the HPO list (458 genes) | 15",
+      "ClinVar is not Benign, Likely benign, or Benign/Likely benign | 35",
+      "ClinVar is not Uncertain significance (VUS) | 35",
+      "ClinVar is only VUS with Benign or Likely benign | 35",
+      "Gene is in the HPO list (458 genes) | 10",
     ]);
   });
 
@@ -149,6 +162,8 @@ describe("local gnomAD fallback", () => {
     minDepth: null,
     passOnly: false,
     codingOnly: false,
+    excludeClinvarBenign: false,
+    excludeClinvarVus: false,
   };
 
   it("drops a blank VCF frequency when the local file is above the maximum and keeps the rare one", async () => {

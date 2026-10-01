@@ -3,13 +3,9 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import {
-  GERMLINE_EXTENDED_PROGRAMS,
-  GERMLINE_SERVICE_LABEL,
-  GERMLINE_SERVICES,
   extendedProgramPatients,
   normalizeGermlineOrder,
   type GermlineOrderInput,
-  type GermlineService,
 } from "@shared/germlineOrder";
 import { cloneElement, isValidElement, useId, type ReactElement, type ReactNode } from "react";
 
@@ -59,59 +55,8 @@ export function GermlineOrderFields({
     onChange(normalizeGermlineOrder({ ...value, ...patch }));
   const service = value.service ?? "carrier_screening";
   const patients = extendedProgramPatients(value.otherTestType);
-  const programOptions = GERMLINE_EXTENDED_PROGRAMS.some(
-    ([code]) => code === value.otherTestType
-  )
-    ? GERMLINE_EXTENDED_PROGRAMS
-    : value.otherTestType
-      ? ([
-          ...GERMLINE_EXTENDED_PROGRAMS,
-          [value.otherTestType, `${value.otherTestType} (legacy)`] as const,
-        ] as const)
-      : GERMLINE_EXTENDED_PROGRAMS;
   return (
     <div className="grid gap-5 lg:grid-cols-2">
-      <section className="space-y-4 rounded-xl border border-border/70 p-4 lg:col-span-2">
-        <Field label="Service">
-          <select
-            className={selectClass}
-            value={service}
-            onChange={event =>
-              set({ service: event.target.value as GermlineService })
-            }
-          >
-            {GERMLINE_SERVICES.map(item => (
-              <option key={item} value={item}>
-                {GERMLINE_SERVICE_LABEL[item]}
-              </option>
-            ))}
-          </select>
-        </Field>
-        {service === "extended_services" ? (
-          <Field label="Primary" required invalid={!value.otherTestType}>
-            <select
-              className={selectClass}
-              value={value.otherTestType}
-              onChange={event =>
-                set({
-                  service: "extended_services",
-                  otherTestType: event.target.value,
-                })
-              }
-            >
-              <option value="">— Select extended program —</option>
-              {programOptions.map(([code, label]) => (
-                <option key={code} value={code}>
-                  {label}
-                </option>
-              ))}
-            </select>
-          </Field>
-        ) : null}
-        <Field label="Package code (test type)">
-          <Input value={value.packageCode} readOnly tabIndex={-1} className="bg-muted" />
-        </Field>
-      </section>
       <section className="space-y-4 rounded-xl border border-border/70 p-4">
         <h3 className="text-sm font-semibold">Test type and report pairing</h3>
         {service === "carrier_screening" ? (

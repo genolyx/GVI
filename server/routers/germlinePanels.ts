@@ -1,7 +1,7 @@
 import { TRPCError } from "@trpc/server";
 import { and, asc, eq } from "drizzle-orm";
 import { z } from "zod";
-import { germlinePanels } from "../../drizzle/schema";
+import { germlineCasePanels, germlinePanels } from "../../drizzle/schema";
 import { protectedProcedure, router } from "../_core/trpc";
 import {
   germlinePanelHash,
@@ -148,5 +148,54 @@ export const germlinePanelsRouter = router({
         throw new TRPCError({ code: "NOT_FOUND", message: "Panel not found." });
       }
       return rows[0];
+    }),
+
+  remove: protectedProcedure
+    .input(
+      z.object({
+        organizationId: z.number().int().positive(),
+        panelId: z.number().int().positive(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      await requireOrganizationPermission(
+        ctx.user.id,
+        input.organizationId,
+        "case:create"
+      );
+      const db = await requireDb();
+      const removed = await db.transaction(async tx => {
+        await tx
+          .update(germlineCasePanels)
+          .set({ panelId: null })
+          .where(
+            and(
+              eq(germlineCasePanels.panelId, input.panelId),
+              eq(germlineCasePanels.organizationId, input.organizationId)
+            )
+          );
+        return tx
+          .delete(germlinePanels)
+          .where(
+            and(
+              eq(germlinePanels.id, input.panelId),
+              eq(germlinePanels.organizationId, input.organizationId)
+            )
+          )
+          .returning({ id: germlinePanels.id, name: germlinePanels.name });
+      });
+      if (!removed[0]) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Gene list not found." });
+      }
+      await writeAuditEvent({
+        organizationId: input.organizationId,
+        actorUserId: ctx.user.id,
+        action: "germline.panel.deleted",
+        entityType: "germline_panel",
+        entityId: removed[0].id,
+        after: { name: removed[0].name },
+        req: ctx.req,
+      });
+      return { id: removed[0].id, name: removed[0].name };
     }),
 });

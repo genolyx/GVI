@@ -45,7 +45,7 @@ import {
   ShieldAlert,
   Sparkles,
 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useLocation, useParams } from "wouter";
 import { formatDate, formatDateTime } from "@/lib/datetime";
@@ -99,6 +99,7 @@ function GermlineWorkbenchPage() {
   const [impact, setImpact] = useState<Impact | "all">("all");
   const [tierFilter, setTierFilter] = useState<TriageTier | "all">("all");
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const classifierPane = useRef<HTMLElement>(null);
   const [modelId, setModelId] = useState("gpt-5-mini");
   const [conversationId, setConversationId] = useState<number | undefined>();
   const [localMessages, setLocalMessages] = useState<Message[]>([]);
@@ -107,6 +108,7 @@ function GermlineWorkbenchPage() {
   const [oncogenicity, setOncogenicity] = useState<string>("");
   const [rationale, setRationale] = useState("");
   const [diseaseContext, setDiseaseContext] = useState("");
+  const [detailTab, setDetailTab] = useState("evidence");
   const [activeCriterion, setActiveCriterion] =
     useState<(typeof ACMG_CRITERIA)[number]>("PVS1");
   const [criterionState, setCriterionState] =
@@ -219,9 +221,11 @@ function GermlineWorkbenchPage() {
     onError: error => toast.error(error.message),
   });
   const saveCriterion = trpc.variants.saveCriterion.useMutation({
-    onSuccess: async () => {
-      await detail.refetch();
-      toast.success(`${activeCriterion} assessment saved.`);
+    onSuccess: async result => {
+      await Promise.all([detail.refetch(), list.refetch()]);
+      toast.success(
+        `${activeCriterion} saved. Classification is now ${result.classification}.`
+      );
     },
     onError: error => toast.error(error.message),
   });
@@ -472,7 +476,14 @@ function GermlineWorkbenchPage() {
             onRetry={() => {
               void list.refetch();
             }}
-            onClassify={setSelectedId}
+            onClassify={variantId => {
+              setSelectedId(variantId);
+              window.requestAnimationFrame(() => {
+                window.requestAnimationFrame(() => {
+                  classifierPane.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+                });
+              });
+            }}
             canCurate={hasPermission("curation:run")}
             secondaryFindingsConsent={clinicalCase.consentSecondaryFindings}
           />
@@ -635,9 +646,10 @@ function GermlineWorkbenchPage() {
         )}
         {clinicalCase.purpose === "germline" && !selectedId ? null : (
         <section
+          ref={classifierPane}
           className={
             clinicalCase.purpose === "germline"
-              ? "min-w-0 overflow-hidden rounded-2xl border border-border/80 bg-muted/[0.12]"
+              ? "min-w-0 scroll-mt-16 overflow-hidden rounded-2xl border border-border/80 bg-muted/[0.12]"
               : "min-w-0 bg-muted/[0.12]"
           }
         >
@@ -684,6 +696,21 @@ function GermlineWorkbenchPage() {
                           Review
                         </Button>
                       ) : null}
+                      {canEditInterpretation &&
+                      clinicalCase.purpose === "germline" &&
+                      !detail.data.criteria.some(
+                        item => item.code === "PVS1" && item.state === "met"
+                      ) ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="h-6 px-2 text-[10px]"
+                          onClick={() => setDetailTab("curation")}
+                        >
+                          Add PVS1
+                        </Button>
+                      ) : null}
                     </div>
                     <p className="mt-2 font-mono text-xs text-muted-foreground">
                       {detail.data.variant.hgvsC ||
@@ -692,6 +719,12 @@ function GermlineWorkbenchPage() {
                     <p className="mt-1 font-mono text-[11px] text-muted-foreground">
                       {detail.data.variant.hgvsP}
                     </p>
+                    {clinicalCase.purpose === "germline" &&
+                    detail.data.acmgSuggestion ? (
+                      <p className="mt-2 text-sm font-semibold">
+                        {detail.data.acmgSuggestion.classification}
+                      </p>
+                    ) : null}
                   </div>
                   <div className="flex flex-col items-end gap-2">
                     <ClinicalStatus status={detail.data.variant.reviewStatus} />
@@ -722,7 +755,7 @@ function GermlineWorkbenchPage() {
                   </div>
                 </div>
               </div>
-              <Tabs defaultValue="evidence" className="p-4">
+              <Tabs value={detailTab} onValueChange={setDetailTab} className="p-4">
                 <TabsList
                   className={`grid w-full ${canEditInterpretation ? "grid-cols-4" : "grid-cols-3"}`}
                 >
@@ -752,6 +785,11 @@ function GermlineWorkbenchPage() {
                     interpretationId={currentInterpretation?.id}
                     canCurate={hasPermission("curation:run")}
                     canEdit={canEditInterpretation}
+                    classification={detail.data.acmgSuggestion?.classification}
+                    criteria={detail.data.criteria.map(item => ({
+                      code: item.code,
+                      state: item.state,
+                    }))}
                     onMerged={() =>
                       Promise.all([detail.refetch(), list.refetch()])
                     }

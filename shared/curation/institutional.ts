@@ -14,3 +14,16 @@ export type InstitutionalClass = (typeof INSTITUTIONAL_CLASSIFICATIONS)[number][
 export function institutionalClassForLabel(label: string): InstitutionalClass {
   return INSTITUTIONAL_CLASSIFICATIONS.find(option => option.label === label)?.class ?? "vus";
 }
+
+/** ACMG five-tier call, written onto the review page's institutional list. */
+const ACMG_INSTITUTIONAL_LABEL: Record<string, string> = {
+  Pathogenic: "Pathogenic (P)",
+  "Likely Pathogenic": "Likely Pathogenic (LP)",
+  VUS: "VUS",
+  "Likely Benign": "Likely Benign (LB)",
+  Benign: "Benign (B)",
+};
+
+export function institutionalLabelForAcmg(classification: string): string {
+  return ACMG_INSTITUTIONAL_LABEL[classification] ?? "VUS";
+}

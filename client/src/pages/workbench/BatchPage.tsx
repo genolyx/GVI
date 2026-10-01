@@ -21,7 +21,7 @@ import { VariantIntakeForm } from "./intake";
 import { SortHeader, compareSortValues, type SortDirection } from "./sort";
 import { classificationTone, entryAction, entryChip, entryReview, variantAnalyzedAt, workbenchStatusClass, workbenchStatusLabel } from "./status";
 
-type BatchSortKey = "index" | "gene" | "hgvs" | "transcript" | "lab" | "case" | "acmg" | "status" | "analyzed";
+type BatchSortKey = "index" | "gene" | "hgvs" | "transcript" | "omim" | "inheritance" | "disease" | "lab" | "case" | "acmg" | "status" | "analyzed";
 
 export default function BatchPage() {
   const params = useParams<{ batchId: string }>();
@@ -97,6 +97,9 @@ export default function BatchPage() {
       if (key === "gene") return entry.input.gene;
       if (key === "hgvs") return entry.input.hgvsC;
       if (key === "transcript") return entry.input.transcript || "";
+      if (key === "omim") return (entry.omim ?? []).map(item => item.omimId).join(" ");
+      if (key === "inheritance") return (entry.omim ?? []).map(item => item.inheritance).filter(Boolean).join(" ");
+      if (key === "disease") return (entry.omim ?? []).map(item => item.disease).filter(Boolean).join(" ");
       if (key === "lab") return entry.input.labId || "";
       if (key === "case") return entry.input.externalCaseId || "";
       if (key === "acmg") return entry.summary?.classification?.label || "";
@@ -209,9 +212,21 @@ export default function BatchPage() {
                         />
                         {key === "transcript" ? (
                           <>
-                            <th className="py-2 pr-3 font-semibold">OMIM</th>
-                            <th className="py-2 pr-3 font-semibold">Inheritance</th>
-                            <th className="py-2 pr-3 font-semibold">Disease</th>
+                            {(
+                              [
+                                ["omim", "OMIM"],
+                                ["inheritance", "Inheritance"],
+                                ["disease", "Disease"],
+                              ] as const
+                            ).map(([omimKey, omimLabel]) => (
+                              <SortHeader
+                                key={omimKey}
+                                label={omimLabel}
+                                active={sort?.key === omimKey}
+                                direction={sort?.direction ?? "asc"}
+                                onClick={() => toggleSort(omimKey)}
+                              />
+                            ))}
                           </>
                         ) : null}
                       </Fragment>

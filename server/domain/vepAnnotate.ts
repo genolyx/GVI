@@ -117,6 +117,17 @@ export function annotatedVcfFileName(sourceFileName: string) {
   return `${stem || "sample"}.annotated.vcf.gz`;
 }
 
+/** Use the stored annotated VCF when it was produced from the uploaded file. */
+export function vcfFileForRun<T extends { kind: string; fileName: string }>(files: T[]): T | undefined {
+  const original = files.find(file => file.kind === "vcf");
+  if (!original) return undefined;
+  const annotatedName = annotatedVcfFileName(original.fileName);
+  return (
+    files.find(file => file.kind === "annotated_vcf" && file.fileName === annotatedName) ??
+    original
+  );
+}
+
 /**
  * Skip annotation when the VCF already has CSQ or ANN and the required columns.
  * Otherwise run VEP and return the annotated text plus the gzip bytes to store.

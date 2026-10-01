@@ -20,6 +20,8 @@ export function CurationPanel({
   canCurate,
   canEdit,
   onMerged,
+  classification,
+  criteria,
 }: {
   organizationId: number;
   variantId: number;
@@ -27,6 +29,9 @@ export function CurationPanel({
   canCurate: boolean;
   canEdit: boolean;
   onMerged: () => void | Promise<unknown>;
+  /** Saved germline call and criteria. The ACMG box uses these after the reviewer accepts a code. */
+  classification?: string | null;
+  criteria?: { code: string; state: string }[];
 }) {
   const runs = trpc.curation.list.useQuery(
     { organizationId, variantId, limit: 5 },
@@ -174,7 +179,7 @@ export function CurationPanel({
           documentHash={documentQuery.data.documentHash}
           accept={
             canEdit && interpretationId
-              ? { interpretationId, onAccepted: onMerged }
+              ? { interpretationId, onAccepted: onMerged, classification, criteria }
               : undefined
           }
         />

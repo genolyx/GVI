@@ -20,7 +20,7 @@ declare global {
 
 const SCRIPTS = [
   "/samvc/splice-viz.js?v=exon-teal",
-  "/samvc/junction-align-viz.js",
+  "/samvc/junction-align-viz.js?v=base-letters",
   "/samvc/copy-paste-builder.js",
   "/samvc/classifier-parsed-panel.js?v=logic-evidence-19",
 ];

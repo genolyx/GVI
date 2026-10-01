@@ -2427,6 +2427,19 @@ def test_secondary_cryptic_gain_logic_block_not_parallel_skip():
     assert not pd.get('spliceai_secondary_splice_frame_math')
 
 
+def test_junction_region_dna_reads_ensembl_json_not_the_wrapper():
+    """Minus-strand flanks must not reverse the JSON wrapper into the donor bases."""
+    import json
+
+    from vc_engine.splice import _dna_revcomp, _junction_align_region_dna
+
+    dna = "GTAAGAGGAA" + "C" * 20
+    body = json.dumps({"query": "7:1..30:1", "seq": dna, "molecule": "dna"})
+    assert _junction_align_region_dna(body, strand=1, need=30) == dna
+    assert _junction_align_region_dna(body, strand=-1, need=30) == _dna_revcomp(dna)
+    assert _junction_align_region_dna('{"seq":', strand=-1, need=4) is None
+
+
 def test_nr0b1_acceptor_exon_skip_maps():
     """Canonical acceptor c.N-1G>A — whole-exon skip maps (2-exon transcript)."""
     from vc_engine.splice import (
