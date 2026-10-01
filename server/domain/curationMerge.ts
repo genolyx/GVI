@@ -6,7 +6,7 @@ import {
   variants,
   type CurationRun,
 } from "../../drizzle/schema";
-import { ACMG_CRITERIA } from "../../shared/clinical-standards";
+import { ACMG_CRITERIA, GERMLINE_CLASSIFICATIONS } from "../../shared/clinical-standards";
 import {
   ENGINE_HTML_KEYS,
   type CurationDocument,
@@ -46,6 +46,26 @@ type MergeResult = {
 
 function isAcmgCode(code: string): boolean {
   return (ACMG_CRITERIA as readonly string[]).includes(code);
+}
+
+export type EngineGermlineClassification = (typeof GERMLINE_CLASSIFICATIONS)[number];
+
+/** SAM-VC labels that match the stored germline classification enum. */
+export function engineGermlineClassification(
+  label: string | null | undefined
+): EngineGermlineClassification | null {
+  if (!label) return null;
+  return (GERMLINE_CLASSIFICATIONS as readonly string[]).includes(label)
+    ? (label as EngineGermlineClassification)
+    : null;
+}
+
+/** A reviewer who already chose a class keeps it when the engine finishes. */
+export function shouldApplyEngineClassification(existing: {
+  origin: string;
+  germlineClassification: string | null;
+} | null): boolean {
+  return !(existing?.origin === "human" && existing.germlineClassification);
 }
 
 /** Short, plain-text excerpt for an evidence row, with engine markup removed. */
@@ -138,12 +158,19 @@ export async function mergeCurationDocument(
     const rationale = `Engine ${document.meta.engineVersion} suggests ${
       document.acmg.classification?.label ?? "no classification"
     } from ${document.acmg.criteria.length} criteria. Review required.`;
+    const suggested = engineGermlineClassification(document.acmg.classification?.label);
+    const applyClass =
+      Boolean(suggested) &&
+      (!existing || existing.status === "approved" || shouldApplyEngineClassification(existing));
 
     if (existing && existing.status !== "approved") {
       interpretationId = existing.id;
       await tx
         .update(interpretations)
-        .set({ rationale })
+        .set({
+          rationale,
+          ...(applyClass ? { germlineClassification: suggested } : {}),
+        })
         .where(
           and(
             eq(interpretations.id, existing.id),
@@ -157,6 +184,7 @@ export async function mergeCurationDocument(
           organizationId: run.organizationId,
           variantId,
           mode: "germline",
+          germlineClassification: applyClass ? suggested : null,
           rationale,
           status: "draft",
           version: (existing?.version ?? 0) + 1,

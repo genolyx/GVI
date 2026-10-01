@@ -1,3 +1,7 @@
+import { TableWidthToggle, tableFrameClass, tableWidthClass, type TableWidthMode } from "@/components/TableWidthToggle";
+import { AnalysisLogDialog } from "./AnalysisLogDialog";
+import { focusClassifierRun } from "./status";
+import { codingHgvs, displayHgvs, displayTranscript } from "@shared/transcript";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -145,6 +149,7 @@ export function GermlineCarrierReview({
   error,
   onRetry,
   onClassify,
+  canCurate,
 }: {
   organizationId: number;
   caseId: number;
@@ -155,8 +160,63 @@ export function GermlineCarrierReview({
   error?: string;
   onRetry: () => void;
   onClassify: (variantId: number) => void;
+  canCurate: boolean;
 }) {
+  const utils = trpc.useUtils();
   const review = trpc.germlineReview.get.useQuery({ organizationId, caseId });
+  const classifier = trpc.curation.list.useQuery(
+    { organizationId, caseId, limit: 200 },
+    {
+      refetchInterval: query => {
+        const rows = query.state.data;
+        if (!rows?.some(row => row.status === "queued" || row.status === "loading" || row.status === "running")) {
+          return false;
+        }
+        return 3000;
+      },
+    }
+  );
+  const enqueueClassifier = trpc.curation.enqueueCase.useMutation({
+    onSuccess: async result => {
+      toast.success(result.message);
+      await Promise.all([classifier.refetch(), utils.variants.list.invalidate()]);
+    },
+    onError: err => toast.error(err.message),
+  });
+  const classifiedCount = classifier.data?.filter(row => row.status === "succeeded").length ?? 0;
+  const seenClassified = useRef<number | null>(null);
+  useEffect(() => {
+    if (seenClassified.current === null) {
+      seenClassified.current = classifiedCount;
+      return;
+    }
+    if (classifiedCount === seenClassified.current) return;
+    seenClassified.current = classifiedCount;
+    void utils.variants.list.invalidate();
+  }, [classifiedCount, utils]);
+  const runByVariant = new Map<number, string>();
+  for (const run of classifier.data ?? []) {
+    if (run.variantId && !runByVariant.has(run.variantId)) runByVariant.set(run.variantId, run.status);
+  }
+  const classifierRuns = classifier.data ?? [];
+  const classifierActive = classifierRuns.some(
+    row => row.status === "queued" || row.status === "loading" || row.status === "running"
+  );
+  const queuedCount = classifierRuns.filter(row => row.status === "queued").length;
+  const focusedRun = focusClassifierRun(classifierRuns);
+  const focusedVariant = focusedRun?.variantId
+    ? variants.find(row => row.id === focusedRun.variantId)
+    : undefined;
+  const focusedGene = focusedVariant?.gene || focusedRun?.input?.gene || focusedRun?.gene || "Variant";
+  const focusedTranscript = focusedVariant?.transcript || focusedRun?.input?.transcript;
+  const focusedHgvs = displayHgvs(
+    focusedTranscript,
+    focusedVariant?.hgvsC || focusedRun?.input?.hgvsC || focusedRun?.hgvsC
+  );
+  const focusedLabel = focusedRun ? `${focusedGene} ${focusedHgvs}`.trim() : "";
+  const classifiedPercent = classifierRuns.length
+    ? Math.round((classifiedCount / classifierRuns.length) * 100)
+    : 0;
   const save = trpc.germlineReview.save.useMutation({
     onSuccess: () => toast.success("Review saved."),
     onError: err => toast.error(err.message),
@@ -204,6 +264,8 @@ export function GermlineCarrierReview({
   const [noteVariantId, setNoteVariantId] = useState<number | null>(null);
   const [noteText, setNoteText] = useState("");
   const [preview, setPreview] = useState(false);
+  const [tableWidth, setTableWidth] = useState<TableWidthMode>("full");
+  const [logOpen, setLogOpen] = useState(false);
 
   useEffect(() => {
     if (!review.data || hydrated.current) return;
@@ -246,6 +308,8 @@ export function GermlineCarrierReview({
       const haystack = [
         row.gene,
         row.hgvsC,
+        row.transcript,
+        displayTranscript(row.transcript),
         row.hgvsP,
         row.diseaseContext,
         row.chromosome,
@@ -311,6 +375,71 @@ export function GermlineCarrierReview({
         {banner.pathogenic ? ` · ${banner.pathogenic} P/LP` : ""}
         {banner.vus ? ` · ${banner.vus} VUS` : ""}
       </p>
+      {classifierActive ? (
+        <button
+          type="button"
+          onClick={() => setLogOpen(true)}
+          className="flex w-full items-center gap-4 rounded-xl border border-sky-400 bg-sky-50 px-4 py-4 text-left text-sky-950 shadow-sm"
+        >
+          <Loader2 className="size-6 shrink-0 animate-spin text-sky-700" />
+          <span className="min-w-0 flex-1">
+            <span className="block text-base font-semibold">Classifier running</span>
+            <span className="mt-1 block truncate font-mono text-sm">{focusedLabel}</span>
+            <span className="mt-1 block text-sm">
+              {classifiedCount} of {classifierRuns.length} classified · {queuedCount} waiting
+            </span>
+            <span className="mt-2 block h-2 overflow-hidden rounded-full bg-sky-200">
+              <span className="block h-full bg-sky-600" style={{ width: `${classifiedPercent}%` }} />
+            </span>
+          </span>
+          <span className="shrink-0 text-sm font-medium text-sky-800">Log</span>
+        </button>
+      ) : (
+      <div className="flex flex-wrap items-center gap-3">
+        {classifierRuns.length ? (
+          <p className="text-xs text-muted-foreground">
+            Variant classifier: {classifiedCount} of {classifierRuns.length} classified
+          </p>
+        ) : null}
+        {classifierRuns.length ? (
+          <Button type="button" size="sm" variant="outline" onClick={() => setLogOpen(true)}>
+            Log
+          </Button>
+        ) : null}
+        {canCurate ? (
+          <Button
+            type="button"
+            size="sm"
+            disabled={enqueueClassifier.isPending || variants.length === 0}
+            onClick={() => enqueueClassifier.mutate({ organizationId, caseId })}
+          >
+            {enqueueClassifier.isPending ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+            Run variant classifier
+          </Button>
+        ) : null}
+      </div>
+      )}
+      <AnalysisLogDialog
+        organizationId={organizationId}
+        target={(() => {
+          if (!logOpen) return null;
+          const runs = classifier.data ?? [];
+          const focused = focusClassifierRun(runs);
+          if (!focused) return null;
+          const done = runs.filter(run => run.status === "succeeded").length;
+          return {
+            runId: focused.id,
+            gene: focusedVariant?.gene || focused.input?.gene || focused.gene || "",
+            hgvs: displayHgvs(
+              focusedVariant?.transcript || focused.input?.transcript,
+              focusedVariant?.hgvsC || focused.input?.hgvsC || focused.hgvsC
+            ),
+            status: focused.status,
+            note: `${done} done of ${runs.length}`,
+          };
+        })()}
+        onClose={() => setLogOpen(false)}
+      />
       <div
         className={`rounded-xl border px-4 py-3 ${
           banner.tone === "detected"
@@ -442,6 +571,7 @@ export function GermlineCarrierReview({
               <Button type="button" variant="outline" size="sm" onClick={() => setSelected(new Set())}>
                 Deselect All
               </Button>
+              <TableWidthToggle mode={tableWidth} onChange={setTableWidth} />
             </div>
           </div>
           {error ? (
@@ -452,12 +582,12 @@ export function GermlineCarrierReview({
               </button>
             </p>
           ) : null}
-          <div className="overflow-auto rounded-xl border">
-            <table className="w-full min-w-[1100px] text-left text-xs">
+          <div className={`rounded-xl border ${tableFrameClass(tableWidth)}`}>
+            <table className={`${tableWidthClass(tableWidth)} text-left text-xs`}>
               <thead className="bg-muted/50 text-[10px] uppercase tracking-wide text-muted-foreground">
                 <tr>
                   <th className="px-3 py-2" />
-                  {["Gene", "HGVSc", "HGVSp", "Transcript", "Effect", "Zygosity", "Allele depth", "gnomAD AF", "ClinVar", "ACMG", "Tags", "Disease", "Action"].map(
+                  {["Gene", "HGVSc", "HGVSp", "Transcript (NM)", "Effect", "Zygosity", "Allele depth", "gnomAD AF", "ClinVar", "ACMG", "Tags", "Disease", "Action"].map(
                     label => (
                       <th key={label} className="px-3 py-2 font-medium">
                         {label}
@@ -490,9 +620,11 @@ export function GermlineCarrierReview({
                         />
                       </td>
                       <td className="px-3 py-2 font-semibold">{row.gene || "—"}</td>
-                      <td className="px-3 py-2 font-mono">{row.hgvsC || "—"}</td>
+                      <td className="px-3 py-2 font-mono">{codingHgvs(row.hgvsC) || "—"}</td>
                       <td className="px-3 py-2 font-mono">{row.hgvsP || "—"}</td>
-                      <td className="px-3 py-2 font-mono">{row.transcript || "—"}</td>
+                      <td className="px-3 py-2 font-mono" title={row.transcript || undefined}>
+                        {displayTranscript(row.transcript) || "—"}
+                      </td>
                       <td className="max-w-[10rem] truncate px-3 py-2" title={row.consequence || ""}>
                         {row.consequence || "—"}
                       </td>
@@ -513,6 +645,12 @@ export function GermlineCarrierReview({
                           <span className={`rounded px-1.5 py-0.5 ${classTone(row.germlineClassification)}`}>
                             {row.germlineClassification}
                           </span>
+                        ) : runByVariant.get(row.id) === "queued" ? (
+                          "Queued"
+                        ) : runByVariant.get(row.id) === "loading" || runByVariant.get(row.id) === "running" ? (
+                          "Running"
+                        ) : runByVariant.get(row.id) === "failed" ? (
+                          "Failed"
                         ) : (
                           "—"
                         )}
@@ -554,8 +692,8 @@ export function GermlineCarrierReview({
               placeholder="Filter by gene, phenotype, diplotype..."
               className="max-w-sm"
             />
-            <div className="overflow-auto rounded-xl border">
-              <table className="w-full min-w-[760px] text-left text-xs">
+            <div className={`rounded-xl border ${tableFrameClass(tableWidth)}`}>
+              <table className={`${tableWidthClass(tableWidth)} text-left text-xs`}>
                 <thead className="bg-muted/50 text-[10px] uppercase text-muted-foreground">
                   <tr>
                     {["Include", "Gene", "Source", "Diplotype", "Phenotype", "Allele functions", "Category", ""].map(label => (
@@ -645,8 +783,8 @@ export function GermlineCarrierReview({
           </div>
           <div className="space-y-3">
             <h3 className="text-sm font-semibold">Extended PGx panel</h3>
-            <div className="overflow-auto rounded-xl border">
-              <table className="w-full min-w-[900px] text-left text-xs">
+            <div className={`rounded-xl border ${tableFrameClass(tableWidth)}`}>
+              <table className={`${tableWidthClass(tableWidth)} text-left text-xs`}>
                 <thead className="bg-muted/50 text-[10px] uppercase text-muted-foreground">
                   <tr>
                     {["Include", "Gene", "rsID", "Variant", "Genotype", "Zygosity", "Significance", "Drugs", "Evidence"].map(label => (
@@ -730,7 +868,7 @@ export function GermlineCarrierReview({
               <ul className="space-y-1 text-sm">
                 {selectedRows.map(row => (
                   <li key={row.id} className="font-mono text-xs">
-                    {row.gene || "—"} {row.hgvsC || ""} {row.hgvsP || ""} · {row.germlineClassification || "Unclassified"}
+                    {row.gene || "—"} {displayHgvs(row.transcript, row.hgvsC)} {row.hgvsP || ""} · {row.germlineClassification || "Unclassified"}
                   </li>
                 ))}
               </ul>
@@ -814,7 +952,7 @@ export function GermlineCarrierReview({
                   return (
                     <section key={row.id} className="border-t pt-2">
                       <p className="font-mono text-xs">
-                        {row.gene} {row.hgvsC} {row.hgvsP} · {row.germlineClassification || "Unclassified"}
+                        {row.gene} {displayHgvs(row.transcript, row.hgvsC)} {row.hgvsP || ""} · {row.germlineClassification || "Unclassified"}
                       </p>
                       {gene?.diseaseAssociation ? <p className="mt-1">{gene.diseaseAssociation}</p> : null}
                       {notes.get(row.id) ? <p className="mt-1 text-muted-foreground">{notes.get(row.id)}</p> : null}
@@ -864,11 +1002,11 @@ export function GermlineCarrierReview({
             </select>
             <span className="text-xs text-muted-foreground">{geneScope.length} genes</span>
           </div>
-          <div className="overflow-auto rounded-xl border">
-            <table className="w-full min-w-[980px] text-left text-xs">
+          <div className={`rounded-xl border ${tableFrameClass(tableWidth)}`}>
+            <table className={`${tableWidthClass(tableWidth)} text-left text-xs`}>
               <thead className="bg-muted/50 text-[10px] uppercase text-muted-foreground">
                 <tr>
-                  {["Gene", "HGVS", "Transcript", "Disorder", "OMIM", "Inheritance", "Gene function", "Disease association", "Variant notes", ""].map(label => (
+                  {["Gene", "HGVS", "Transcript (NM)", "Disorder", "OMIM", "Inheritance", "Gene function", "Disease association", "Variant notes", ""].map(label => (
                     <th key={label || "edit"} className="px-3 py-2 font-medium">{label}</th>
                   ))}
                 </tr>
@@ -889,12 +1027,12 @@ export function GermlineCarrierReview({
                         <td className="px-3 py-2 font-mono">
                           {rows.slice(0, 3).map(row => (
                             <div key={row.id}>
-                              {row.hgvsC || "—"}
+                              {displayHgvs(row.transcript, row.hgvsC) || "—"}
                               <div>{row.hgvsP || ""}</div>
                             </div>
                           ))}
                         </td>
-                        <td className="px-3 py-2 font-mono">{rows[0]?.transcript || "—"}</td>
+                        <td className="px-3 py-2 font-mono">{displayTranscript(rows[0]?.transcript) || "—"}</td>
                         <td className="max-w-[10rem] px-3 py-2">{record?.disorder || "—"}</td>
                         <td className="px-3 py-2">{record?.omimNumber || "—"}</td>
                         <td className="px-3 py-2">{record?.inheritance || "—"}</td>

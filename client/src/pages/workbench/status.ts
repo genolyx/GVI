@@ -1,3 +1,23 @@
+/** The run a live log should follow: the one in analysis, otherwise the next queued, otherwise the latest finished. */
+export function focusClassifierRun<
+  T extends {
+    status: string;
+    queuedAt?: Date | string | null;
+    startedAt?: Date | string | null;
+    completedAt?: Date | string | null;
+  },
+>(runs: readonly T[]): T | undefined {
+  const rank = (status: string) =>
+    status === "running" ? 0 : status === "loading" ? 1 : status === "queued" ? 2 : 3;
+  return [...runs].sort((left, right) => {
+    const byStatus = rank(left.status) - rank(right.status);
+    if (byStatus !== 0) return byStatus;
+    const leftTime = new Date(left.completedAt || left.startedAt || left.queuedAt || 0).getTime();
+    const rightTime = new Date(right.completedAt || right.startedAt || right.queuedAt || 0).getTime();
+    return left.status === "queued" ? leftTime - rightTime : rightTime - leftTime;
+  })[0];
+}
+
 /** Completion instant for one variant. Unfinished runs have no analyzed time. */
 export function variantAnalyzedAt(status: string, completedAt: Date | string | null | undefined): number | null {
   if (status !== "succeeded" || !completedAt) return null;
@@ -12,6 +32,39 @@ export function batchAnalyzedAt(entries: { status: string; completedAt: Date | s
   const times = entries.map(entry => variantAnalyzedAt(entry.status, entry.completedAt));
   if (times.some(time => time === null)) return null;
   return Math.max(...(times as number[]));
+}
+
+function instant(value: Date | string | null | undefined): number | null {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  const time = date.getTime();
+  return Number.isNaN(time) ? null : time;
+}
+
+/**
+ * Time shown in the Analyzed column.
+ * A finished group uses its last completion. A group still running uses the latest
+ * queue, start, or completion instant, then the case update time.
+ */
+export function entryActivityAt(
+  entries: {
+    completedAt: Date | string | null | undefined;
+    startedAt?: Date | string | null;
+    queuedAt?: Date | string | null;
+  }[],
+  fallback?: Date | string | null
+): number | null {
+  const finished = batchAnalyzedAt(entries);
+  if (finished !== null) return finished;
+  const times = entries.flatMap(entry =>
+    [entry.completedAt, entry.startedAt, entry.queuedAt]
+      .map(instant)
+      .filter((time): time is number => time !== null)
+  );
+  const fallbackTime = instant(fallback);
+  if (fallbackTime !== null) times.push(fallbackTime);
+  if (!times.length) return null;
+  return Math.max(...times);
 }
 
 /** Shared size and radius for entry-table chips and actions. */

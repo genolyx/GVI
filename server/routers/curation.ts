@@ -5,6 +5,7 @@ import { cases, curationRunEvents, curationRuns, variants } from "../../drizzle/
 import { curationDocumentSchema } from "../../shared/curation/document";
 import { protectedProcedure, router } from "../_core/trpc";
 import { writeAuditEvent } from "../domain/audit";
+import { classifierQueueMessage, enqueueFilteredCaseVariants } from "../domain/caseClassifier";
 import {
   assertCurationSupported,
   buildCurationInputForVariant,
@@ -176,6 +177,44 @@ export const curationRouter = router({
         req: ctx.req,
       });
       return result;
+    }),
+
+  /**
+   * Queue every filtered variant in a germline case for the SAM-VC classifier.
+   * Variants already classified or still in the queue are skipped.
+   */
+  enqueueCase: protectedProcedure
+    .input(orgInput.extend({ caseId: z.number().int().positive() }))
+    .mutation(async ({ ctx, input }) => {
+      await requireOrganizationPermission(ctx.user.id, input.organizationId, "curation:run");
+      const db = await requireDb();
+      const rows = await db
+        .select({ id: cases.id, purpose: cases.purpose })
+        .from(cases)
+        .where(and(eq(cases.organizationId, input.organizationId), eq(cases.id, input.caseId)))
+        .limit(1);
+      if (!rows[0]) throw new TRPCError({ code: "NOT_FOUND", message: "Case not found" });
+      if (rows[0].purpose !== "germline") {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "The variant classifier runs on germline cases.",
+        });
+      }
+      const result = await enqueueFilteredCaseVariants({
+        organizationId: input.organizationId,
+        caseId: input.caseId,
+        requestedBy: ctx.user.id,
+      });
+      await writeAuditEvent({
+        organizationId: input.organizationId,
+        actorUserId: ctx.user.id,
+        action: "curation.case_queued",
+        entityType: "case",
+        entityId: input.caseId,
+        after: { queued: result.queued, skipped: result.skipped.length, worker: result.worker },
+        req: ctx.req,
+      });
+      return { ...result, message: classifierQueueMessage(result) };
     }),
 
   /**

@@ -1,11 +1,35 @@
 import { describe, expect, it } from "vitest";
 import { describeClassificationDivergence, suggestAcmgClassification } from "./acmg";
+import { engineGermlineClassification, shouldApplyEngineClassification } from "./curationMerge";
 
 /**
  * The merge itself talks to Postgres and is covered by `scripts/curation-e2e.ts`.
  * What is unit-testable, and what actually carries clinical weight, is the rule
  * that an engine suggestion never counts as reviewed until a person touches it.
  */
+describe("engine germline classification", () => {
+  it("keeps SAM-VC labels that match the stored classes", () => {
+    expect(engineGermlineClassification("Likely Pathogenic")).toBe("Likely Pathogenic");
+    expect(engineGermlineClassification("VUS")).toBe("VUS");
+    expect(engineGermlineClassification("Benign")).toBe("Benign");
+  });
+
+  it("ignores a label that is not a germline class", () => {
+    expect(engineGermlineClassification("Uncertain")).toBeNull();
+    expect(engineGermlineClassification(null)).toBeNull();
+  });
+
+  it("leaves a reviewer's chosen class in place", () => {
+    expect(
+      shouldApplyEngineClassification({ origin: "human", germlineClassification: "VUS" })
+    ).toBe(false);
+    expect(
+      shouldApplyEngineClassification({ origin: "engine", germlineClassification: "VUS" })
+    ).toBe(true);
+    expect(shouldApplyEngineClassification(null)).toBe(true);
+  });
+});
+
 describe("engine vs reviewer divergence", () => {
   const criteria = [
     { state: "met", origin: "engine" },

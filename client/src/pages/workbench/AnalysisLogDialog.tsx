@@ -8,6 +8,7 @@ type LogTarget = {
   gene: string;
   hgvs: string;
   status: string;
+  note?: string;
 };
 
 function logStamp(value: Date | string) {
@@ -85,6 +86,7 @@ export function AnalysisLogDialog({
           {shown ? (
             <p className="border-b border-border px-4 py-2 font-mono text-xs text-muted-foreground">
               {shown.gene} {shown.hgvs}
+              {shown.note ? <span className="ml-3">{shown.note}</span> : null}
             </p>
           ) : null}
         <div ref={scroller} className="max-h-[420px] min-h-48 overflow-auto bg-card px-4 py-3 font-mono text-[12px] leading-6">

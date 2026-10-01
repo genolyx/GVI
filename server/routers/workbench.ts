@@ -2,7 +2,7 @@ import { TRPCError } from "@trpc/server";
 import { and, asc, desc, eq, sql, type SQL } from "drizzle-orm";
 import type { Request } from "express";
 import { z } from "zod";
-import { cases, curationBatches, curationRunEvents, curationRuns } from "../../drizzle/schema";
+import { cases, curationBatches, curationRunEvents, curationRuns, variants } from "../../drizzle/schema";
 import {
   INSTITUTIONAL_CLASSIFICATIONS,
   institutionalClassForLabel,
@@ -424,6 +424,30 @@ export const workbenchRouter = router({
       )
       .where(eq(curationRuns.organizationId, input.organizationId))
       .orderBy(asc(curationRuns.id));
+  }),
+
+  /** Germline cases that already have stored variants, including before the classifier runs. */
+  germlineCases: protectedProcedure.input(orgInput).query(async ({ ctx, input }) => {
+    await requireOrganizationPermission(ctx.user.id, input.organizationId, "variant:read");
+    const db = await requireDb();
+    const rows = await db
+      .select({
+        id: cases.id,
+        caseNumber: cases.caseNumber,
+        patientAlias: cases.patientAlias,
+        status: cases.status,
+        updatedAt: cases.updatedAt,
+        variantCount: sql<number>`count(${variants.id})::int`,
+      })
+      .from(cases)
+      .leftJoin(
+        variants,
+        and(eq(variants.caseId, cases.id), eq(variants.organizationId, cases.organizationId))
+      )
+      .where(and(eq(cases.organizationId, input.organizationId), eq(cases.purpose, "germline")))
+      .groupBy(cases.id, cases.caseNumber, cases.patientAlias, cases.status, cases.updatedAt)
+      .orderBy(desc(cases.updatedAt));
+    return rows.filter(row => Number(row.variantCount) > 0);
   }),
 
   addEntry: protectedProcedure

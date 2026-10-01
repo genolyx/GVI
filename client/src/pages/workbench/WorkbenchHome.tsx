@@ -1,4 +1,6 @@
+import { ClinicalStatus } from "@/components/ClinicalStatus";
 import { PageHeader } from "@/components/PageHeader";
+import { TableWidthToggle, tableFrameClass, tableWidthClass, type TableWidthMode } from "@/components/TableWidthToggle";
 import { StatePanel } from "@/components/StatePanel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -10,6 +12,7 @@ import { formatDateTime } from "@/lib/datetime";
 import { cn } from "@/lib/utils";
 import { trpc } from "@/lib/trpc";
 import { isSingleVariantBatch } from "@shared/curation/workbench";
+import { codingHgvs, displayHgvs, displayTranscript } from "@shared/transcript";
 import { ArrowLeft, ArrowRight, Loader2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -23,7 +26,8 @@ import {
 import { VariantIntakeForm } from "./intake";
 import { SortHeader, compareSortValues, type SortDirection } from "./sort";
 import {
-  batchAnalyzedAt,
+  entryActivityAt,
+  focusClassifierRun,
   classificationTone,
   entryAction,
   entryChip,
@@ -54,7 +58,9 @@ export default function WorkbenchHomePage() {
     key: EntrySortKey;
     direction: SortDirection;
   } | null>(null);
+  const [tableWidth, setTableWidth] = useState<TableWidthMode>("full");
   const [logRunId, setLogRunId] = useState<number | null>(null);
+  const [logGroup, setLogGroup] = useState<{ kind: "case" | "batch"; id: number } | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{
     id: number;
     gene: string;
@@ -80,6 +86,10 @@ export default function WorkbenchHomePage() {
           ? 4000
           : false,
     }
+  );
+  const germlineCases = trpc.workbench.germlineCases.useQuery(
+    { organizationId: activeOrganizationId || 0 },
+    { enabled: Boolean(activeOrganizationId && canRead) }
   );
   const batches = trpc.workbench.listBatches.useQuery(
     { organizationId: activeOrganizationId || 0 },
@@ -173,6 +183,10 @@ export default function WorkbenchHomePage() {
           kind: "case";
           caseId: number;
           name: string;
+          patientAlias: string;
+          caseStatus: string;
+          variantCount: number;
+          updatedAt: Date | string | null;
           entries: (typeof source)[number][];
         }
     > = [];
@@ -208,6 +222,10 @@ export default function WorkbenchHomePage() {
             kind: "case",
             caseId: entry.caseId,
             name: entry.caseNumber,
+            patientAlias: "",
+            caseStatus: "",
+            variantCount: 0,
+            updatedAt: null,
             entries: [entry],
           });
         } else {
@@ -217,6 +235,30 @@ export default function WorkbenchHomePage() {
         continue;
       }
       grouped.push({ kind: "single", entry });
+    }
+    const listed = new Set<number>();
+    for (const row of grouped) {
+      if (row.kind !== "case") continue;
+      listed.add(row.caseId);
+      const meta = (germlineCases.data ?? []).find(item => item.id === row.caseId);
+      if (!meta) continue;
+      row.patientAlias = meta.patientAlias;
+      row.caseStatus = meta.status;
+      row.variantCount = Number(meta.variantCount);
+      row.updatedAt = meta.updatedAt;
+    }
+    for (const meta of [...(germlineCases.data ?? [])].reverse()) {
+      if (listed.has(meta.id) || Number(meta.variantCount) <= 0) continue;
+      grouped.unshift({
+        kind: "case",
+        caseId: meta.id,
+        name: meta.caseNumber,
+        patientAlias: meta.patientAlias,
+        caseStatus: meta.status,
+        variantCount: Number(meta.variantCount),
+        updatedAt: meta.updatedAt,
+        entries: [],
+      });
     }
     const query = search.trim().toLowerCase();
     if (!query) return grouped;
@@ -234,10 +276,15 @@ export default function WorkbenchHomePage() {
         .toLowerCase()
         .includes(query);
     };
-    return grouped.filter(row =>
-      row.kind === "single" ? matches(row.entry) : row.entries.some(matches)
-    );
-  }, [entries.data, search]);
+    return grouped.filter(row => {
+      if (row.kind === "single") return matches(row.entry);
+      if (row.kind === "case") {
+        const haystack = `${row.name} ${row.patientAlias}`.toLowerCase();
+        if (haystack.includes(query)) return true;
+      }
+      return row.entries.some(matches);
+    });
+  }, [entries.data, germlineCases.data, search]);
 
   const sortedRows = useMemo(() => {
     if (!sort) return rows;
@@ -268,7 +315,9 @@ export default function WorkbenchHomePage() {
               .sort((a, b) => a.localeCompare(b))[0] ?? ""
           );
         if (key === "status") return workbenchStatusLabel(headline);
-        if (key === "analyzed") return batchAnalyzedAt(row.entries);
+        if (key === "analyzed") {
+          return entryActivityAt(row.entries, row.kind === "case" ? row.updatedAt : null);
+        }
         return "";
       }
       const entry = row.entry;
@@ -292,11 +341,12 @@ export default function WorkbenchHomePage() {
   }, [rows, sort]);
 
   const toggleSort = (key: EntrySortKey) => {
-    setSort(current =>
-      current?.key === key && current.direction === "asc"
-        ? { key, direction: "desc" }
-        : { key, direction: "asc" }
-    );
+    setSort(current => {
+      if (current?.key !== key) {
+        return { key, direction: key === "analyzed" ? "desc" : "asc" };
+      }
+      return { key, direction: current.direction === "asc" ? "desc" : "asc" };
+    });
   };
 
   if (!canRead) {
@@ -426,13 +476,16 @@ export default function WorkbenchHomePage() {
             className="max-w-md"
             aria-label="Search by gene, HGVSc, transcript, ACMG, or status"
           />
-          <div>
-            <h2 className="font-display text-lg font-semibold">All entries</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              {search.trim()
-                ? `${rows.length} matching`
-                : `${rows.length} ${rows.length === 1 ? "row" : "rows"}`}
-            </p>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h2 className="font-display text-lg font-semibold">All entries</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {search.trim()
+                  ? `${rows.length} matching`
+                  : `${rows.length} ${rows.length === 1 ? "row" : "rows"}`}
+              </p>
+            </div>
+            <TableWidthToggle mode={tableWidth} onChange={setTableWidth} />
           </div>
           {entries.isError ? (
             <StatePanel
@@ -453,8 +506,8 @@ export default function WorkbenchHomePage() {
                 : "No entries yet. Run a single variant or open a batch and add one."}
             </p>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full min-w-[980px] text-left text-sm">
+            <div className={tableFrameClass(tableWidth)}>
+              <table className={`${tableWidthClass(tableWidth)} text-left text-sm`}>
                 <thead className="text-[10px] uppercase tracking-wider text-muted-foreground">
                   <tr className="border-b">
                     {(
@@ -463,7 +516,7 @@ export default function WorkbenchHomePage() {
                         ["batchName", "Name"],
                         ["gene", "Gene"],
                         ["hgvs", "HGVSc"],
-                        ["transcript", "Transcript"],
+                        ["transcript", "Transcript (NM)"],
                         ["acmg", "ACMG"],
                         ["institutional", "Institutional"],
                         ["status", "Status"],
@@ -516,7 +569,10 @@ export default function WorkbenchHomePage() {
                       const review = members.find(
                         entry => entry.status === "succeeded"
                       );
-                      const analyzed = batchAnalyzedAt(members);
+                      const analyzed = entryActivityAt(
+                        members,
+                        row.kind === "case" ? row.updatedAt : null
+                      );
                       const open = () =>
                         navigate(
                           row.kind === "batch"
@@ -551,22 +607,48 @@ export default function WorkbenchHomePage() {
                             </button>
                           </td>
                           <td className="py-2 pr-3 text-muted-foreground">
-                            {members.length} variants
+                            {row.kind === "case" && row.variantCount
+                              ? `${row.variantCount.toLocaleString()} variants`
+                              : `${members.length} variants`}
                           </td>
                           <td className="py-2 pr-3 text-muted-foreground">—</td>
                           <td className="py-2 pr-3 text-muted-foreground">—</td>
                           <td className="py-2 pr-3 text-muted-foreground">—</td>
                           <td className="py-2 pr-3 text-muted-foreground">—</td>
                           <td className="py-2 pr-3">
-                            <Badge
-                              variant="outline"
-                              className={cn(
-                                entryChip,
-                                workbenchStatusClass(headline)
-                              )}
-                            >
-                              {workbenchStatusLabel(headline)}
-                            </Badge>
+                            {row.kind === "case" && members.length === 0 ? (
+                              <ClinicalStatus status={row.caseStatus} />
+                            ) : headline === "running" || headline === "loading" ? (
+                              <button
+                                type="button"
+                                className={cn(
+                                  "inline-flex cursor-pointer items-center rounded-md border px-2.5 text-xs font-medium",
+                                  entryChip,
+                                  workbenchStatusClass(headline)
+                                )}
+                                title="View the live classifier log"
+                                onClick={() => {
+                                  setLogRunId(null);
+                                  setLogGroup(
+                                    row.kind === "batch"
+                                      ? { kind: "batch", id: row.batchId }
+                                      : { kind: "case", id: row.caseId }
+                                  );
+                                }}
+                              >
+                                {workbenchStatusLabel(headline)}
+                              </button>
+                            ) : (
+                              <Badge
+                                variant="outline"
+                                className={cn(
+                                  entryChip,
+                                  workbenchStatusClass(headline)
+                                )}
+                              >
+                                {workbenchStatusLabel(headline)}
+                              </Badge>
+                            )}
                             {done > 0 && done < members.length ? (
                               <span className="ml-2 text-xs text-muted-foreground">
                                 {done} done
@@ -575,10 +657,32 @@ export default function WorkbenchHomePage() {
                           </td>
                           <td className="whitespace-nowrap py-2 pr-3 text-muted-foreground">
                             {analyzed === null
-                              ? "—"
+                              ? row.kind === "case" && row.updatedAt
+                                ? formatDateTime(new Date(row.updatedAt))
+                                : "—"
                               : formatDateTime(new Date(analyzed))}
                           </td>
-                          <td className="py-2 pr-3 text-muted-foreground">—</td>
+                          <td className="py-2 pr-3">
+                            {members.length ? (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className={entryAction}
+                                onClick={() => {
+                                  setLogRunId(null);
+                                  setLogGroup(
+                                    row.kind === "batch"
+                                      ? { kind: "batch", id: row.batchId }
+                                      : { kind: "case", id: row.caseId }
+                                  );
+                                }}
+                              >
+                                Log
+                              </Button>
+                            ) : (
+                              <span className="text-muted-foreground">—</span>
+                            )}
+                          </td>
                           <td className="py-2 text-right">
                             {row.kind === "batch" &&
                             canCurate &&
@@ -663,10 +767,10 @@ export default function WorkbenchHomePage() {
                           {entry.input.gene}
                         </td>
                         <td className="py-2 pr-3 font-mono text-xs">
-                          {entry.input.hgvsC}
+                          {codingHgvs(entry.input.hgvsC) || "—"}
                         </td>
                         <td className="py-2 pr-3 font-mono text-xs text-muted-foreground">
-                          {entry.input.transcript || "—"}
+                          {displayTranscript(entry.input.transcript) || "—"}
                         </td>
                         <td className="py-2 pr-3">
                           {acmg ? (
@@ -720,7 +824,10 @@ export default function WorkbenchHomePage() {
                               size="sm"
                               variant="outline"
                               className={entryAction}
-                              onClick={() => setLogRunId(entry.id)}
+                              onClick={() => {
+                                setLogGroup(null);
+                                setLogRunId(entry.id);
+                              }}
                             >
                               Log
                             </Button>
@@ -828,17 +935,39 @@ export default function WorkbenchHomePage() {
       <AnalysisLogDialog
         organizationId={activeOrganizationId || 0}
         target={(() => {
+          if (logGroup) {
+            const members = (entries.data ?? []).filter(entry => {
+              if (logGroup.kind === "batch") return entry.batchId === logGroup.id;
+              const realBatch = Boolean(
+                entry.batchId && entry.batchName && !isSingleVariantBatch(entry.batchName)
+              );
+              return !realBatch && entry.caseId === logGroup.id;
+            });
+            const focused = focusClassifierRun(members);
+            if (!focused) return null;
+            const done = members.filter(entry => entry.status === "succeeded").length;
+            return {
+              runId: focused.id,
+              gene: focused.input.gene,
+              hgvs: displayHgvs(focused.input.transcript, focused.input.hgvsC),
+              status: focused.status,
+              note: `${done} done of ${members.length}`,
+            };
+          }
           const entry = entries.data?.find(item => item.id === logRunId);
           return entry
             ? {
                 runId: entry.id,
                 gene: entry.input.gene,
-                hgvs: entry.input.hgvsC,
+                hgvs: displayHgvs(entry.input.transcript, entry.input.hgvsC),
                 status: entry.status,
               }
             : null;
         })()}
-        onClose={() => setLogRunId(null)}
+        onClose={() => {
+          setLogRunId(null);
+          setLogGroup(null);
+        }}
       />
     </div>
   );

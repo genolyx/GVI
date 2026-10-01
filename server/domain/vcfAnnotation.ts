@@ -1,3 +1,5 @@
+import { maneRefseqForGene } from "./maneRefseq";
+
 /** How an uploaded VCF should enter the annotation step. */
 
 export type AnnotationSource = "vep" | "snpeff";
@@ -124,6 +126,38 @@ function highestFrequency(values: string[]) {
   return Math.max(...numbers);
 }
 
+/** RefSeq accession from a VEP MANE field. VEP may append a protein id after `|`. */
+export function refseqAccession(value: string): string | null {
+  const token = value.split(/[|&]/)[0]?.trim() ?? "";
+  const match = /^NM_\d+(?:\.\d+)?/i.exec(token);
+  return match ? match[0] : null;
+}
+
+/**
+ * Clinical transcript, matching Service Portal's Transcript (NM) column.
+ * MANE Select RefSeq wins, then MANE Plus Clinical, then a Feature that is already NM_.
+ * An Ensembl Feature is kept only when no RefSeq accession is present.
+ */
+export function clinicalTranscript(fields: string[], row: string[], featureName: string): string | null {
+  const mane =
+    refseqAccession(named(fields, row, "MANE_SELECT")) ||
+    refseqAccession(named(fields, row, "MANE_PLUS_CLINICAL"));
+  if (mane) return mane;
+  const feature = named(fields, row, featureName);
+  return refseqAccession(feature) || feature || null;
+}
+
+/** HGVSc/HGVSp without the transcript prefix (`ENST…:c.` or `NM_…:c.` → `c.`). */
+export function codingChange(hgvs: string): string | null {
+  if (!hgvs) return null;
+  const colon = hgvs.lastIndexOf(":");
+  if (colon > 0) {
+    const change = hgvs.slice(colon + 1);
+    if (/^[cnpg]\./i.test(change)) return change;
+  }
+  return hgvs;
+}
+
 function pickRow(fields: string[], rows: string[][], alt: string) {
   const alleleRows = rows.filter(row => named(fields, row, "Allele") === alt);
   const pool = alleleRows.length ? alleleRows : rows;
@@ -146,30 +180,35 @@ export function annotationFromInfo(
   const rows = infoValue.split(",").map(entry => entry.split("|"));
   const picked = pickRow(fields, rows, alt);
   if (!picked) return null;
-  if (source === "vep") {
-    return {
-      gene: named(fields, picked, "SYMBOL") || null,
-      transcript: named(fields, picked, "Feature") || null,
-      hgvsC: named(fields, picked, "HGVSc") || null,
-      hgvsP: named(fields, picked, "HGVSp") || null,
-      consequence: named(fields, picked, "Consequence") || null,
-      impact: named(fields, picked, "IMPACT") || null,
-      populationAf: highestFrequency([
-        named(fields, picked, "gnomADe_AF"),
-        named(fields, picked, "gnomADg_AF"),
-        named(fields, picked, "gnomAD_AF"),
-      ]),
-      clinvar: named(fields, picked, "CLIN_SIG").replaceAll("_", " ") || null,
-    };
+  const parsed =
+    source === "vep"
+      ? {
+          gene: named(fields, picked, "SYMBOL") || null,
+          transcript: clinicalTranscript(fields, picked, "Feature"),
+          hgvsC: codingChange(named(fields, picked, "HGVSc")),
+          hgvsP: codingChange(named(fields, picked, "HGVSp")),
+          consequence: named(fields, picked, "Consequence") || null,
+          impact: named(fields, picked, "IMPACT") || null,
+          populationAf: highestFrequency([
+            named(fields, picked, "gnomADe_AF"),
+            named(fields, picked, "gnomADg_AF"),
+            named(fields, picked, "gnomAD_AF"),
+          ]),
+          clinvar: named(fields, picked, "CLIN_SIG").replaceAll("_", " ") || null,
+        }
+      : {
+          gene: named(fields, picked, "Gene_Name") || named(fields, picked, "Gene") || null,
+          transcript: clinicalTranscript(fields, picked, "Feature_ID"),
+          hgvsC: codingChange(named(fields, picked, "HGVS.c") || named(fields, picked, "HGVSc")),
+          hgvsP: codingChange(named(fields, picked, "HGVS.p") || named(fields, picked, "HGVSp")),
+          consequence: named(fields, picked, "Annotation") || null,
+          impact: named(fields, picked, "Annotation_Impact") || null,
+          populationAf: null,
+          clinvar: null,
+        };
+  if (!parsed.transcript || !/^NM_/i.test(parsed.transcript)) {
+    const mane = maneRefseqForGene(parsed.gene);
+    if (mane) parsed.transcript = mane;
   }
-  return {
-    gene: named(fields, picked, "Gene_Name") || named(fields, picked, "Gene") || null,
-    transcript: named(fields, picked, "Feature_ID") || null,
-    hgvsC: named(fields, picked, "HGVS.c") || named(fields, picked, "HGVSc") || null,
-    hgvsP: named(fields, picked, "HGVS.p") || named(fields, picked, "HGVSp") || null,
-    consequence: named(fields, picked, "Annotation") || null,
-    impact: named(fields, picked, "Annotation_Impact") || null,
-    populationAf: null,
-    clinvar: null,
-  };
+  return parsed;
 }

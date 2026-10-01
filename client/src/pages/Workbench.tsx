@@ -462,6 +462,7 @@ function GermlineWorkbenchPage() {
               void list.refetch();
             }}
             onClassify={setSelectedId}
+            canCurate={hasPermission("curation:run")}
           />
         ) : (
         <section className="min-w-0 border-b border-border/70 xl:border-b-0 xl:border-r">

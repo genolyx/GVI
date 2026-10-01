@@ -26,6 +26,7 @@ import {
   germlineOrderRow,
   germlineOrderSchema,
 } from "@shared/germlineOrder";
+import { classifierQueueMessage, enqueueFilteredCaseVariants } from "../domain/caseClassifier";
 import { runTriagePass } from "../domain/triagePass";
 import {
   germlinePanelHash,
@@ -382,6 +383,32 @@ async function ingestVcfForJob(params: {
       } catch (error) {
         console.warn(
           `[VCF] germline triage after ingest failed for case ${caseId}:`,
+          error
+        );
+      }
+      try {
+        const job = await db
+          .select({ createdBy: analysisJobs.createdBy })
+          .from(analysisJobs)
+          .where(
+            and(eq(analysisJobs.id, jobId), eq(analysisJobs.organizationId, organizationId))
+          )
+          .limit(1);
+        const queued = await enqueueFilteredCaseVariants({
+          organizationId,
+          caseId,
+          requestedBy: job[0]?.createdBy ?? null,
+        });
+        await db.insert(analysisEvents).values({
+          organizationId,
+          jobId,
+          status: "review_ready",
+          message: classifierQueueMessage(queued),
+          progressPercent: 100,
+        });
+      } catch (error) {
+        console.warn(
+          `[VCF] germline classifier queue after ingest failed for case ${caseId}:`,
           error
         );
       }

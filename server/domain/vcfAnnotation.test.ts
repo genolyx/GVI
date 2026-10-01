@@ -61,13 +61,82 @@ describe("VCF annotation detection", () => {
     ].join("\n");
     expect(parseVcf(vcf, "GRCh38")[0]).toMatchObject({
       gene: "TP53",
-      transcript: "ENST2",
+      transcript: "NM_000546.6",
       hgvsC: "c.524G>A",
       hgvsP: "p.Arg175His",
       consequence: "missense_variant",
       impact: "MODERATE",
       populationAf: "0.0004",
       clinvarSignificance: "Pathogenic",
+    });
+  });
+
+  it("stores the MANE RefSeq accession and drops the Ensembl prefix from HGVSc", () => {
+    const vcf = [
+      "##fileformat=VCFv4.2",
+      VEP_HEADER,
+      "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO",
+      [
+        "6",
+        "35471221",
+        ".",
+        "C",
+        "T",
+        "80",
+        "PASS",
+        "CSQ=T|missense_variant|MODERATE|TULP1|ENSG00000112041|ENST00000229771|ENST00000229771.11:c.1486G>A|ENSP00000229771.6:p.Val496Met|NM_003322.6|YES|0.0001|0.0002|",
+      ].join("\t"),
+    ].join("\n");
+    expect(parseVcf(vcf, "GRCh38")[0]).toMatchObject({
+      gene: "TULP1",
+      transcript: "NM_003322.6",
+      hgvsC: "c.1486G>A",
+      hgvsP: "p.Val496Met",
+    });
+  });
+
+  it("uses the gene MANE RefSeq when the chosen transcript has no NM_", () => {
+    const vcf = [
+      "##fileformat=VCFv4.2",
+      VEP_HEADER,
+      "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO",
+      [
+        "1",
+        "100",
+        ".",
+        "G",
+        "A",
+        "80",
+        "PASS",
+        "CSQ=A|missense_variant|MODERATE|PSEN2|ENSG00000143801|ENST00000676945|ENST00000676945.1:c.1358G>A|p.Arg453His||YES|0.001|0.001|",
+      ].join("\t"),
+    ].join("\n");
+    expect(parseVcf(vcf, "GRCh38")[0]).toMatchObject({
+      gene: "PSEN2",
+      transcript: "NM_000447.3",
+      hgvsC: "c.1358G>A",
+    });
+  });
+
+  it("keeps an Ensembl transcript when the record has no MANE RefSeq", () => {
+    const vcf = [
+      "##fileformat=VCFv4.2",
+      VEP_HEADER,
+      "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO",
+      [
+        "1",
+        "100",
+        ".",
+        "A",
+        "G",
+        "80",
+        "PASS",
+        "CSQ=G|missense_variant|MODERATE|GENE1|ENSG1|ENST000001|ENST000001.1:c.2A>G|p.Met1Val||YES|0.01|0.01|",
+      ].join("\t"),
+    ].join("\n");
+    expect(parseVcf(vcf, "GRCh38")[0]).toMatchObject({
+      transcript: "ENST000001",
+      hgvsC: "c.2A>G",
     });
   });
 });
