@@ -23,6 +23,7 @@ import { useOrganization } from "@/contexts/OrganizationContext";
 import { trpc } from "@/lib/trpc";
 import { formatDate } from "@/lib/datetime";
 import {
+  entryChip,
   workbenchStatusClass,
   workbenchStatusLabel,
 } from "@/pages/workbench/status";
@@ -547,10 +548,7 @@ export default function Home() {
                   </span>
                   <Badge
                     variant="outline"
-                    className={cn(
-                      "rounded-md px-2 py-0.5 text-xs font-medium",
-                      workbenchStatusClass(item.status)
-                    )}
+                    className={cn(entryChip, workbenchStatusClass(item.status))}
                   >
                     {workbenchStatusLabel(item.status)}
                   </Badge>

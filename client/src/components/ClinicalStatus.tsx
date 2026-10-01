@@ -35,7 +35,7 @@ const TONES: Record<string, string> = {
 
 export function ClinicalStatus({ status, className }: { status: string; className?: string }) {
   return (
-    <Badge variant="outline" className={cn("rounded-md px-2 py-0.5 text-[11px] font-medium", TONES[status] || TONES.draft, className)}>
+    <Badge variant="outline" className={cn("h-7 rounded-md px-2.5 text-xs font-medium shadow-none", TONES[status] || TONES.draft, className)}>
       {LABELS[status] || status}
     </Badge>
   );

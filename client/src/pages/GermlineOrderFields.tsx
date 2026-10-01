@@ -72,7 +72,6 @@ export function GermlineOrderFields({
   return (
     <div className="grid gap-5 lg:grid-cols-2">
       <section className="space-y-4 rounded-xl border border-border/70 p-4 lg:col-span-2">
-        <h3 className="text-sm font-semibold">Service</h3>
         <Field label="Service">
           <select
             className={selectClass}

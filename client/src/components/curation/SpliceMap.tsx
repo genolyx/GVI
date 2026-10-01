@@ -1,4 +1,4 @@
-import type { PtcMarker, SpliceExon, SpliceFocus, SpliceViz } from "@shared/curation/viz";
+import type { PtcMarker, SpliceExon, SpliceViz } from "@shared/curation/viz";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   type HeadingTone,
@@ -31,11 +31,11 @@ import {
  */
 
 const TONE_TEXT: Record<HeadingTone, string> = {
-  loss: "text-rose-600",
-  gain: "text-emerald-600",
-  alt: "text-amber-600",
-  reference: "text-sky-600",
-  ptc: "text-rose-600",
+  loss: "text-rose-600 dark:text-rose-300",
+  gain: "text-emerald-600 dark:text-emerald-300",
+  alt: "text-amber-600 dark:text-amber-300",
+  reference: "text-sky-600 dark:text-sky-300",
+  ptc: "text-rose-600 dark:text-rose-300",
   muted: "text-muted-foreground",
 };
 
@@ -44,11 +44,11 @@ function Defs() {
   return (
     <defs>
       <pattern id="sm-skip" width="8" height="8" patternTransform="rotate(135)" patternUnits="userSpaceOnUse">
-        <rect width="8" height="8" className="fill-rose-50" />
+        <rect width="8" height="8" className="fill-rose-50 dark:fill-rose-950" />
         <line x1="0" y1="0" x2="0" y2="8" className="stroke-rose-400" strokeWidth="4" />
       </pattern>
       <pattern id="sm-skip-alt" width="8" height="8" patternTransform="rotate(135)" patternUnits="userSpaceOnUse">
-        <rect width="8" height="8" className="fill-amber-50" />
+        <rect width="8" height="8" className="fill-amber-50 dark:fill-amber-950" />
         <line x1="0" y1="0" x2="0" y2="8" className="stroke-amber-400" strokeWidth="4" />
       </pattern>
       <pattern id="sm-hidden" width="6" height="6" patternTransform="rotate(135)" patternUnits="userSpaceOnUse">
@@ -60,13 +60,13 @@ function Defs() {
 }
 
 const EXON_FILL: Record<string, string> = {
-  normal: "fill-blue-100 stroke-blue-400",
+  normal: "fill-blue-100 stroke-blue-400 dark:fill-sky-800 dark:stroke-sky-400",
   skipped: "stroke-rose-500",
   skipped_alt: "stroke-amber-500",
-  anchor: "fill-emerald-100 stroke-emerald-500",
-  utr: "fill-sky-50 stroke-sky-400",
-  dimmed: "fill-slate-100 stroke-slate-300",
-  faded: "fill-blue-50 stroke-blue-200",
+  anchor: "fill-emerald-100 stroke-emerald-500 dark:fill-emerald-900 dark:stroke-emerald-400",
+  utr: "fill-sky-50 stroke-sky-400 dark:fill-sky-950 dark:stroke-sky-500",
+  dimmed: "fill-slate-100 stroke-slate-300 dark:fill-slate-800 dark:stroke-slate-500",
+  faded: "fill-blue-50 stroke-blue-200 dark:fill-sky-950 dark:stroke-sky-700",
 };
 
 function ExonBox({ cell, y }: { cell: Extract<TrackCell, { kind: "exon" }>; y: number }) {
@@ -140,7 +140,7 @@ function ExonBox({ cell, y }: { cell: Extract<TrackCell, { kind: "exon" }>; y: n
 
       {/* Variant locus. */}
       {cell.variantFraction !== null ? (
-        <g>
+        <g data-variant-locus="">
           <title>{`Variant position within exon ${rank}`}</title>
           <line
             x1={x + width * cell.variantFraction}
@@ -229,7 +229,9 @@ function IntronLine({ cell, y }: { cell: Extract<TrackCell, { kind: "intron" }>;
       <text x={x + width - 5} y={midY + 3} className="fill-muted-foreground text-[6px] font-bold">
         A
       </text>
-      {hasVariant ? <path d={diamond(markX, midY - 7, 4)} className="fill-amber-500" /> : null}
+      {hasVariant ? (
+        <path data-variant-locus="" d={diamond(markX, midY - 7, 4)} className="fill-amber-500" />
+      ) : null}
     </g>
   );
 }
@@ -244,7 +246,11 @@ function PseudoExonBox({
   const { x, width, nt, accent, isUtr } = cell;
   const stroke =
     accent === "amber" ? "stroke-amber-500" : isUtr ? "stroke-sky-400" : "stroke-emerald-500";
-  const fill = accent === "amber" ? "fill-amber-50" : isUtr ? "fill-sky-50" : "fill-emerald-50";
+  const fill = accent === "amber"
+    ? "fill-amber-50 dark:fill-amber-950"
+    : isUtr
+      ? "fill-sky-50 dark:fill-sky-950"
+      : "fill-emerald-50 dark:fill-emerald-950";
   return (
     <g>
       <title>
@@ -266,7 +272,7 @@ function PseudoExonBox({
         x={x + width / 2}
         y={y + 13}
         textAnchor="middle"
-        className={`text-[8px] font-bold ${accent === "amber" ? "fill-amber-700" : isUtr ? "fill-sky-700" : "fill-emerald-700"}`}
+        className={`text-[8px] font-bold ${accent === "amber" ? "fill-amber-700 dark:fill-amber-300" : isUtr ? "fill-sky-700 dark:fill-sky-300" : "fill-emerald-700 dark:fill-emerald-300"}`}
       >
         +{nt ?? "?"} nt
       </text>
@@ -366,35 +372,52 @@ const TRACK_GAP = 6;
 const LABEL_WIDTH = 66;
 
 function RowSvg({ row }: { row: SpliceRow }) {
+  const scrollerRef = useRef<HTMLDivElement>(null);
   const width = Math.max(...row.tracks.map(track => track.width), 1);
   const height = row.tracks.length * (TRACK_HEIGHT + TRACK_GAP) + 10;
+
+  // A long transcript is wider than the card. Land on the variant instead of exon 1.
+  useEffect(() => {
+    const root = scrollerRef.current;
+    const mark = root?.querySelector("[data-variant-locus]");
+    if (!root || !(mark instanceof Element)) return;
+    if (root.scrollWidth <= root.clientWidth + 1) return;
+    const markBox = mark.getBoundingClientRect();
+    const box = root.getBoundingClientRect();
+    root.scrollLeft += markBox.left + markBox.width / 2 - (box.left + box.width / 2);
+  }, [width]);
+
   return (
-    <div className="mt-1.5 overflow-x-auto">
-      <svg
-        width={LABEL_WIDTH + width}
-        height={height}
-        role="img"
-        aria-label={row.heading.map(part => part.text).join(" ")}
-      >
-        <Defs />
+    <div className="mt-1.5 flex min-w-0">
+      <svg width={LABEL_WIDTH} height={height} className="shrink-0" aria-hidden="true">
         {row.tracks.map((track, index) => {
           const y = 8 + index * (TRACK_HEIGHT + TRACK_GAP);
           return (
-            <g key={track.role + index}>
-              <text
-                x={0}
-                y={y + TRACK_HEIGHT / 2 + 3}
-                className="fill-muted-foreground text-[8px] font-semibold"
-              >
-                {track.label}
-              </text>
-              <g transform={`translate(${LABEL_WIDTH}, 0)`}>
-                <Track track={track} y={y} />
-              </g>
-            </g>
+            <text
+              key={track.role + index}
+              x={0}
+              y={y + TRACK_HEIGHT / 2 + 3}
+              className="fill-muted-foreground text-[8px] font-semibold"
+            >
+              {track.label}
+            </text>
           );
         })}
       </svg>
+      <div ref={scrollerRef} className="exon-map-scroll min-w-0 flex-1 overflow-x-auto overscroll-x-contain">
+        <svg
+          width={width}
+          height={height}
+          role="img"
+          aria-label={row.heading.map(part => part.text).join(" ")}
+        >
+          <Defs />
+          {row.tracks.map((track, index) => {
+            const y = 8 + index * (TRACK_HEIGHT + TRACK_GAP);
+            return <Track key={track.role + index} track={track} y={y} />;
+          })}
+        </svg>
+      </div>
     </div>
   );
 }
@@ -414,7 +437,7 @@ function Row({ row }: { row: SpliceRow }) {
       </p>
       <RowSvg row={row} />
       {row.ptcCaption ? (
-        <p className="mt-1 pl-0.5 text-[9px] leading-4 text-rose-700">{row.ptcCaption}</p>
+        <p className="mt-1 pl-0.5 text-[9px] leading-4 text-rose-700 dark:text-rose-300">{row.ptcCaption}</p>
       ) : null}
     </div>
   );
@@ -447,15 +470,6 @@ function useCanvasWidth() {
   return [ref, Math.max(280, (width || 620) - LABEL_WIDTH)] as const;
 }
 
-function focusOf(focus: SpliceFocus | null | undefined, fallback: SpliceExon[]) {
-  const exons = focus?.exons?.length ? focus.exons : fallback;
-  return {
-    exons: exons || [],
-    truncBefore: focus?.trunc_before ?? 0,
-    truncAfter: focus?.trunc_after ?? 0,
-  };
-}
-
 export function SpliceMap({ spliceViz }: { spliceViz: SpliceViz }) {
   const [measureRef, canvasWidth] = useCanvasWidth();
   const rows = useMemo(() => buildRows(spliceViz, canvasWidth), [spliceViz, canvasWidth]);
@@ -478,9 +492,9 @@ export function SpliceMap({ spliceViz }: { spliceViz: SpliceViz }) {
   const referenceOnly = spliceViz.reference_only === true;
 
   return (
-    <div ref={measureRef} className="space-y-1">
+    <div ref={measureRef} className="min-w-0 space-y-1">
       <div className="flex items-baseline justify-between gap-3">
-        <p className="text-[10px] font-semibold uppercase tracking-wider text-sky-700">
+        <p className="text-[10px] font-semibold uppercase tracking-wider text-sky-700 dark:text-sky-300">
           {referenceOnly ? "Transcript exon map" : "Splice exon map"}
         </p>
         {spliceViz.hgvs_c_for_viz ? (
@@ -506,9 +520,6 @@ export function SpliceMap({ spliceViz }: { spliceViz: SpliceViz }) {
  */
 function buildRows(sv: SpliceViz, available: number): SpliceRow[] {
   const exonsFull = sv.exons_full?.length ? sv.exons_full : sv.exons || [];
-  const primary = focusOf(sv.focus_primary, exonsFull);
-  const junction = focusOf(sv.focus_junction, primary.exons);
-  const secondary = sv.focus_secondary ? focusOf(sv.focus_secondary, exonsFull) : null;
   const target = sv.target_rank ?? null;
   const secTarget = sv.secondary_target_rank ?? null;
   const markers = sv.ptc_markers || null;
@@ -533,13 +544,14 @@ function buildRows(sv: SpliceViz, available: number): SpliceRow[] {
 
   // ── Reference ────────────────────────────────────────────────────────────────
   const refPtc = markers?.reference || null;
-  const refExons =
-    target !== null && primary.exons.length ? primary : { exons: exonsFull, truncBefore: 0, truncAfter: 0 };
+  // The whole transcript, not the ±2 zoom. Exons stay at least EXON_MIN_WIDTH, so a
+  // long gene is wider than the card and the row scrolls instead of clipping.
+  const shown = { exons: exonsFull, truncBefore: 0, truncAfter: 0 };
   const geneOptions = {
     ...shared,
-    exons: refExons.exons,
-    truncBefore: refExons.truncBefore,
-    truncAfter: refExons.truncAfter,
+    exons: shown.exons,
+    truncBefore: shown.truncBefore,
+    truncAfter: shown.truncAfter,
     spliced: false,
     skipRank: null,
     skipAltRank: null,
@@ -575,12 +587,7 @@ function buildRows(sv: SpliceViz, available: number): SpliceRow[] {
   }
   rows.push({
     id: "reference",
-    heading: [
-      { text: "Reference", tone: "reference" },
-      ...(target !== null
-        ? [{ text: `(zoomed ±2 exons around E${target})`, tone: "muted" as HeadingTone }]
-        : []),
-    ],
+    heading: [{ text: "Reference", tone: "reference" }],
     tracks: referenceTracks,
     ptcCaption:
       ptcCaption(
@@ -603,9 +610,9 @@ function buildRows(sv: SpliceViz, available: number): SpliceRow[] {
           heading: skipHeading(sv),
           tracks: dualTrack({
             ...shared,
-            exons: primary.exons,
-            truncBefore: primary.truncBefore,
-            truncAfter: primary.truncAfter,
+            exons: shown.exons,
+            truncBefore: shown.truncBefore,
+            truncAfter: shown.truncAfter,
             skipRank: target,
             ptc: skipPtc,
           }, available),
@@ -621,7 +628,7 @@ function buildRows(sv: SpliceViz, available: number): SpliceRow[] {
   // ── Secondary skip ───────────────────────────────────────────────────────────
   const secPtc = markers?.secondary_skip || null;
   const secRow: SpliceRow | null =
-    secTarget !== null && secondary?.exons.length
+    secTarget !== null && exonsFull.length > 0
       ? {
           id: "skip-alt",
           heading: [
@@ -642,9 +649,9 @@ function buildRows(sv: SpliceViz, available: number): SpliceRow[] {
           ],
           tracks: dualTrack({
             ...shared,
-            exons: secondary.exons,
-            truncBefore: secondary.truncBefore,
-            truncAfter: secondary.truncAfter,
+            exons: shown.exons,
+            truncBefore: shown.truncBefore,
+            truncAfter: shown.truncAfter,
             skipAltRank: secTarget,
             ptc: secPtc,
           }, available),
@@ -671,9 +678,9 @@ function buildRows(sv: SpliceViz, available: number): SpliceRow[] {
         heading: junctionHeading(sv),
         tracks: dualTrack({
           ...shared,
-          exons: junction.exons,
-          truncBefore: junction.truncBefore,
-          truncAfter: junction.truncAfter,
+          exons: shown.exons,
+          truncBefore: shown.truncBefore,
+          truncAfter: shown.truncAfter,
           anchorRank: target,
           dimNonAnchor: true,
           ptc: sv.ptc_location_kind === "pseudo_exon" ? null : junctionPtc,
@@ -724,9 +731,9 @@ function buildRows(sv: SpliceViz, available: number): SpliceRow[] {
   // A stop outside every on-screen window gets its own zoomed row, otherwise the Ter
   // tick is simply missing and the reviewer has no idea where the stop is.
   for (const [marker, label, visible] of [
-    [markers?.skip ?? null, "after whole-exon skip", primary.exons],
-    [markers?.junction ?? null, "cryptic splice product", junction.exons],
-    [markers?.secondary_skip ?? null, "after secondary skip", secondary?.exons ?? []],
+    [markers?.skip ?? null, "after whole-exon skip", shown.exons],
+    [markers?.junction ?? null, "cryptic splice product", shown.exons],
+    [markers?.secondary_skip ?? null, "after secondary skip", shown.exons],
   ] as [PtcMarker | null, string, SpliceExon[]][]) {
     if (!marker || marker.exon_rank === null || marker.exon_rank === undefined) continue;
     if (ptcInWindow(visible, marker)) continue;

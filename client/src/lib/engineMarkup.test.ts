@@ -22,6 +22,14 @@ describe("engine HTML → React tree", () => {
     expect(html).toContain("whole-exon skip");
   });
 
+  it("drops near-white text written for the dark review page", () => {
+    const html = markup(
+      '<ul style="color:#e2e8f0;"><li><strong>Variant:</strong> ZFYVE26 c.3722G&gt;A</li></ul>'
+    );
+    expect(html).not.toContain("#e2e8f0");
+    expect(html).toContain("ZFYVE26");
+  });
+
   it("drops a script even if sanitization were skipped", () => {
     const html = markup("before<script>alert(1)</script>after");
     expect(html).not.toContain("script");

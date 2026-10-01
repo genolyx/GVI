@@ -68,6 +68,61 @@ const DROP_LABELS: Record<string, string> = {
   impact: "low-impact or modifier",
 };
 
+export function GeneListField({
+  values,
+  onChange,
+  hpo,
+}: {
+  values: CaseVcfFilterValues;
+  onChange: (values: CaseVcfFilterValues) => void;
+  hpo: string;
+}) {
+  const panelFileRef = useRef<HTMLInputElement>(null);
+  const listedGenes = parseGeneList(values.genes);
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <Label htmlFor="case-genes">Gene list</Label>
+        <Button type="button" variant="outline" size="sm" onClick={() => panelFileRef.current?.click()}>
+          Load gene list
+        </Button>
+        <input
+          ref={panelFileRef}
+          type="file"
+          accept=".txt,.csv,.tsv,.genes"
+          className="hidden"
+          onChange={async event => {
+            const chosen = event.target.files?.[0];
+            event.target.value = "";
+            if (!chosen) return;
+            try {
+              const text = await chosen.text();
+              const combined = [values.genes.trim(), text.trim()].filter(Boolean).join("\n");
+              onChange({ ...values, genes: combined });
+            } catch {
+              toast.error("Could not read that gene list.");
+            }
+          }}
+        />
+      </div>
+      <Textarea
+        id="case-genes"
+        value={values.genes}
+        onChange={event => onChange({ ...values, genes: event.target.value })}
+        placeholder="SCN1A, KCNQ2, STXBP1"
+        className="min-h-24 font-mono text-sm"
+      />
+      <p className="text-xs leading-5 text-muted-foreground">
+        {listedGenes === null
+          ? "Paste symbols or load a file. Commas, spaces, and new lines all work. Leave this empty to keep every gene."
+          : listedGenes.size === 0
+            ? "No gene symbols were recognized in that text."
+            : `${listedGenes.size.toLocaleString()} ${listedGenes.size === 1 ? "gene" : "genes"}. A variant must be in this list${hpo.trim() ? " and linked to the HPO terms above" : ""}.`}
+      </p>
+    </div>
+  );
+}
+
 export function CaseVcfFilters({
   organizationId,
   referenceBuild,
@@ -85,8 +140,6 @@ export function CaseVcfFilters({
   onChange: (values: CaseVcfFilterValues) => void;
   panelScope?: { panelId?: number; bedText?: string } | null;
 }) {
-  const panelFileRef = useRef<HTMLInputElement>(null);
-  const listedGenes = parseGeneList(values.genes);
   const preview = trpc.cases.previewVcf.useMutation({
     onError: error => toast.error(error.message),
   });
@@ -102,49 +155,11 @@ export function CaseVcfFilters({
 
   return (
     <div className="space-y-8">
-      <div className="space-y-2">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <Label htmlFor="case-genes">Gene panel or list</Label>
-          <Button type="button" variant="outline" size="sm" onClick={() => panelFileRef.current?.click()}>Load panel file</Button>
-          <input
-            ref={panelFileRef}
-            type="file"
-            accept=".txt,.csv,.tsv,.genes"
-            className="hidden"
-            onChange={async event => {
-              const chosen = event.target.files?.[0];
-              event.target.value = "";
-              if (!chosen) return;
-              try {
-                const text = await chosen.text();
-                const combined = [values.genes.trim(), text.trim()].filter(Boolean).join("\n");
-                set({ genes: combined });
-              } catch {
-                toast.error("Could not read that panel file.");
-              }
-            }}
-          />
-        </div>
-        <Textarea
-          id="case-genes"
-          value={values.genes}
-          onChange={event => set({ genes: event.target.value })}
-          placeholder="SCN1A, KCNQ2, STXBP1"
-          className="min-h-24 font-mono text-sm"
-        />
-        <p className="text-xs leading-5 text-muted-foreground">
-          {listedGenes === null
-            ? "Paste a list or load a panel file. Commas, spaces, and new lines all work. Leave this empty to keep every gene from the HPO terms."
-            : listedGenes.size === 0
-              ? "No gene symbols were recognized in that text."
-              : `${listedGenes.size.toLocaleString()} ${listedGenes.size === 1 ? "gene" : "genes"}. A variant must be in this list${hpo.trim() ? " and linked to the HPO terms above" : ""}.`}
-        </p>
-      </div>
       <div className="grid gap-x-6 gap-y-5 sm:grid-cols-2 xl:grid-cols-4">
         <div className="space-y-2">
           <Label htmlFor="case-af">Maximum allele frequency</Label>
           <Input id="case-af" value={values.maxAf} onChange={event => set({ maxAf: event.target.value })} inputMode="decimal" placeholder="e.g. 0.05" className="font-mono" />
-          <p className="text-xs leading-5 text-muted-foreground">Leave blank to skip. Uses gnomAD_AF or POP_AF. Sample INFO AF is not a population frequency.</p>
+          <p className="text-xs leading-5 text-muted-foreground">Leave blank to skip. Uses the VCF gnomAD or population frequency. A missing frequency is read from the local gnomAD file. Sample INFO AF is not used.</p>
         </div>
         <div className="space-y-2">
           <Label htmlFor="case-qual">Minimum QUAL</Label>

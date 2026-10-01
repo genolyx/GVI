@@ -40,13 +40,31 @@ const ALLOWED_TAGS = new Set([
 
 const VOID_TAGS = new Set(["br"]);
 
+/**
+ * Near-white hex colours are body text for the dark review page.
+ * On a light card they disappear, so the narrative falls back to the theme colour.
+ */
+function readableColor(color: string): string | null {
+  const hex = color.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+  if (!hex) return color;
+  let raw = hex[1];
+  if (raw.length === 3) raw = raw.split("").map(channel => channel + channel).join("");
+  const red = Number.parseInt(raw.slice(0, 2), 16);
+  const green = Number.parseInt(raw.slice(2, 4), 16);
+  const blue = Number.parseInt(raw.slice(4, 6), 16);
+  if (red >= 210 && green >= 210 && blue >= 210) return null;
+  return color;
+}
+
 /** Only colour is used by the engine (splice product highlighting). */
 function styleFrom(raw: string | null): { color?: string } | undefined {
   if (!raw) return undefined;
   const match = raw.match(/(?:^|;)\s*color\s*:\s*([^;]+)/i);
   const color = match?.[1]?.trim();
   if (!color || /expression|url\s*\(|javascript:/i.test(color)) return undefined;
-  return { color };
+  const kept = readableColor(color);
+  if (!kept) return undefined;
+  return { color: kept };
 }
 
 function walk(node: Node, key: number): ReactNode {

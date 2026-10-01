@@ -5,7 +5,7 @@ import { cases, curationRunEvents, curationRuns, variants } from "../../drizzle/
 import { curationDocumentSchema } from "../../shared/curation/document";
 import { protectedProcedure, router } from "../_core/trpc";
 import { writeAuditEvent } from "../domain/audit";
-import { classifierQueueMessage, enqueueFilteredCaseVariants } from "../domain/caseClassifier";
+import { classifierQueueMessage, enqueueFilteredCaseVariants, ensureCaseCurationBatch } from "../domain/caseClassifier";
 import {
   assertCurationSupported,
   buildCurationInputForVariant,
@@ -349,6 +349,28 @@ export const curationRouter = router({
       await requireOrganizationPermission(ctx.user.id, input.organizationId, "variant:read");
       const db = await requireDb();
 
+      // A germline case that already has runs gets one batch, so each finished
+      // variant can open its review page. Cases with no runs stay batch-less.
+      if (input.caseId) {
+        const [present] = await db
+          .select({ id: curationRuns.id })
+          .from(curationRuns)
+          .where(
+            and(
+              eq(curationRuns.organizationId, input.organizationId),
+              eq(curationRuns.caseId, input.caseId)
+            )
+          )
+          .limit(1);
+        if (present) {
+          await ensureCaseCurationBatch({
+            organizationId: input.organizationId,
+            caseId: input.caseId,
+            createdBy: ctx.user.id,
+          });
+        }
+      }
+
       const conditions = [eq(curationRuns.organizationId, input.organizationId)];
       if (input.caseId) conditions.push(eq(curationRuns.caseId, input.caseId));
       if (input.variantId) conditions.push(eq(curationRuns.variantId, input.variantId));
@@ -359,6 +381,7 @@ export const curationRouter = router({
           id: curationRuns.id,
           caseId: curationRuns.caseId,
           variantId: curationRuns.variantId,
+          batchId: curationRuns.batchId,
           status: curationRuns.status,
           attempt: curationRuns.attempt,
           maxAttempts: curationRuns.maxAttempts,

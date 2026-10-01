@@ -31,8 +31,6 @@ const EVIDENCE_SOURCE_BY_KEY = {
   clinvar_sig: "ClinVar",
   hgmd_local: "HGMD",
   clingen_haplo_score: "ClinGen",
-  spliceai_narrative: "SpliceAI",
-  pangolin_ds_sg: "Pangolin",
   critical_domain_names: "UniProt",
   ensembl_transcript_id: "Ensembl",
 } as const;
@@ -105,8 +103,6 @@ function engineEvidence(document: CurationDocument) {
       HGMD: "hgmd_link",
       ClinGen: "clingen_link",
       UniProt: "uniprot_link",
-      SpliceAI: null,
-      Pangolin: null,
       Ensembl: null,
     }[source];
     rows.push({

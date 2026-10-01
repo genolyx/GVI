@@ -27,6 +27,7 @@ import {
   ONCOGENICITY_CLASSIFICATIONS,
   SOMATIC_TIERS,
 } from "@shared/clinical-standards";
+import { isSplicePredictorSource } from "@shared/curation/document";
 import {
   ArrowLeft,
   BookOpen,
@@ -147,9 +148,19 @@ function GermlineWorkbenchPage() {
     t3_filtered: 0,
     untriaged: 0,
   };
+  const classifierRuns = trpc.curation.list.useQuery(
+    { organizationId: activeOrganizationId || 0, caseId, limit: 200 },
+    { enabled: Boolean(activeOrganizationId && caseId && canReadVariants) }
+  );
+  const reviewRun = (classifierRuns.data ?? []).find(
+    run => run.variantId === selectedId && run.status === "succeeded" && run.batchId
+  );
   const detail = trpc.variants.detail.useQuery(
     { organizationId: activeOrganizationId || 0, variantId: selectedId || 0 },
     { enabled: Boolean(activeOrganizationId && selectedId && canReadVariants) }
+  );
+  const ledgerEvidence = (detail.data?.evidence ?? []).filter(
+    item => !isSplicePredictorSource(item.source)
   );
   const models = trpc.copilot.models.useQuery(undefined, {
     staleTime: 60_000,
@@ -415,17 +426,17 @@ function GermlineWorkbenchPage() {
           </Button>
         }
       />
-      <Alert className="border-amber-200 bg-amber-50/65 text-amber-950">
-        <ShieldAlert className="size-4 text-amber-700" />
+      <Alert className="border-amber-200 bg-amber-50/65 text-amber-950 dark:border-amber-300/25 dark:bg-amber-300/10 dark:text-amber-100">
+        <ShieldAlert className="size-4 text-amber-700 dark:text-amber-200" />
         <AlertTitle>Expert interpretation zone</AlertTitle>
-        <AlertDescription className="text-amber-800/80">
+        <AlertDescription className="text-amber-800/80 dark:text-amber-100/75">
           AI drafts do not replace expert verdict and report sign-out. A
           qualified clinician must review the applied criteria and evidence and
           approve the final status.
         </AlertDescription>
       </Alert>
       {clinicalCase.referenceBuild === "GRCh37" ? (
-        <Alert className="border-sky-200 bg-sky-50/65 text-sky-950">
+        <Alert className="border-sky-200 bg-sky-50/65 text-sky-950 dark:border-sky-300/25 dark:bg-sky-300/10 dark:text-sky-100">
           <AlertTitle>GRCh37 case</AlertTitle>
           <AlertDescription>
             Submitted coordinates are lifted to GRCh38 before engine analysis.
@@ -463,6 +474,7 @@ function GermlineWorkbenchPage() {
             }}
             onClassify={setSelectedId}
             canCurate={hasPermission("curation:run")}
+            secondaryFindingsConsent={clinicalCase.consentSecondaryFindings}
           />
         ) : (
         <section className="min-w-0 border-b border-border/70 xl:border-b-0 xl:border-r">
@@ -657,6 +669,21 @@ function GermlineWorkbenchPage() {
                       <Badge variant="outline">
                         {detail.data.variant.variantType}
                       </Badge>
+                      {reviewRun?.batchId ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="h-6 px-2 text-[10px]"
+                          onClick={() =>
+                            navigate(
+                              `/workbench/batches/${reviewRun.batchId}/review/${reviewRun.id}`
+                            )
+                          }
+                        >
+                          Review
+                        </Button>
+                      ) : null}
                     </div>
                     <p className="mt-2 font-mono text-xs text-muted-foreground">
                       {detail.data.variant.hgvsC ||
@@ -761,13 +788,12 @@ function GermlineWorkbenchPage() {
                   </div>
                   <ScrollArea className="h-[490px] pr-3">
                     <div className="space-y-3">
-                      {detail.data.evidence.length ? (
-                        detail.data.evidence.map(item => (
+                      {ledgerEvidence.length ? (
+                        ledgerEvidence.map(item => (
                           <Card key={item.id} className="shadow-none">
                             <CardContent className="p-4">
                               <div className="flex items-start justify-between gap-3">
                                 <div className="flex flex-wrap gap-1.5">
-                                  <Badge variant="secondary">E{item.id}</Badge>
                                   <Badge variant="outline">{item.source}</Badge>
                                   <Badge variant="outline">
                                     {item.clinicalDomain}

@@ -317,6 +317,7 @@ async function ingestVcfForJob(params: {
         geneCount: selection.geneCount,
         recordsWithoutGene: selection.recordsWithoutGene,
         afFromInfoOnly: selection.afFromInfoOnly,
+        gnomadFilled: selection.gnomadFilled,
       });
       throw new VcfIngestFailure(
         "No variants passed the panel, HPO, gene list, frequency, and quality filters.",

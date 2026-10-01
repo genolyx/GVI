@@ -4,7 +4,8 @@ import { parseGeneList } from "@shared/geneList";
 import { geneSetFromMatches, genesForTerms, loadHpoIndex } from "./hpoGenes";
 import { parseVcf, type ParsedVariant } from "./vcf";
 import type { GermlinePanelContent } from "./germlinePanel";
-import { applyVcfFilters, type FilterReason, type VcfFilters } from "./vcfFilter";
+import { gnomadSiteKey, lookupLocalGnomad, type GnomadSite } from "./gnomadLocal";
+import { applyVcfFilters, dropAboveMaxAf, type FilterReason, type VcfFilters } from "./vcfFilter";
 
 export const vcfFilterSchema = z.object({
   hpo: z.string().max(4000).default(""),
@@ -25,7 +26,8 @@ export async function selectVcfRecords(
   text: string,
   referenceBuild: "GRCh37" | "GRCh38",
   filters: VcfFilterInput,
-  panel?: GermlinePanelContent | null
+  panel?: GermlinePanelContent | null,
+  lookup: (sites: GnomadSite[]) => Promise<Map<string, number> | null> = lookupLocalGnomad
 ) {
   const parsed = parseVcf(text, referenceBuild, PARSE_LIMIT);
   let genes: VcfFilters["genes"] = null;
@@ -78,6 +80,15 @@ export async function selectVcfRecords(
     passOnly: filters.passOnly,
     codingOnly: filters.codingOnly,
   });
+  const gnomadFilled = await fillMissingPopulationAf(
+    filtered.kept,
+    filters.maxAf,
+    referenceBuild,
+    lookup
+  );
+  const selected = gnomadFilled
+    ? dropAboveMaxAf(filtered, filters.maxAf ?? 0)
+    : filtered;
   const notes: string[] = [];
   if (genes && hpoGenes === null && parsed.length > 0) {
     notes.push(
@@ -86,13 +97,16 @@ export async function selectVcfRecords(
   }
   if (filters.maxAf !== null && parsed.length > 0 && afFromInfoOnly === parsed.length) {
     notes.push(
-      "Maximum allele frequency was not applied. This VCF has no gnomAD_AF or POP_AF, and INFO AF is the sample allele fraction."
+      gnomadFilled
+        ? "This VCF has no gnomAD_AF or POP_AF. Missing frequencies were read from the local gnomAD file. INFO AF is the sample allele fraction and was not used."
+        : "Maximum allele frequency was not applied. This VCF has no gnomAD_AF or POP_AF, and INFO AF is the sample allele fraction."
     );
   }
   return {
     parsedCount: parsed.length,
     truncated: parsed.length >= PARSE_LIMIT,
-    filtered,
+    filtered: selected,
+    gnomadFilled,
     matches,
     unmatched,
     geneCount: hpoGeneCount,
@@ -102,13 +116,34 @@ export async function selectVcfRecords(
     notes,
     steps: filterTimelineSteps({
       total: parsed.length,
-      dropped: filtered.dropped,
+      dropped: selected.dropped,
       filters,
       hpoApplied: hpoGenes !== null,
       hpoGeneCount,
       panelApplied: Boolean(panelGenes?.size || panel?.regions?.length),
     }),
   };
+}
+
+async function fillMissingPopulationAf(
+  variants: ParsedVariant[],
+  maxAf: number | null,
+  referenceBuild: "GRCh37" | "GRCh38",
+  lookup: (sites: GnomadSite[]) => Promise<Map<string, number> | null>
+): Promise<boolean> {
+  if (maxAf === null || referenceBuild !== "GRCh38") return false;
+  const missing = variants.filter(variant => variant.populationAf == null || variant.populationAf === "");
+  if (!missing.length) return false;
+  const frequencies = await lookup(missing);
+  if (!frequencies) return false;
+  let filled = false;
+  for (const variant of missing) {
+    const frequency = frequencies.get(gnomadSiteKey(variant));
+    if (frequency === undefined) continue;
+    variant.populationAf = String(frequency);
+    filled = true;
+  }
+  return filled;
 }
 
 /** Drop the HPO gene filter when it cannot match, so an unannotated VCF is not emptied. */
@@ -177,7 +212,8 @@ export function filterTimelineSteps(input: {
     enabled.push({
       reason: "af",
       label: `gnomAD allele frequency is at most ${input.filters.maxAf}`,
-      detail: "A variant with no gnomAD frequency is kept.",
+      detail:
+        "Uses the VCF frequency when it is present. A missing frequency is read from the local gnomAD file. A site still missing there is kept.",
     });
   }
   if (input.filters.codingOnly) {
@@ -229,6 +265,7 @@ export function emptyVcfSelectionLog(input: {
   geneCount: number | null;
   recordsWithoutGene: number;
   afFromInfoOnly: number;
+  gnomadFilled?: boolean;
 }): string[] {
   const count = (value: number) => value.toLocaleString("en-US");
   const lines = [
@@ -247,7 +284,9 @@ export function emptyVcfSelectionLog(input: {
     input.dropped.af > 0
   ) {
     lines.push(
-      "Allele frequency came from the VCF INFO AF field because gnomAD_AF and POP_AF were absent. INFO AF is often the sample allele fraction, not a population frequency."
+      input.gnomadFilled
+        ? "Missing frequencies were read from the local gnomAD file. INFO AF is the sample allele fraction and was not used."
+        : "Allele frequency came from the VCF INFO AF field because gnomAD_AF and POP_AF were absent. INFO AF is often the sample allele fraction, not a population frequency."
     );
   }
   if (input.filters.hpo.trim() && input.parsedCount > 0 && input.recordsWithoutGene === input.parsedCount) {

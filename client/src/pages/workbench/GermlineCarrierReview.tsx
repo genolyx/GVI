@@ -1,14 +1,19 @@
+import { OmimFactCells, type OmimFact } from "@/components/OmimFacts";
 import { TableWidthToggle, tableFrameClass, tableWidthClass, type TableWidthMode } from "@/components/TableWidthToggle";
 import { AnalysisLogDialog } from "./AnalysisLogDialog";
-import { focusClassifierRun } from "./status";
+import { clinvarShortLabels } from "@/lib/clinvarLabel";
+import { classificationTone, entryAction, entryChip, focusClassifierRun, workbenchStatusClass, workbenchStatusLabel } from "./status";
 import { codingHgvs, displayHgvs, displayTranscript } from "@shared/transcript";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { trpc } from "@/lib/trpc";
 import { carrierReviewBanner } from "@shared/carrierReview";
+import { isAcmgSecondaryFindingGene } from "@shared/secondaryFindings";
 import { Loader2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -29,6 +34,7 @@ export type CarrierVariantRow = {
   reviewStatus: string;
   germlineClassification: string | null;
   diseaseContext: string | null;
+  omim?: OmimFact[];
   chromosome: string;
   position: number;
 };
@@ -73,21 +79,18 @@ const CLASS_OPTIONS = [
   "Benign",
 ] as const;
 
-const TABS = ["Variants", "PGx", "Review Case", "Gene database"] as const;
+const TABS = ["Variants", "Secondary findings", "PGx", "Review Case", "Gene database"] as const;
 
 function isPlp(value: string | null) {
   const text = (value || "").toLowerCase();
   return text === "pathogenic" || text === "likely pathogenic";
 }
 
-function classTone(value: string | null) {
-  const text = (value || "").toLowerCase();
-  if (text === "pathogenic" || text === "likely pathogenic")
-    return "bg-rose-100 text-rose-800";
-  if (text === "vus" || text.includes("uncertain")) return "bg-amber-100 text-amber-800";
-  if (text === "benign" || text === "likely benign" || text.includes("benign"))
-    return "bg-emerald-100 text-emerald-800";
-  return "bg-muted text-muted-foreground";
+function classificationClass(label: string) {
+  const text = label.toLowerCase();
+  if (text === "path" || text === "lp" || text.includes("pathogenic")) return "pathogenic";
+  if (text === "benign" || text === "lb" || text.includes("benign")) return "benign";
+  return "vus";
 }
 
 function formatAf(value: string | null) {
@@ -150,6 +153,7 @@ export function GermlineCarrierReview({
   onRetry,
   onClassify,
   canCurate,
+  secondaryFindingsConsent,
 }: {
   organizationId: number;
   caseId: number;
@@ -161,6 +165,7 @@ export function GermlineCarrierReview({
   onRetry: () => void;
   onClassify: (variantId: number) => void;
   canCurate: boolean;
+  secondaryFindingsConsent: boolean;
 }) {
   const utils = trpc.useUtils();
   const review = trpc.germlineReview.get.useQuery({ organizationId, caseId });
@@ -196,7 +201,8 @@ export function GermlineCarrierReview({
   }, [classifiedCount, utils]);
   const runByVariant = new Map<number, string>();
   for (const run of classifier.data ?? []) {
-    if (run.variantId && !runByVariant.has(run.variantId)) runByVariant.set(run.variantId, run.status);
+    if (!run.variantId) continue;
+    if (!runByVariant.has(run.variantId)) runByVariant.set(run.variantId, run.status);
   }
   const classifierRuns = classifier.data ?? [];
   const classifierActive = classifierRuns.some(
@@ -342,6 +348,10 @@ export function GermlineCarrierReview({
     }
     return true;
   });
+  const secondary = tab === "Secondary findings";
+  const listed = secondary
+    ? visible.filter(row => isAcmgSecondaryFindingGene(row.gene))
+    : visible;
   const notes = new Map((review.data?.notes ?? []).map(row => [row.variantId, row.notes]));
   const knowledge = review.data?.genes ?? [];
 
@@ -379,17 +389,17 @@ export function GermlineCarrierReview({
         <button
           type="button"
           onClick={() => setLogOpen(true)}
-          className="flex w-full items-center gap-4 rounded-xl border border-sky-400 bg-sky-50 px-4 py-4 text-left text-sky-950 shadow-sm"
+          className="flex w-full items-center gap-4 rounded-xl border border-sky-400 bg-sky-50 px-4 py-4 text-left text-sky-950 shadow-sm dark:border-sky-300/30 dark:bg-sky-300/10 dark:text-sky-100 dark:shadow-none"
         >
-          <Loader2 className="size-6 shrink-0 animate-spin text-sky-700" />
+          <Loader2 className="size-6 shrink-0 animate-spin text-sky-700 dark:text-sky-200" />
           <span className="min-w-0 flex-1">
             <span className="block text-base font-semibold">Classifier running</span>
             <span className="mt-1 block truncate font-mono text-sm">{focusedLabel}</span>
             <span className="mt-1 block text-sm">
               {classifiedCount} of {classifierRuns.length} classified · {queuedCount} waiting
             </span>
-            <span className="mt-2 block h-2 overflow-hidden rounded-full bg-sky-200">
-              <span className="block h-full bg-sky-600" style={{ width: `${classifiedPercent}%` }} />
+            <span className="mt-2 block h-2 overflow-hidden rounded-full bg-sky-200 dark:bg-sky-300/20">
+              <span className="block h-full bg-sky-600 dark:bg-sky-300" style={{ width: `${classifiedPercent}%` }} />
             </span>
           </span>
           <span className="shrink-0 text-sm font-medium text-sky-800">Log</span>
@@ -443,23 +453,23 @@ export function GermlineCarrierReview({
       <div
         className={`rounded-xl border px-4 py-3 ${
           banner.tone === "detected"
-            ? "border-rose-300 bg-rose-50 text-rose-950"
+            ? "border-rose-300 bg-rose-50 text-rose-950 dark:border-rose-300/30 dark:bg-rose-400/10 dark:text-rose-100"
             : banner.tone === "uncertain"
-              ? "border-amber-300 bg-amber-50 text-amber-950"
-              : "border-emerald-300 bg-emerald-50 text-emerald-950"
+              ? "border-amber-300 bg-amber-50 text-amber-950 dark:border-amber-300/25 dark:bg-amber-300/10 dark:text-amber-100"
+              : "border-emerald-300 bg-emerald-50 text-emerald-950 dark:border-emerald-300/30 dark:bg-emerald-400/10 dark:text-emerald-100"
         }`}
       >
         <p className="text-sm font-semibold">{banner.title}</p>
         <p className="mt-1 text-xs">{banner.detail}</p>
       </div>
-      <div className="flex flex-wrap gap-1 rounded-xl bg-primary p-1 text-primary-foreground">
+      <div className="flex flex-wrap gap-1 rounded-xl border border-border bg-muted/40 p-1">
         {TABS.map(item => (
           <button
             key={item}
             type="button"
             onClick={() => setTab(item)}
             className={`rounded-lg px-4 py-2 text-sm font-medium ${
-              tab === item ? "bg-background text-foreground" : "text-primary-foreground/90"
+              tab === item ? "bg-card text-foreground shadow-sm" : "text-muted-foreground"
             }`}
           >
             {item}
@@ -467,8 +477,21 @@ export function GermlineCarrierReview({
         ))}
       </div>
 
-      {tab === "Variants" ? (
+      {tab === "Variants" || tab === "Secondary findings" ? (
+        secondary && !secondaryFindingsConsent ? (
+          <div className="rounded-xl border border-dashed px-4 py-10 text-center">
+            <p className="text-sm font-medium">Secondary findings were not consented</p>
+            <p className="mx-auto mt-1 max-w-md text-xs leading-5 text-muted-foreground">
+              The Secondary findings checkbox on the new case was left off, so this list stays empty.
+            </p>
+          </div>
+        ) : (
         <div className="space-y-3">
+          {secondary ? (
+            <p className="text-xs leading-5 text-muted-foreground">
+              Consent is on for this case. These are the stored variants whose gene is on the ACMG SF v3.2 list. The new-case checkbox does not pull a second variant set.
+            </p>
+          ) : null}
           <div className="flex flex-wrap items-center gap-2">
             <Input
               value={search}
@@ -537,7 +560,7 @@ export function GermlineCarrierReview({
               className="w-24"
             />
             <span className="text-xs text-muted-foreground">
-              {visible.length.toLocaleString()} variants
+              {listed.length.toLocaleString()} variants
             </span>
             <div className="ml-auto flex flex-wrap gap-2">
               <Button
@@ -546,7 +569,7 @@ export function GermlineCarrierReview({
                 size="sm"
                 onClick={() => {
                   const next = new Set(selected);
-                  visible
+                  listed
                     .filter(row => isPlp(row.germlineClassification))
                     .forEach(row => next.add(row.id));
                   setSelected(next);
@@ -561,7 +584,7 @@ export function GermlineCarrierReview({
                 onClick={() =>
                   setSelected(current => {
                     const next = new Set(current);
-                    visible.forEach(row => next.add(row.id));
+                    listed.forEach(row => next.add(row.id));
                     return next;
                   })
                 }
@@ -583,11 +606,11 @@ export function GermlineCarrierReview({
             </p>
           ) : null}
           <div className={`rounded-xl border ${tableFrameClass(tableWidth)}`}>
-            <table className={`${tableWidthClass(tableWidth)} text-left text-xs`}>
-              <thead className="bg-muted/50 text-[10px] uppercase tracking-wide text-muted-foreground">
+            <table className={`${tableWidthClass(tableWidth)} text-left text-sm`}>
+              <thead className="bg-muted/50 text-xs uppercase tracking-wide text-muted-foreground">
                 <tr>
                   <th className="px-3 py-2" />
-                  {["Gene", "HGVSc", "HGVSp", "Transcript (NM)", "Effect", "Zygosity", "Allele depth", "gnomAD AF", "ClinVar", "ACMG", "Tags", "Disease", "Action"].map(
+                  {["Gene", "HGVSc", "HGVSp", "Transcript (NM)", "OMIM", "Inheritance", "Disease", "Effect", "Zygosity", "Allele depth", "gnomAD AF", "ClinVar", "ACMG", "Tags", "Action"].map(
                     label => (
                       <th key={label} className="px-3 py-2 font-medium">
                         {label}
@@ -599,12 +622,12 @@ export function GermlineCarrierReview({
               <tbody>
                 {loading ? (
                   <tr>
-                    <td colSpan={14} className="px-3 py-6 text-muted-foreground">
+                    <td colSpan={16} className="px-3 py-6 text-muted-foreground">
                       Loading variants…
                     </td>
                   </tr>
-                ) : visible.length ? (
-                  visible.map(row => (
+                ) : listed.length ? (
+                  listed.map(row => (
                     <tr key={row.id} className="border-t border-border/60">
                       <td className="px-3 py-2">
                         <Checkbox
@@ -619,22 +642,27 @@ export function GermlineCarrierReview({
                           }
                         />
                       </td>
-                      <td className="px-3 py-2 font-semibold">{row.gene || "—"}</td>
-                      <td className="px-3 py-2 font-mono">{codingHgvs(row.hgvsC) || "—"}</td>
-                      <td className="px-3 py-2 font-mono">{row.hgvsP || "—"}</td>
-                      <td className="px-3 py-2 font-mono" title={row.transcript || undefined}>
+                      <td className="px-3 py-2">{row.gene || "—"}</td>
+                      <td className="px-3 py-2">{codingHgvs(row.hgvsC) || "—"}</td>
+                      <td className="px-3 py-2">{row.hgvsP || "—"}</td>
+                      <td className="px-3 py-2" title={row.transcript || undefined}>
                         {displayTranscript(row.transcript) || "—"}
                       </td>
+                      <OmimFactCells items={row.omim} className="px-3 py-2" />
                       <td className="max-w-[10rem] truncate px-3 py-2" title={row.consequence || ""}>
                         {row.consequence || "—"}
                       </td>
                       <td className="px-3 py-2">{row.zygosity || "—"}</td>
-                      <td className="px-3 py-2 font-mono">{alleleDepth(row)}</td>
-                      <td className="px-3 py-2 font-mono">{formatAf(row.populationAf)}</td>
-                      <td className="px-3 py-2">
-                        {row.clinvarSignificance ? (
-                          <span className={`rounded px-1.5 py-0.5 ${classTone(row.clinvarSignificance)}`}>
-                            {row.clinvarSignificance}
+                      <td className="px-3 py-2">{alleleDepth(row)}</td>
+                      <td className="px-3 py-2">{formatAf(row.populationAf)}</td>
+                      <td className="px-3 py-2" title={row.clinvarSignificance || undefined}>
+                        {row.clinvarSignificance && clinvarShortLabels(row.clinvarSignificance).length ? (
+                          <span className="inline-flex flex-wrap gap-1">
+                            {clinvarShortLabels(row.clinvarSignificance).map(label => (
+                              <Badge key={label} variant="outline" className={cn(entryChip, classificationTone(classificationClass(label)))}>
+                                {label}
+                              </Badge>
+                            ))}
                           </span>
                         ) : (
                           "—"
@@ -642,15 +670,13 @@ export function GermlineCarrierReview({
                       </td>
                       <td className="px-3 py-2">
                         {row.germlineClassification ? (
-                          <span className={`rounded px-1.5 py-0.5 ${classTone(row.germlineClassification)}`}>
+                          <Badge variant="outline" className={cn(entryChip, classificationTone(classificationClass(row.germlineClassification)))}>
                             {row.germlineClassification}
-                          </span>
-                        ) : runByVariant.get(row.id) === "queued" ? (
-                          "Queued"
-                        ) : runByVariant.get(row.id) === "loading" || runByVariant.get(row.id) === "running" ? (
-                          "Running"
-                        ) : runByVariant.get(row.id) === "failed" ? (
-                          "Failed"
+                          </Badge>
+                        ) : runByVariant.get(row.id) === "queued" || runByVariant.get(row.id) === "loading" || runByVariant.get(row.id) === "running" || runByVariant.get(row.id) === "failed" ? (
+                          <Badge variant="outline" className={cn(entryChip, workbenchStatusClass(runByVariant.get(row.id) || ""))}>
+                            {workbenchStatusLabel(runByVariant.get(row.id) || "")}
+                          </Badge>
                         ) : (
                           "—"
                         )}
@@ -658,9 +684,8 @@ export function GermlineCarrierReview({
                       <td className="px-3 py-2">
                         {row.reviewStatus === "unreviewed" ? "—" : row.reviewStatus}
                       </td>
-                      <td className="max-w-[12rem] truncate px-3 py-2">{row.diseaseContext || "—"}</td>
                       <td className="px-3 py-2">
-                        <Button type="button" size="sm" variant="outline" onClick={() => onClassify(row.id)}>
+                        <Button type="button" size="sm" variant="outline" className={entryAction} onClick={() => onClassify(row.id)}>
                           Classify
                         </Button>
                       </td>
@@ -668,8 +693,10 @@ export function GermlineCarrierReview({
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={14} className="px-3 py-6 text-muted-foreground">
-                      No variants match these filters.
+                    <td colSpan={16} className="px-3 py-6 text-muted-foreground">
+                      {secondary
+                        ? "None of the stored variants are on the ACMG SF v3.2 list."
+                        : "No variants match these filters."}
                     </td>
                   </tr>
                 )}
@@ -677,6 +704,7 @@ export function GermlineCarrierReview({
             </table>
           </div>
         </div>
+        )
       ) : null}
 
       {tab === "PGx" ? (

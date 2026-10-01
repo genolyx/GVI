@@ -1,21 +1,15 @@
-import { ClinicalStatus } from "@/components/ClinicalStatus";
 import { PageHeader } from "@/components/PageHeader";
 import { StatePanel } from "@/components/StatePanel";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { useOrganization } from "@/contexts/OrganizationContext";
-import { trpc } from "@/lib/trpc";
 import { ArrowRight, Dna, Microscope } from "lucide-react";
 import { useLocation } from "wouter";
 
 export default function WorkbenchLandingPage() {
-  const { activeOrganizationId, hasPermission } = useOrganization();
+  const { hasPermission } = useOrganization();
   const [, navigate] = useLocation();
   const canRead = hasPermission("variant:read");
-  const germlineCases = trpc.workbench.germlineCases.useQuery(
-    { organizationId: activeOrganizationId || 0 },
-    { enabled: Boolean(activeOrganizationId && canRead) }
-  );
   return (
     <div className="space-y-7">
       <PageHeader
@@ -40,34 +34,6 @@ export default function WorkbenchLandingPage() {
             onClick={() => navigate("/workbench/somatic")}
           />
         </div>
-      ) : null}
-      {canRead && germlineCases.data?.length ? (
-        <Card className="clinical-card shadow-none">
-          <CardContent className="p-6">
-            <h2 className="font-display text-lg font-semibold">Germline cases</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Cases with stored variants. Open one to review the filtered list.
-            </p>
-            <div className="mt-4 divide-y divide-border/60">
-              {germlineCases.data.map(item => (
-                <button
-                  key={item.id}
-                  type="button"
-                  className="flex w-full items-center justify-between gap-3 py-3 text-left"
-                  onClick={() => navigate(`/workbench/${item.id}`)}
-                >
-                  <span>
-                    <span className="block font-mono text-sm font-semibold">{item.caseNumber}</span>
-                    <span className="mt-1 block text-xs text-muted-foreground">
-                      {item.patientAlias} · {Number(item.variantCount).toLocaleString()} variants
-                    </span>
-                  </span>
-                  <ClinicalStatus status={item.status} />
-                </button>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
       ) : null}
       {canRead ? null : (
         <StatePanel

@@ -38,7 +38,6 @@ import {
   FileSignature,
   FlaskConical,
   LayoutDashboard,
-  ListTree,
   LogOut,
   PanelLeft,
   Settings,
@@ -141,7 +140,6 @@ const menuItems: Array<{
 }> = [
   { icon: LayoutDashboard, label: "Dashboard", path: "/", permission: "case:read" },
   { icon: ClipboardList, label: "Cases", path: "/cases", permission: "case:read" },
-  { icon: ListTree, label: "Interpretation Panels", path: "/germline-panels", permission: "case:read" },
   { icon: FlaskConical, label: "Variant Workbench", path: "/workbench", permission: "variant:read" },
   { icon: FileSignature, label: "Clinical Reports", path: "/reports", permission: "report:read" },
   { icon: Activity, label: "Audit Log", path: "/audit", permission: "audit:view" },

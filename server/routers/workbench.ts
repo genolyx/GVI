@@ -13,6 +13,7 @@ import { writeAuditEvent } from "../domain/audit";
 import { enqueueCurationRun } from "../domain/curationQueue";
 import { ensureCurationWorker } from "../domain/curationWorker";
 import { checkHumanGeneSymbol } from "../domain/geneSymbol";
+import { loadOmimCatalog, omimForGene } from "../domain/omimCatalog";
 import { requireDb, requireOrganizationPermission } from "../domain/tenant";
 import { lookupVariantIdentity } from "../domain/variantIdentity";
 
@@ -397,14 +398,21 @@ export const workbenchRouter = router({
           )
         )
         .orderBy(asc(curationRuns.id));
-      return { batch, entries };
+      const omim = await loadOmimCatalog();
+      return {
+        batch,
+        entries: entries.map(entry => ({
+          ...entry,
+          omim: omimForGene(omim, entry.input.gene),
+        })),
+      };
     }),
 
   /** Every workbench entry, across batches, for the Variants list. */
   listEntries: protectedProcedure.input(orgInput).query(async ({ ctx, input }) => {
     await requireOrganizationPermission(ctx.user.id, input.organizationId, "variant:read");
     const db = await requireDb();
-    return db
+    const rows = await db
       .select({
         ...entryColumns,
         batchName: curationBatches.name,
@@ -424,6 +432,7 @@ export const workbenchRouter = router({
       )
       .where(eq(curationRuns.organizationId, input.organizationId))
       .orderBy(asc(curationRuns.id));
+    return rows;
   }),
 
   /** Germline cases that already have stored variants, including before the classifier runs. */

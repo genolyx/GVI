@@ -1,6 +1,6 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, isNull } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
-import { curationRuns, variants } from "../../drizzle/schema";
+import { cases, curationBatches, curationRuns, variants } from "../../drizzle/schema";
 import { ACTIVE_CURATION_STATUSES, buildCurationInputForVariant, enqueueCurationRun } from "./curationQueue";
 import { ensureCurationWorker } from "./curationWorker";
 import { requireDb } from "./tenant";
@@ -17,6 +17,73 @@ export type CaseClassifierQueue = {
   worker: "started" | "already_running" | "unavailable" | "not_needed";
   workerError: string | null;
 };
+
+/** Batch name for one germline VCF case. The case id keeps it unique in the org. */
+export function caseCurationBatchName(caseNumber: string, caseId: number): string {
+  const name = `Case ${caseNumber} (#${caseId})`;
+  return name.length <= 160 ? name : `${name.slice(0, 157)}...`;
+}
+
+/**
+ * One workbench batch per germline case, so each classified variant has a review page.
+ *
+ * Runs already stored for the case and not in another batch are attached. A case that
+ * has not been classified yet does not get an empty batch.
+ */
+export async function ensureCaseCurationBatch(args: {
+  organizationId: number;
+  caseId: number;
+  createdBy: number | null;
+}): Promise<number | null> {
+  const db = await requireDb();
+  const [row] = await db
+    .select({ caseNumber: cases.caseNumber, purpose: cases.purpose })
+    .from(cases)
+    .where(and(eq(cases.organizationId, args.organizationId), eq(cases.id, args.caseId)))
+    .limit(1);
+  if (!row || row.purpose !== "germline") return null;
+
+  const name = caseCurationBatchName(row.caseNumber, args.caseId);
+  const existing = await db
+    .select({ id: curationBatches.id })
+    .from(curationBatches)
+    .where(and(eq(curationBatches.organizationId, args.organizationId), eq(curationBatches.name, name)))
+    .limit(1);
+  let batchId = existing[0]?.id;
+  if (!batchId) {
+    try {
+      const inserted = await db
+        .insert(curationBatches)
+        .values({
+          organizationId: args.organizationId,
+          name,
+          createdBy: args.createdBy,
+        })
+        .returning({ id: curationBatches.id });
+      batchId = inserted[0]?.id;
+    } catch {
+      const again = await db
+        .select({ id: curationBatches.id })
+        .from(curationBatches)
+        .where(and(eq(curationBatches.organizationId, args.organizationId), eq(curationBatches.name, name)))
+        .limit(1);
+      batchId = again[0]?.id;
+    }
+  }
+  if (!batchId) return null;
+
+  await db
+    .update(curationRuns)
+    .set({ batchId })
+    .where(
+      and(
+        eq(curationRuns.organizationId, args.organizationId),
+        eq(curationRuns.caseId, args.caseId),
+        isNull(curationRuns.batchId)
+      )
+    );
+  return batchId;
+}
 
 export function classifierQueueMessage(result: CaseClassifierQueue): string {
   if (result.queued === 0) {
@@ -99,6 +166,15 @@ export async function enqueueFilteredCaseVariants(args: {
     skipped.push({ variantId, reason: `Classifier queue holds ${CASE_CLASSIFIER_LIMIT} variants per case` });
   }
 
+  const batchId =
+    eligible.length || classified.size || active.size
+      ? await ensureCaseCurationBatch({
+          organizationId: args.organizationId,
+          caseId: args.caseId,
+          createdBy: args.requestedBy,
+        })
+      : null;
+
   let queued = 0;
   for (const variantId of eligible.slice(0, CASE_CLASSIFIER_LIMIT)) {
     try {
@@ -109,6 +185,7 @@ export async function enqueueFilteredCaseVariants(args: {
         organizationId: args.organizationId,
         caseId: built.caseId,
         variantId,
+        batchId,
         input: built.input,
         priority: BULK_PRIORITY,
         requestedBy: args.requestedBy,

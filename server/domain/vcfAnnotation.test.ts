@@ -95,26 +95,27 @@ describe("VCF annotation detection", () => {
     });
   });
 
-  it("uses the gene MANE RefSeq when the chosen transcript has no NM_", () => {
+  it("keeps the transcript the c. change belongs to when that row has no RefSeq", () => {
     const vcf = [
       "##fileformat=VCFv4.2",
       VEP_HEADER,
       "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO",
       [
-        "1",
-        "100",
+        "8",
+        "54770134",
         ".",
-        "G",
         "A",
+        "C",
         "80",
         "PASS",
-        "CSQ=A|missense_variant|MODERATE|PSEN2|ENSG00000143801|ENST00000676945|ENST00000676945.1:c.1358G>A|p.Arg453His||YES|0.001|0.001|",
+        "CSQ=C|missense_variant|MODERATE|RP1|ENSG00000104237|ENST00000637698|ENST00000637698.1:c.3418A>C|p.Asn1140His||YES|0.001|0.001|",
       ].join("\t"),
     ].join("\n");
     expect(parseVcf(vcf, "GRCh38")[0]).toMatchObject({
-      gene: "PSEN2",
-      transcript: "NM_000447.3",
-      hgvsC: "c.1358G>A",
+      gene: "RP1",
+      transcript: "ENST00000637698",
+      hgvsC: "c.3418A>C",
+      hgvsP: "p.Asn1140His",
     });
   });
 

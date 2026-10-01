@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifierQueueMessage, type CaseClassifierQueue } from "./caseClassifier";
+import { caseCurationBatchName, classifierQueueMessage, type CaseClassifierQueue } from "./caseClassifier";
 
 function result(partial: Partial<CaseClassifierQueue>): CaseClassifierQueue {
   return {
@@ -10,6 +10,12 @@ function result(partial: Partial<CaseClassifierQueue>): CaseClassifierQueue {
     ...partial,
   };
 }
+
+describe("case curation batch name", () => {
+  it("names the batch after the case and keeps the case id", () => {
+    expect(caseCurationBatchName("GVI-2026-0930", 57)).toBe("Case GVI-2026-0930 (#57)");
+  });
+});
 
 describe("classifier queue message", () => {
   it("reports how many filtered variants entered the classifier", () => {

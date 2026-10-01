@@ -4,6 +4,7 @@ import {
   emptyVcfSelectionLog,
   filterTimelineSteps,
   hpoGenesToApply,
+  selectVcfRecords,
   type VcfFilterInput,
 } from "./vcfSelection";
 
@@ -125,5 +126,72 @@ describe("VCF frequency and HPO applicability", () => {
     expect(hpoGenesToApply(new Set(["TP53"]), 10, 10)).toBeNull();
     expect(hpoGenesToApply(new Set(["TP53"]), 10, 2)).toEqual(new Set(["TP53"]));
     expect(hpoGenesToApply(null, 10, 10)).toBeNull();
+  });
+});
+
+const header = "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO";
+
+describe("local gnomAD fallback", () => {
+  const openFilters: VcfFilterInput = {
+    hpo: "",
+    genes: "",
+    maxAf: 0.01,
+    minQual: null,
+    minGenotypeQuality: null,
+    minDepth: null,
+    passOnly: false,
+    codingOnly: false,
+  };
+
+  it("drops a blank VCF frequency when the local file is above the maximum and keeps the rare one", async () => {
+    const selection = await selectVcfRecords(
+      [
+        header,
+        "8\t10610142\t.\tG\tC\t50\tPASS\tAF=1",
+        "8\t200\t.\tA\tG\t50\tPASS\tAF=1",
+      ].join("\n"),
+      "GRCh38",
+      openFilters,
+      null,
+      async () =>
+        new Map([
+          ["8:10610142:G:C", 0.407027],
+          ["8:200:A:G", 0.0001],
+        ])
+    );
+    expect(selection.filtered.kept.map(variant => variant.position)).toEqual([200]);
+    expect(selection.filtered.kept[0]?.populationAf).toBe("0.0001");
+    expect(selection.filtered.dropped.af).toBe(1);
+    expect(selection.gnomadFilled).toBe(true);
+    expect(selection.notes[0]).toContain("local gnomAD file");
+  });
+
+  it("keeps a site the local file does not contain", async () => {
+    const selection = await selectVcfRecords(
+      [header, "8\t200\t.\tA\tG\t50\tPASS\tAF=1"].join("\n"),
+      "GRCh38",
+      openFilters,
+      null,
+      async () => new Map([["8:200:A:G", 0]])
+    );
+    expect(selection.filtered.kept).toHaveLength(1);
+    expect(selection.filtered.kept[0]?.populationAf).toBe("0");
+  });
+
+  it("uses the VCF frequency and does not ask the local file", async () => {
+    let called = false;
+    const selection = await selectVcfRecords(
+      [header, "8\t100\t.\tA\tG\t50\tPASS\tgnomAD_AF=0.5"].join("\n"),
+      "GRCh38",
+      openFilters,
+      null,
+      async () => {
+        called = true;
+        return new Map();
+      }
+    );
+    expect(called).toBe(false);
+    expect(selection.filtered.kept).toHaveLength(0);
+    expect(selection.filtered.dropped.af).toBe(1);
   });
 });

@@ -157,7 +157,7 @@ html {
    * as an undifferentiated block of text. Scoped to this class so engine markup
    * cannot restyle the surrounding app.
    */
-  .engine-narrative { @apply break-words; }
+  .engine-narrative { @apply break-words text-foreground; }
   .engine-narrative p { @apply my-1.5 first:mt-0 last:mb-0; }
   .engine-narrative b, .engine-narrative strong { @apply font-semibold text-foreground; }
   .engine-narrative i, .engine-narrative em { @apply italic; }
@@ -177,6 +177,28 @@ html {
   .engine-narrative small { @apply text-[10px] text-muted-foreground; }
   /* The engine nests div-based panels; keep them from collapsing together. */
   .engine-narrative div + div { @apply mt-1.5; }
+}
+
+/*
+ * Radix sizes the scroll-area content as `display: table; min-width: 100%`, which
+ * grows to the widest child and then the viewport clips it. A block at the viewport
+ * width lets a row inside (the exon map) scroll horizontally instead.
+ */
+[data-radix-scroll-area-viewport] > div {
+  display: block !important;
+  width: 100% !important;
+  min-width: 0 !important;
+}
+
+.exon-map-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(125 211 252 / 0.8) rgb(255 255 255 / 0.06);
+}
+.exon-map-scroll::-webkit-scrollbar { height: 8px; }
+.exon-map-scroll::-webkit-scrollbar-track { background: rgb(255 255 255 / 0.06); }
+.exon-map-scroll::-webkit-scrollbar-thumb {
+  background: rgb(125 211 252 / 0.75);
+  border-radius: 999px;
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -1,3 +1,4 @@
+import { OmimFactCells } from "@/components/OmimFacts";
 import { PageHeader } from "@/components/PageHeader";
 import { StatePanel } from "@/components/StatePanel";
 import { Badge } from "@/components/ui/badge";
@@ -9,7 +10,7 @@ import { cn } from "@/lib/utils";
 import { trpc } from "@/lib/trpc";
 import { SINGLE_VARIANTS_BATCH } from "@shared/curation/workbench";
 import { ArrowLeft, Loader2 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useLocation, useParams } from "wouter";
 import { AnalysisLogDialog } from "./AnalysisLogDialog";
@@ -199,13 +200,21 @@ export default function BatchPage() {
                       ["status", "Status"],
                       ["analyzed", "Analyzed time"],
                     ] as const).map(([key, label]) => (
-                      <SortHeader
-                        key={key}
-                        label={label}
-                        active={sort?.key === key}
-                        direction={sort?.direction ?? "asc"}
-                        onClick={() => toggleSort(key)}
-                      />
+                      <Fragment key={key}>
+                        <SortHeader
+                          label={label}
+                          active={sort?.key === key}
+                          direction={sort?.direction ?? "asc"}
+                          onClick={() => toggleSort(key)}
+                        />
+                        {key === "transcript" ? (
+                          <>
+                            <th className="py-2 pr-3 font-semibold">OMIM</th>
+                            <th className="py-2 pr-3 font-semibold">Inheritance</th>
+                            <th className="py-2 pr-3 font-semibold">Disease</th>
+                          </>
+                        ) : null}
+                      </Fragment>
                     ))}
                     <th className="py-2 pr-3">Log</th>
                     <th className="py-2" />
@@ -219,8 +228,9 @@ export default function BatchPage() {
                       <tr key={entry.id} className="border-b border-border/60">
                         <td className="py-2 pr-3 text-muted-foreground">{index + 1}</td>
                         <td className="py-2 pr-3 font-medium">{entry.input.gene}</td>
-                        <td className="py-2 pr-3 font-mono text-xs">{entry.input.hgvsC}</td>
-                        <td className="py-2 pr-3 font-mono text-xs text-muted-foreground">{entry.input.transcript || "—"}</td>
+                        <td className="py-2 pr-3">{entry.input.hgvsC}</td>
+                        <td className="py-2 pr-3">{entry.input.transcript || "—"}</td>
+                        <OmimFactCells items={entry.omim} className="py-2 pr-3 align-top" />
                         <td className="py-2 pr-3 text-muted-foreground">{entry.input.labId || "—"}</td>
                         <td className="py-2 pr-3 text-muted-foreground">{entry.input.externalCaseId || "—"}</td>
                         <td className="py-2 pr-3">

@@ -26,6 +26,7 @@ import {
 } from "../domain/acmg";
 import type { AmpSuggestion } from "../domain/amp";
 import { writeAuditEvent } from "../domain/audit";
+import { loadOmimCatalog, omimForGene } from "../domain/omimCatalog";
 import { collectPublicEvidence } from "../domain/publicEvidence";
 import { requireDb, requireOrganizationPermission } from "../domain/tenant";
 import { TRIAGE_TIERS } from "../domain/triage";
@@ -140,7 +141,7 @@ export const variantsRouter = router({
         vaf: variants.vaf,
         triageScore: variants.triageScore,
       }[input.sortBy];
-      return db
+      const rows = await db
         .select({
           id: variants.id,
           normalizedId: variants.normalizedId,
@@ -192,6 +193,8 @@ export const variantsRouter = router({
         )
         .limit(input.limit)
         .offset(input.offset);
+      const omim = await loadOmimCatalog();
+      return rows.map(row => ({ ...row, omim: omimForGene(omim, row.gene) }));
     }),
 
   /**

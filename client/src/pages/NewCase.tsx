@@ -23,6 +23,7 @@ import { toast } from "sonner";
 import { useLocation } from "wouter";
 import {
   CaseVcfFilters,
+  GeneListField,
   defaultVcfFilters,
   vcfFiltersPayload,
   type CaseVcfFilterValues,
@@ -614,16 +615,19 @@ export default function NewCasePage() {
             />
           </Field>
           {form.purpose === "germline" ? (
-            <Field label="HPO terms">
-              <HpoTermField
-                value={form.phenotypeText}
-                onChange={value => update("phenotypeText", value)}
-              />
-              <p className="text-xs leading-5 text-muted-foreground">
-                Start typing and pick the closest term. A chosen name also
-                includes more specific terms that contain that word.
-              </p>
-            </Field>
+            <>
+              <Field label="HPO terms">
+                <HpoTermField
+                  value={form.phenotypeText}
+                  onChange={value => update("phenotypeText", value)}
+                />
+                <p className="text-xs leading-5 text-muted-foreground">
+                  Start typing and pick the closest term. A chosen name also
+                  includes more specific terms that contain that word.
+                </p>
+              </Field>
+              <GeneListField values={filters} onChange={setFilters} hpo={form.phenotypeText} />
+            </>
           ) : (
             <div className="space-y-6 rounded-xl border border-border/70 bg-muted/20 p-5">
               <div>

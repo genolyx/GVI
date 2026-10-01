@@ -209,6 +209,13 @@ export function spliceAiMax(scores: CurationScores): number {
   );
 }
 
+/** Predictor outputs. They belong with the splice scores, not as ledger citations. */
+export const SPLICE_PREDICTOR_SOURCES = ["SpliceAI", "Pangolin"] as const;
+
+export function isSplicePredictorSource(source: string): boolean {
+  return (SPLICE_PREDICTOR_SOURCES as readonly string[]).includes(source);
+}
+
 /**
  * Compact projection stored in `curation_runs.summary` for list views and
  * queries. The full document lives in object storage.

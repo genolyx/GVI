@@ -238,8 +238,13 @@ export default function WorkbenchHomePage() {
     }
     const listed = new Set<number>();
     for (const row of grouped) {
+      if (row.kind === "case") listed.add(row.caseId);
+      if (row.kind === "batch") {
+        for (const entry of row.entries) {
+          if (entry.caseId) listed.add(entry.caseId);
+        }
+      }
       if (row.kind !== "case") continue;
-      listed.add(row.caseId);
       const meta = (germlineCases.data ?? []).find(item => item.id === row.caseId);
       if (!meta) continue;
       row.patientAlias = meta.patientAlias;
@@ -766,10 +771,10 @@ export default function WorkbenchHomePage() {
                         <td className="py-2 pr-3 font-medium">
                           {entry.input.gene}
                         </td>
-                        <td className="py-2 pr-3 font-mono text-xs">
+                        <td className="py-2 pr-3">
                           {codingHgvs(entry.input.hgvsC) || "—"}
                         </td>
-                        <td className="py-2 pr-3 font-mono text-xs text-muted-foreground">
+                        <td className="py-2 pr-3">
                           {displayTranscript(entry.input.transcript) || "—"}
                         </td>
                         <td className="py-2 pr-3">

@@ -161,3 +161,36 @@ export function applyVcfFilters<T extends FilterableVariant>(
   }
   return { total: variants.length, kept, classifiable, dropped, missingHgvs };
 }
+
+/** Second pass after a local gnomAD lookup fills frequencies the VCF left blank. */
+export function dropAboveMaxAf<T extends FilterableVariant>(
+  result: FilteredVcf<T>,
+  maxAf: number
+): FilteredVcf<T> {
+  const dropped = { ...result.dropped };
+  const kept: T[] = [];
+  for (const variant of result.kept) {
+    const af = alleleFrequency(variant.populationAf);
+    if (af !== null && af > maxAf) {
+      dropped.af += 1;
+      continue;
+    }
+    kept.push(variant);
+  }
+  const rebuilt = applyVcfFilters(kept, {
+    genes: null,
+    maxAf: null,
+    minQual: null,
+    minGenotypeQuality: null,
+    minDepth: null,
+    passOnly: false,
+    codingOnly: false,
+  });
+  return {
+    ...result,
+    kept,
+    dropped,
+    classifiable: rebuilt.classifiable,
+    missingHgvs: rebuilt.missingHgvs,
+  };
+}

@@ -215,29 +215,29 @@ function AcmgPanel({
 
   return (
     <div className="space-y-3">
-      <div className="rounded-xl border border-indigo-200 bg-indigo-50/60 p-4">
+      <div className="rounded-xl border border-indigo-200 bg-indigo-50/60 p-4 dark:border-indigo-300/25 dark:bg-indigo-400/10">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-indigo-700">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-indigo-700 dark:text-indigo-200">
               Engine suggestion
             </p>
-            <p className="mt-1.5 text-sm font-semibold text-indigo-950">
+            <p className="mt-1.5 text-sm font-semibold text-indigo-950 dark:text-indigo-50">
               {classification?.label || "No classification produced"}
             </p>
-            <p className="mt-1 text-[10px] text-indigo-800/80">
+            <p className="mt-1 text-[10px] text-indigo-800/80 dark:text-indigo-100/75">
               {document.acmg.criteria.length} criteria · engine {document.meta.engineVersion}
             </p>
           </div>
-          <Badge variant="outline" className="border-indigo-300 bg-white/70 text-[9px] text-indigo-700">
+          <Badge variant="outline" className="border-indigo-300 bg-white/70 text-[9px] text-indigo-700 dark:border-indigo-300/40 dark:bg-indigo-400/15 dark:text-indigo-100">
             Advisory only
           </Badge>
         </div>
       </div>
 
       {document.meta.sourcesDisabled.length ? (
-        <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2">
-          <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-amber-700" />
-          <p className="text-[10px] leading-4 text-amber-900">
+        <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2 dark:border-amber-300/25 dark:bg-amber-300/10">
+          <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-amber-700 dark:text-amber-200" />
+          <p className="text-[10px] leading-4 text-amber-900 dark:text-amber-100">
             Not consulted for this run: {document.meta.sourcesDisabled.join(", ")}. Absence of
             evidence from a disabled source is not evidence of absence.
           </p>
@@ -245,9 +245,9 @@ function AcmgPanel({
       ) : null}
 
       {document.meta.warnings.length ? (
-        <div className="rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2">
+        <div className="rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2 dark:border-amber-300/25 dark:bg-amber-300/10">
           {document.meta.warnings.map((warning, index) => (
-            <p key={index} className="text-[10px] leading-4 text-amber-900">
+            <p key={index} className="text-[10px] leading-4 text-amber-900 dark:text-amber-100">
               {warning}
             </p>
           ))}
@@ -265,8 +265,8 @@ function AcmgPanel({
                       variant="outline"
                       className={`font-mono text-[10px] ${
                         criterion.direction === "pathogenic"
-                          ? "border-rose-200 bg-rose-50 text-rose-700"
-                          : "border-emerald-200 bg-emerald-50 text-emerald-700"
+                          ? "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-300/30 dark:bg-rose-400/15 dark:text-rose-200"
+                          : "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-300/30 dark:bg-emerald-400/15 dark:text-emerald-200"
                       }`}
                     >
                       {criterion.baseCode}
@@ -382,9 +382,45 @@ function NarrativeBlocks({ document }: { document: CurationDocument }) {
   );
 }
 
+function SplicePredictorScores({ document }: { document: CurationDocument }) {
+  const { scores } = document;
+  return (
+    <div className="grid gap-4 sm:grid-cols-2">
+      <Card className="shadow-none">
+        <CardContent className="p-4">
+          <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            SpliceAI
+          </p>
+          <table className="w-full">
+            <tbody>
+              <ScoreRow label="Acceptor gain" value={formatNumber(scores.spliceAi.dsAg)} hint={`pos ${scores.spliceAi.dpAg ?? "—"}`} />
+              <ScoreRow label="Acceptor loss" value={formatNumber(scores.spliceAi.dsAl)} hint={`pos ${scores.spliceAi.dpAl ?? "—"}`} />
+              <ScoreRow label="Donor gain" value={formatNumber(scores.spliceAi.dsDg)} hint={`pos ${scores.spliceAi.dpDg ?? "—"}`} />
+              <ScoreRow label="Donor loss" value={formatNumber(scores.spliceAi.dsDl)} hint={`pos ${scores.spliceAi.dpDl ?? "—"}`} />
+            </tbody>
+          </table>
+        </CardContent>
+      </Card>
+      <Card className="shadow-none">
+        <CardContent className="p-4">
+          <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            Pangolin
+          </p>
+          <table className="w-full">
+            <tbody>
+              <ScoreRow label="Splice gain" value={formatNumber(scores.pangolin.dsSg)} hint={`pos ${scores.pangolin.dpSg ?? "—"}`} />
+              <ScoreRow label="Splice loss" value={formatNumber(scores.pangolin.dsSl)} hint={`pos ${scores.pangolin.dpSl ?? "—"}`} />
+            </tbody>
+          </table>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 /**
- * Splicing view: the exon map, the base-level junction alignment, and the engine's
- * prose about the products both of them depict.
+ * Splicing view: predictor scores, the exon map, the base-level junction alignment,
+ * and the engine's prose about the products they depict.
  *
  * The alignment starts collapsed. It is hundreds of nucleotide cells wide and only
  * matters once a reviewer has a specific question about a splice site, whereas the exon
@@ -398,8 +434,12 @@ function SplicingSection({ document }: { document: CurationDocument }) {
     [parsed]
   );
   const blocks = useNarrative(document, SPLICE_NARRATIVE_BLOCKS);
+  const showScores =
+    document.scores.spliceAi.fetched ||
+    document.scores.pangolin.fetched ||
+    document.highlights.spliceApplicable;
 
-  if (!spliceViz && !junction && !blocks.length) {
+  if (!spliceViz && !junction && !blocks.length && !showScores) {
     return (
       <p className="rounded-lg border border-dashed py-6 text-center text-[10px] text-muted-foreground">
         The engine resolved no splicing consequence for this variant.
@@ -409,9 +449,10 @@ function SplicingSection({ document }: { document: CurationDocument }) {
 
   return (
     <div className="space-y-3">
+      {showScores ? <SplicePredictorScores document={document} /> : null}
       {spliceViz ? (
-        <Card className="shadow-none">
-          <CardContent className="p-4">
+        <Card className="min-w-0 shadow-none">
+          <CardContent className="min-w-0 p-4">
             <SpliceMap spliceViz={spliceViz} />
           </CardContent>
         </Card>

@@ -2383,7 +2383,7 @@ export const curationRuns = pgTable(
     caseId: integer("caseId"),
     /** Null for ad-hoc curation of a variant that was never ingested. */
     variantId: integer("variantId"),
-    /** Workbench batch this run belongs to. Null for case-bound triage runs. */
+    /** Workbench batch this run belongs to. Germline VCF cases use one batch per case. */
     batchId: integer("batchId"),
     /** Curator-saved institutional call. Independent of the engine ACMG label. */
     institutionalLabel: varchar("institutionalLabel", { length: 80 }),

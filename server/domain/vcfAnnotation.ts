@@ -1,5 +1,3 @@
-import { maneRefseqForGene } from "./maneRefseq";
-
 /** How an uploaded VCF should enter the annotation step. */
 
 export type AnnotationSource = "vep" | "snpeff";
@@ -206,9 +204,5 @@ export function annotationFromInfo(
           populationAf: null,
           clinvar: null,
         };
-  if (!parsed.transcript || !/^NM_/i.test(parsed.transcript)) {
-    const mane = maneRefseqForGene(parsed.gene);
-    if (mane) parsed.transcript = mane;
-  }
   return parsed;
 }

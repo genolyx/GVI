@@ -134,17 +134,17 @@ export function CurationPanel({
 
       <div className="mb-3 space-y-2">
         {inFlight ? (
-          <div className="flex items-center gap-2 rounded-lg border border-sky-200 bg-sky-50/70 px-3 py-2">
-            <Loader2 className="size-3.5 animate-spin text-sky-700" />
-            <p className="text-[10px] text-sky-900">
+          <div className="flex items-center gap-2 rounded-lg border border-sky-200 bg-sky-50/70 px-3 py-2 dark:border-sky-300/25 dark:bg-sky-300/10">
+            <Loader2 className="size-3.5 animate-spin text-sky-700 dark:text-sky-200" />
+            <p className="text-[10px] text-sky-900 dark:text-sky-100">
               Curation {latest.status} (attempt {latest.attempt}/{latest.maxAttempts}).
             </p>
           </div>
         ) : null}
         {latest?.status === "failed" ? (
-          <div className="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50/70 px-3 py-2">
-            <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-rose-700" />
-            <p className="text-[10px] leading-4 text-rose-900">
+          <div className="flex items-start gap-2 rounded-lg border border-rose-200 bg-rose-50/70 px-3 py-2 dark:border-rose-300/30 dark:bg-rose-400/10">
+            <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-rose-700 dark:text-rose-200" />
+            <p className="text-[10px] leading-4 text-rose-900 dark:text-rose-100">
               Last run failed: {latest.error?.message || "no detail recorded"}
             </p>
           </div>
