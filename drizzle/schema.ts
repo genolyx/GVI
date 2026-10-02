@@ -1093,7 +1093,7 @@ export const variants = pgTable(
     transcript: varchar("transcript", { length: 120 }),
     hgvsC: varchar("hgvsC", { length: 255 }),
     hgvsP: varchar("hgvsP", { length: 255 }),
-    consequence: varchar("consequence", { length: 160 }),
+    consequence: text("consequence"),
     variantType: variantTypeEnum("variantType").notNull(),
     zygosity: varchar("zygosity", { length: 40 }),
     populationAf: numeric("populationAf", { precision: 12, scale: 10 }),
@@ -1101,7 +1101,7 @@ export const variants = pgTable(
     readDepth: integer("readDepth"),
     alternateDepth: integer("alternateDepth"),
     impact: variantImpactEnum("impact").default("UNKNOWN").notNull(),
-    clinvarSignificance: varchar("clinvarSignificance", { length: 160 }),
+    clinvarSignificance: text("clinvarSignificance"),
     reviewStatus: variantReviewStatusEnum("reviewStatus")
       .default("unreviewed")
       .notNull(),

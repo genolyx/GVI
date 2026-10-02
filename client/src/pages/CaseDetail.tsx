@@ -5,6 +5,7 @@ import { StatePanel } from "@/components/StatePanel";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -323,14 +324,21 @@ export default function CaseDetailPage() {
     );
   const item = query.data;
   const draftHasVcf = item.files.some(file => file.kind === "vcf");
-  const applyScope = async (scope: { panelId?: number; genesText?: string }) => {
+  const applyScope = async (scope: {
+    panelId?: number;
+    genesText?: string;
+    maxAf?: number;
+  }) => {
     if (!activeOrganizationId) return;
     const canRun = item.status === "review_ready" || item.status === "failed";
+    const frequencyOnly = scope.panelId == null && !scope.genesText && scope.maxAf != null;
     if (
       canRun &&
       draftHasVcf &&
       !window.confirm(
-        `Replace the panel on ${item.caseNumber} and run the existing VCF again? The panel is the gene list for this run. HPO terms stay on the order and do not remove variants. Stored variants will be replaced.`
+        frequencyOnly
+          ? `Run ${item.caseNumber} again with maximum allele frequency ${scope.maxAf}? The current panel stays. Stored variants will be replaced.`
+          : `Replace the panel on ${item.caseNumber} and run the existing VCF again? The panel is the gene list for this run. HPO terms stay on the order and do not remove variants. Stored variants will be replaced.`
       )
     ) {
       return;
@@ -696,6 +704,8 @@ export default function CaseDetailPage() {
             filters: appliedFilterRows(item.jobs),
           }}
           hpoGenes={item.hpoGenes}
+          panelGenes={item.germlinePanel?.genes ?? []}
+          panelListName={item.germlinePanel?.name ?? ""}
           requestDraft={requestDraft}
           onRequestChange={patch =>
             setRequestDraft(current => ({ ...current, ...patch }))
@@ -972,6 +982,48 @@ type CaseRequestDraft = {
   indication: string;
 };
 
+function PanelGeneList({ name, genes }: { name: string; genes: string[] }) {
+  const [geneQuery, setGeneQuery] = useState("");
+  if (!genes.length) return null;
+  const needle = geneQuery.trim().toLowerCase();
+  const shown = needle
+    ? genes.filter(gene => gene.toLowerCase().includes(needle))
+    : genes;
+  return (
+    <Card className="clinical-card shadow-none lg:col-span-2">
+      <CardHeader>
+        <CardTitle className="font-display text-base">Panel gene list</CardTitle>
+        <p className="text-xs text-muted-foreground">
+          {name ? `${name} · ` : ""}
+          {genes.length.toLocaleString()} {genes.length === 1 ? "gene" : "genes"}. This list is the gene filter for the run.
+        </p>
+      </CardHeader>
+      <CardContent>
+        <label className="grid max-w-sm gap-1.5 text-xs font-medium text-muted-foreground">
+          Search genes
+          <Input
+            aria-label="Search panel genes"
+            value={geneQuery}
+            onChange={event => setGeneQuery(event.target.value)}
+            placeholder="Search genes"
+          />
+        </label>
+        <ul className="mt-4 grid max-h-[28rem] grid-cols-6 gap-x-4 gap-y-1 overflow-y-auto">
+          {shown.length ? (
+            shown.map(gene => (
+              <li key={gene} className="truncate font-mono text-xs" title={gene}>
+                {gene}
+              </li>
+            ))
+          ) : (
+            <li className="col-span-6 text-sm text-muted-foreground">No genes match that search.</li>
+          )}
+        </ul>
+      </CardContent>
+    </Card>
+  );
+}
+
 function HpoGeneList({
   groups,
 }: {
@@ -1120,6 +1172,8 @@ function GermlineOrderSection({
   onRequestChange,
   onSave,
   hpoGenes,
+  panelGenes,
+  panelListName,
   organizationId,
   currentPanel,
   caseStatus,
@@ -1149,18 +1203,23 @@ function GermlineOrderSection({
   onRequestChange: (patch: Partial<CaseRequestDraft>) => void;
   onSave: () => void;
   hpoGenes: Array<{ query: string; id: string; label: string; genes: string[] }>;
+  panelGenes: string[];
+  panelListName: string;
   organizationId: number;
   currentPanel: string | null;
   caseStatus: string;
   hasVcf: boolean;
   applyingScope: boolean;
-  onApplyScope: (scope: { panelId?: number; genesText?: string }) => void;
+  onApplyScope: (scope: { panelId?: number; genesText?: string; maxAf?: number }) => void;
 }) {
   const [scopeFilters, setScopeFilters] =
     useState<CaseVcfFilterValues>(defaultVcfFilters);
   const [scopePanelId, setScopePanelId] = useState("");
   const canRun = caseStatus === "review_ready" || caseStatus === "failed";
-  const scopeReady = Boolean(scopePanelId || scopeFilters.genes.trim());
+  const frequencyText = scopeFilters.maxAf.trim();
+  const scopeReady = Boolean(
+    scopePanelId || scopeFilters.genes.trim() || (frequencyText && hasVcf && canRun)
+  );
   const empty: Record<keyof GermlineOrderInput, string> = {
     ...defaultGermlineOrder,
     service: "",
@@ -1228,15 +1287,37 @@ function GermlineOrderSection({
                 }}
                 onListId={setScopePanelId}
               />
+              <div className="space-y-2">
+                <Label htmlFor="case-rerun-af">Maximum allele frequency</Label>
+                <Input
+                  id="case-rerun-af"
+                  value={scopeFilters.maxAf}
+                  onChange={event =>
+                    setScopeFilters(current => ({ ...current, maxAf: event.target.value }))
+                  }
+                  inputMode="decimal"
+                  placeholder="e.g. 0.05"
+                  className="max-w-xs font-mono"
+                />
+                <p className="text-xs leading-5 text-muted-foreground">
+                  Leave blank to keep the current setting. 0.05 removes variants whose gnomAD frequency is above 5%.
+                </p>
+              </div>
               <Button
                 type="button"
                 disabled={!scopeReady || applyingScope || caseStatus === "queued" || caseStatus === "running"}
-                onClick={() =>
+                onClick={() => {
+                  const maxAf = frequencyText ? Number(frequencyText) : undefined;
+                  if (frequencyText && (maxAf == null || !Number.isFinite(maxAf) || maxAf < 0 || maxAf > 1)) {
+                    toast.error("Maximum allele frequency must be a number from 0 to 1.");
+                    return;
+                  }
                   onApplyScope({
                     panelId: scopePanelId ? Number(scopePanelId) : undefined,
                     genesText: scopeFilters.genes.trim() || undefined,
-                  })
-                }
+                    maxAf,
+                  });
+                }}
               >
                 {applyingScope
                   ? "Applying…"
@@ -1295,6 +1376,7 @@ function GermlineOrderSection({
                 : [["Filters", "No analysis has been submitted"]]
             }
           />
+          <PanelGeneList name={panelListName} genes={panelGenes} />
           <HpoGeneList groups={hpoGenes} />
           <OrderCard
             title="Test type and report pairing"

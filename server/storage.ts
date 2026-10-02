@@ -19,6 +19,7 @@ import {
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import crypto from "node:crypto";
+import type { Readable } from "node:stream";
 
 function getS3Config() {
   const bucket = process.env.AWS_BUCKET;
@@ -146,6 +147,31 @@ function clientForEndpoint(endpoint: string) {
       secretAccessKey: config.secretAccessKey,
     },
   });
+}
+
+/** Same-origin PUT path. The browser uploads here; the server writes to MinIO. */
+export function browserUploadPath(key: string): string {
+  const safe = assertSafeKey(key);
+  return `/api/uploads/${safe.split("/").map(encodeURIComponent).join("/")}`;
+}
+
+export async function storageWriteStream(
+  relKey: string,
+  body: Readable,
+  contentLength: number,
+  contentType = "application/octet-stream"
+): Promise<void> {
+  const { client, bucket } = getClient();
+  const key = assertSafeKey(relKey);
+  await client.send(
+    new PutObjectCommand({
+      Bucket: bucket,
+      Key: key,
+      Body: body,
+      ContentLength: contentLength,
+      ContentType: contentType,
+    })
+  );
 }
 
 export async function storageCreateUploadUrl(

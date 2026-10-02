@@ -42,7 +42,7 @@ import {
   vcfFileForRun,
   VcfAnnotationFailure,
 } from "../domain/vepAnnotate";
-import { variantReingestSet, variantReingestTarget } from "../domain/vcfIngest";
+import { ingestFailureMessage, variantReingestSet, variantReingestTarget } from "../domain/vcfIngest";
 import { hpoGeneGroupsForText, loadHpoIndex, searchHpoTerms } from "../domain/hpoGenes";
 import {
   emptyVcfSelectionLog,
@@ -51,7 +51,7 @@ import {
   vcfFilterSchema,
   type VcfFilterInput,
 } from "../domain/vcfSelection";
-import { storageCreateUploadUrl, storageGetSignedUrl, storagePut } from "../storage";
+import { browserUploadPath, storageCreateUploadUrl, storageGetSignedUrl, storagePut } from "../storage";
 
 const caseStatus = z.enum([
   "draft",
@@ -541,8 +541,7 @@ async function ingestVcfForJob(params: {
     }
   } catch (error) {
     if (stoppedJobIds.has(jobId)) return;
-    const message =
-      error instanceof Error ? error.message : "VCF ingestion failed";
+    const message = ingestFailureMessage(error);
     await db
       .update(analysisJobs)
       .set({ status: "failed", errorMessage: message, completedAt: new Date() })
@@ -873,12 +872,15 @@ export const casesRouter = router({
               genomeBuild: attachedPanel.genomeBuild,
               contentHash: attachedPanel.contentHash,
               geneCount: attachedPanel.genes.length,
+              genes: attachedPanel.genes,
               regionCount: attachedPanel.regions?.length ?? 0,
             }
           : null,
         projectName: projectRows[0]?.name ?? "",
         projectCode: projectRows[0]?.code ?? "",
-        hpoGenes: await hpoGeneGroupsForText(appliedHpo),
+        hpoGenes: await hpoGeneGroupsForText(
+          (clinicalCase.phenotypeText ?? "").trim() || appliedHpo
+        ),
         germlineOrder: germlineOrderRows[0]
           ? {
               testCategory: germlineOrderRows[0].testCategory,
@@ -1564,7 +1566,8 @@ export const casesRouter = router({
       }
       const key = `organizations/${input.organizationId}/cases/${input.caseId}/files/${randomUUID()}-${safeFileName(input.fileName)}`;
       const host = ctx.req.headers.host;
-      return storageCreateUploadUrl(key, Array.isArray(host) ? host[0] : host);
+      const ticket = await storageCreateUploadUrl(key, Array.isArray(host) ? host[0] : host);
+      return { ...ticket, uploadUrl: browserUploadPath(ticket.key) };
     }),
 
   completeUpload: protectedProcedure
@@ -2017,6 +2020,7 @@ export const casesRouter = router({
         caseId: z.number().int().positive(),
         panelId: z.number().int().positive().optional(),
         genesText: z.string().max(500_000).optional(),
+        maxAf: z.number().min(0).max(1).optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -2026,7 +2030,8 @@ export const casesRouter = router({
         "case:edit"
       );
       const genesText = input.genesText?.trim() ?? "";
-      if (input.panelId == null && !genesText) {
+      const changingPanel = input.panelId != null || Boolean(genesText);
+      if (!changingPanel && input.maxAf === undefined) {
         throw new TRPCError({
           code: "BAD_REQUEST",
           message: "Choose a saved panel or enter a gene list.",
@@ -2049,11 +2054,28 @@ export const casesRouter = router({
         });
       }
       const db = await requireDb();
-      let scopeName = "Gene list";
+      let scopeName = clinicalCase.panelName || "Current panel";
+      let geneCount = 0;
+      if (!changingPanel) {
+        const [attached] = await db
+          .select({ name: germlineCasePanels.name, genes: germlineCasePanels.genes })
+          .from(germlineCasePanels)
+          .where(
+            and(
+              eq(germlineCasePanels.organizationId, input.organizationId),
+              eq(germlineCasePanels.caseId, input.caseId)
+            )
+          )
+          .limit(1);
+        if (attached) {
+          scopeName = attached.name;
+          geneCount = attached.genes.length;
+        }
+      }
       let content: GermlinePanelContent = { genes: [], regions: null };
       let panelId: number | null = null;
       let genomeBuild: "GRCh37" | "GRCh38" | null = clinicalCase.referenceBuild;
-      if (input.panelId != null) {
+      if (changingPanel && input.panelId != null) {
         const rows = await db
           .select()
           .from(germlinePanels)
@@ -2081,7 +2103,7 @@ export const casesRouter = router({
         scopeName = panel.name;
         content = { genes: panel.genes, regions: panel.regions };
         genomeBuild = panel.genomeBuild;
-      } else {
+      } else if (changingPanel) {
         try {
           content = { genes: parseGermlineGeneText(genesText), regions: null };
         } catch (error) {
@@ -2091,48 +2113,51 @@ export const casesRouter = router({
           });
         }
       }
-      await db.transaction(async tx => {
-        await tx
-          .delete(germlineCasePanels)
-          .where(
-            and(
-              eq(germlineCasePanels.organizationId, input.organizationId),
-              eq(germlineCasePanels.caseId, input.caseId)
-            )
-          );
-        await tx.insert(germlineCasePanels).values({
-          organizationId: input.organizationId,
-          caseId: input.caseId,
-          panelId,
-          name: scopeName,
-          genes: content.genes,
-          regions: content.regions,
-          genomeBuild,
-          contentHash: germlinePanelHash(content, genomeBuild),
+      if (changingPanel) {
+        await db.transaction(async tx => {
+          await tx
+            .delete(germlineCasePanels)
+            .where(
+              and(
+                eq(germlineCasePanels.organizationId, input.organizationId),
+                eq(germlineCasePanels.caseId, input.caseId)
+              )
+            );
+          await tx.insert(germlineCasePanels).values({
+            organizationId: input.organizationId,
+            caseId: input.caseId,
+            panelId,
+            name: scopeName,
+            genes: content.genes,
+            regions: content.regions,
+            genomeBuild,
+            contentHash: germlinePanelHash(content, genomeBuild),
+          });
+          await tx
+            .update(cases)
+            .set({ panelName: scopeName })
+            .where(
+              and(
+                eq(cases.id, input.caseId),
+                eq(cases.organizationId, input.organizationId)
+              )
+            );
         });
-        await tx
-          .update(cases)
-          .set({ panelName: scopeName })
-          .where(
-            and(
-              eq(cases.id, input.caseId),
-              eq(cases.organizationId, input.organizationId)
-            )
-          );
-      });
+        geneCount = content.genes.length;
+      }
       await writeAuditEvent({
         organizationId: input.organizationId,
         actorUserId: ctx.user.id,
         action: "germline.panel.applied",
         entityType: "case",
         entityId: input.caseId,
-        after: { name: scopeName, panelId, geneCount: content.genes.length },
+        after: { name: scopeName, panelId, geneCount, maxAf: input.maxAf ?? null },
         req: ctx.req,
       });
       const canRun =
         clinicalCase.status === "failed" || clinicalCase.status === "review_ready";
       if (!canRun) {
-        return { name: scopeName, geneCount: content.genes.length, jobId: null };
+        return { name: scopeName, geneCount, jobId: null };
       }
       const [latest] = await db
         .select({ manifest: analysisJobs.manifest })
@@ -2155,7 +2180,7 @@ export const casesRouter = router({
       const vcfFilters: VcfFilterInput = {
         hpo: "",
         genes: extraGenes,
-        maxAf: previous?.maxAf ?? null,
+        maxAf: input.maxAf ?? previous?.maxAf ?? null,
         minQual: previous?.minQual ?? null,
         minGenotypeQuality: previous?.minGenotypeQuality ?? null,
         minDepth: previous?.minDepth ?? null,
@@ -2174,7 +2199,7 @@ export const casesRouter = router({
         referenceBuild: clinicalCase.referenceBuild,
         vcfFilters,
       });
-      return { name: scopeName, geneCount: content.genes.length, jobId: run.jobId };
+      return { name: scopeName, geneCount, jobId: run.jobId };
     }),
 
   stop: protectedProcedure

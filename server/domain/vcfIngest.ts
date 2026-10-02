@@ -35,6 +35,15 @@ export const variantReingestSet = {
   referenceBuild: sql`excluded."referenceBuild"`,
 };
 
+/** Postgres cause, without the SQL text Drizzle attaches to a failed insert. */
+export function ingestFailureMessage(error: unknown): string {
+  const cause =
+    error instanceof Error && error.cause instanceof Error ? error.cause.message.trim() : "";
+  const message = error instanceof Error ? error.message.trim() : "";
+  const text = cause || (message.startsWith("Failed query:") ? "" : message);
+  return (text || "VCF ingestion failed").slice(0, 500);
+}
+
 export const variantReingestTarget = [
   variants.organizationId,
   variants.caseId,

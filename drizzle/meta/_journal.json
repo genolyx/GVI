@@ -169,6 +169,13 @@
       "when": 1790494257077,
       "tag": "0023_annotated_vcf",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1790494257078,
+      "tag": "0024_variant_annotation_text",
+      "breakpoints": true
     }
   ]
 }

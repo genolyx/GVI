@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { browserUploadEndpoint } from "./storage";
+import { browserUploadEndpoint, browserUploadPath } from "./storage";
 
 describe("browserUploadEndpoint", () => {
   const previous = process.env.AWS_ENDPOINT;
@@ -13,6 +13,14 @@ describe("browserUploadEndpoint", () => {
     process.env.AWS_ENDPOINT = "http://localhost:9000";
     expect(browserUploadEndpoint("192.168.123.107:3010")).toBe(
       "http://192.168.123.107:9000"
+    );
+  });
+
+  it("sends browser uploads through the app instead of MinIO", () => {
+    expect(
+      browserUploadPath("organizations/1/cases/57/files/11111111-1111-1111-1111-111111111111-sample.vcf.gz")
+    ).toBe(
+      "/api/uploads/organizations/1/cases/57/files/11111111-1111-1111-1111-111111111111-sample.vcf.gz"
     );
   });
 

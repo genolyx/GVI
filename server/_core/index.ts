@@ -10,6 +10,7 @@ import { serveStatic, setupVite } from "./vite";
 import { registerGatewayAuthRoutes } from "../gatewayAuth";
 import { registerEngineApiRoutes, startCurationReaper } from "../engineApi";
 import { ensureCurationWorker } from "../domain/curationWorker";
+import { registerUploadRoute } from "../uploads";
 import { registerDevAuthRoutes } from "./devAuth";
 import { ENV } from "./env";
 import { startSomaticWorker } from "../domain/somatic/runWorker";
@@ -56,6 +57,7 @@ async function startServer() {
   }
   startSomaticWorker();
   startCivicImportWorker();
+  registerUploadRoute(app);
   // tRPC API
   app.use(
     "/api/trpc",
@@ -78,6 +80,8 @@ async function startServer() {
     console.log(`Port ${preferredPort} is busy, using port ${port} instead`);
   }
 
+  // VCF uploads stream through this process, so a large file can take longer than the default request limit.
+  server.requestTimeout = 60 * 60 * 1000;
   server.listen(port, () => {
     console.log(`Server running on http://localhost:${port}/`);
     // Mount ClinVar and HGMD now, so the first analysis does not sit in Loading.
