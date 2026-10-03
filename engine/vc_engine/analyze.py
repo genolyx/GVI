@@ -19,7 +19,7 @@ import urllib.parse
 from flask import Blueprint, request, jsonify
 from flask import jsonify, request
 from google.genai import types
-from vc_engine.clinvar import _clinvar_cdot_label_from_esummary, _clinvar_coding_hgvs_from_hit, _clinvar_display_sig_from_rcv, _clinvar_geneinfo_matches, _clinvar_genomic_hgvs_from_hit, _clinvar_name_change_class, _clinvar_plp_sig_for_deleted_exon, _clinvar_rcv_any_pathogenic_or_likely, _clinvar_rcv_list_from_hit, _clinvar_sig_from_esummary_obj, _clinvar_variant_id_from_hit, _clinvar_variation_uid_for_pubmed_elink, _fetch_clinvar_aliases, _fetch_clinvar_esummary_map, _fetch_myvariant_clinvar_variant_hit, clinvar_portal_url
+from vc_engine.clinvar import _clinvar_cdot_label_from_esummary, _clinvar_coding_hgvs_from_hit, _clinvar_display_sig_from_rcv, _clinvar_geneinfo_matches, _clinvar_genomic_hgvs_from_hit, _clinvar_name_change_class, _clinvar_plp_sig_for_deleted_exon, _clinvar_rcv_any_pathogenic_or_likely, _clinvar_rcv_list_from_hit, _clinvar_sig_from_esummary_obj, _clinvar_variant_id_from_hit, _clinvar_variation_uid_for_pubmed_elink, _fetch_clinvar_aliases, _fetch_clinvar_esummary_map, _fetch_myvariant_clinvar_variant_hit, clinvar_allele_search_term, clinvar_allele_search_url, clinvar_portal_url
 from vc_engine.gnomad_local import apply_local_gnomad, homozygote_count, homozygote_total, local_gnomad_configured
 from vc_engine.hgmd import _hgmd_ordered_candidate_keys, _merge_hgmd_downstream_hits, _merge_hgmd_skipped_exon_hits, _merge_hgmd_upstream_hits
 from vc_engine.lit_index import search_lit_index
@@ -2177,6 +2177,28 @@ def _append_clinical_overlap_sections(sections, parsed_data):
             ))
 
 
+def _clinvar_vcf_record_same_allele(rec, pos, ref, alt):
+    """True when the ClinVar VCF row is this allele. A spanning neighbor is not."""
+    if rec is None:
+        return False
+    try:
+        if int(rec.pos) != int(pos):
+            return False
+    except (TypeError, ValueError):
+        return False
+    query_ref = str(ref or "").strip().upper()
+    query_alt = str(alt or "").strip().upper()
+    if not query_ref or not query_alt or "," in query_alt:
+        return False
+    record_ref = str(getattr(rec, "ref", "") or "").strip().upper()
+    alts = [
+        str(allele or "").strip().upper()
+        for allele in (getattr(rec, "alts", None) or [])
+        if str(allele or "").strip()
+    ]
+    return record_ref == query_ref and query_alt in alts
+
+
 def _vcf_record_genomic_end(rec):
     try:
         return int(rec.pos) + max(len(rec.ref or ""), 1) - 1
@@ -2294,9 +2316,15 @@ def _resolve_clinvar_from_genomic_locus(
         score = _clinvar_variation_name_score(
             variation_name, effective_gene, target_transcript, c_dot, hgvs_p=hgvs_p
         )
-        if not remote and rec is not None:
-            # The indexed VCF record is the ClinVar answer; do not require an NCBI title.
+        same_allele = _clinvar_vcf_record_same_allele(
+            rec, g0, parsed_data.get("ref"), parsed_data.get("alt")
+        )
+        if same_allele:
+            # Same rule as the variant table: chromosome, position, ref, and alt.
             score = max(score, 100)
+        elif not remote:
+            # A deletion or other allele that merely covers this base is not this variant.
+            continue
         elif score < 40:
             # Same locus + gene + overlapping indel when user asked for a deletion/frameshift
             q_class = _c_dot_change_class(_myvariant_c_dot_tail_norm(c_dot))
@@ -2317,7 +2345,10 @@ def _resolve_clinvar_from_genomic_locus(
     min_accept = 60 if hgvs_p else 40
     if c_dot and _c_dot_requires_exact_allele_match(c_dot):
         min_accept = 100
-        if hgvs_p and best_score >= 70:
+        q_class = _c_dot_change_class(_myvariant_c_dot_tail_norm(c_dot))
+        # Indel HGVS can be an equivalent spelling (c.6732_6734del vs c.6726AGA[2]).
+        # A substitution must be this allele, not the same amino acid on another change.
+        if q_class in ("del", "dup", "ins", "indel") and hgvs_p and best_score >= 70:
             min_accept = 70
     if best_score < min_accept:
         return False
@@ -5261,7 +5292,9 @@ def analyze_variant():
                                                     parsed_data['clinvar_rcv'] = str(rec.id)
                                                 
                                                 # Default search link generation
-                                                parsed_data['clinvar_search_link'] = f"https://www.ncbi.nlm.nih.gov/clinvar/?term={gene}[gene]+AND+{c_dot}"
+                                                parsed_data['clinvar_search_link'] = clinvar_allele_search_url(
+                                                    effective_gene or gene, target_transcript, c_dot
+                                                )
                             except Exception as e:
                                 print(f"Local ClinVar pysam Error: {e}")
                         # HTML Scraper Decoupled. Placed after SpliceAI.
@@ -6918,7 +6951,9 @@ def analyze_variant():
         gs_query = f'"{effective_gene}" "{c_dot}"'
         parsed_data['google_scholar_link'] = f'https://scholar.google.com/scholar?q={urllib.parse.quote(gs_query)}'
         # hgmd_link set after RefSeq synonym / HGMD resolution (prefers MANE c.)
-        parsed_data['clinvar_search_link'] = f'https://www.ncbi.nlm.nih.gov/clinvar/?term={urllib.parse.quote(f"{effective_gene}[gene] AND {c_dot}")}'
+        parsed_data['clinvar_search_link'] = clinvar_allele_search_url(
+            effective_gene, target_transcript, c_dot
+        )
         
         # ClinGen and GeneReviews Link logic — always use curator-entered gene symbol.
         # effective_gene can drift on ambiguous MyVariant/VEP loci (e.g. TRIM32 c.467
@@ -7162,16 +7197,14 @@ def analyze_variant():
         else:
             parsed_data["alternate_transcript_literature"] = []
         _c_dot_core = (c_dot or "").strip()
-        if re.search(
-            r"[cnr]\.\d+(?:_\d+)?(?:dup|del|ins|delins)\b",
-            _c_dot_core,
-            re.I,
-        ):
-            c_search_term = f"{effective_gene}[gene] AND {_c_dot_core}"
-        elif re.search(r"[cnr]\.", _c_dot_core, re.I):
-            c_search_term = f"{effective_gene}[gene] AND {_c_dot_core}"
+        if re.search(r"[cnr]\.", _c_dot_core, re.I):
+            c_search_term = clinvar_allele_search_term(
+                effective_gene, target_transcript, _c_dot_core
+            )
         elif pos_match:
-            c_search_term = f"{effective_gene}[gene] AND c.{pos_match.group(1)}"
+            c_search_term = clinvar_allele_search_term(
+                effective_gene, target_transcript, f"c.{pos_match.group(1)}"
+            )
         else:
             c_search_term = ""
         p_search_term = ""

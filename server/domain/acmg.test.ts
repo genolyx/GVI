@@ -55,6 +55,24 @@ describe("ACMG 2015 combination helper", () => {
     expect(result.conflict).toBe(true);
   });
 
+  it("lets a met pathogenic combination stand when the benign side is only supporting", () => {
+    const result = suggestAcmgClassification(["PVS1", "PM2", "BP4"]);
+    expect(result.classification).toBe("Likely Pathogenic");
+    expect(result.conflict).toBe(false);
+  });
+
+  it("stays VUS when neither side meets a combination", () => {
+    const result = suggestAcmgClassification(["PM2", "BP4"]);
+    expect(result.classification).toBe("VUS");
+    expect(result.conflict).toBe(false);
+  });
+
+  it("keeps a completed benign call when pathogenic evidence does not meet a combination", () => {
+    const result = suggestAcmgClassification(["PVS1", "BA1"]);
+    expect(result.classification).toBe("Benign");
+    expect(result.conflict).toBe(false);
+  });
+
   it("returns VUS when no combination threshold is met", () => {
     expect(suggestAcmgClassification(["PP3"]).classification).toBe("VUS");
   });

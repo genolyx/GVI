@@ -1,13 +1,21 @@
+import { access } from "node:fs/promises";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { parseGeneList } from "@shared/geneList";
-import { FREQUENCY_TRACKS, type FrequencyTrack } from "@shared/germlineFrequency";
+import {
+  FREQUENCY_TRACKS,
+  INTRON_FLANK_BP,
+  UTR_START_FLANK_BP,
+  type FrequencyTrack,
+} from "@shared/germlineFrequency";
 import { geneSetFromMatches, genesForTerms, loadHpoIndex } from "./hpoGenes";
 import { combinedInheritance } from "./frequencyPolicy";
 import { loadOmimCatalog } from "./omimCatalog";
 import { parseVcf, type ParsedVariant } from "./vcf";
 import type { GermlinePanelContent } from "./germlinePanel";
 import { gnomadSiteKey, lookupLocalGnomad, type GnomadSite } from "./gnomadLocal";
+import { clinvarSignificanceForSites } from "./clinvarAllele";
+import { loadMajorLabBenignSites, submissionSummaryPath } from "./clinvarLabs";
 import { applyVcfFilters, dropAboveMaxAf, type FilterReason, type VcfFilters } from "./vcfFilter";
 
 export const vcfFilterSchema = z.object({
@@ -31,6 +39,7 @@ export function withFrequencyTrack(
   return {
     ...filters,
     track,
+    codingOnly: false,
     excludeClinvarBenign: false,
     excludeClinvarVus: false,
   };
@@ -38,14 +47,37 @@ export function withFrequencyTrack(
 
 export type VcfFilterInput = z.infer<typeof vcfFilterSchema>;
 
+function applyClinvarAlleles(
+  variants: ParsedVariant[],
+  bySite: ReadonlyMap<string, string>
+) {
+  for (const variant of variants) {
+    variant.clinvarSignificance = bySite.get(gnomadSiteKey(variant)) ?? null;
+  }
+}
+
 export async function selectVcfRecords(
   text: string,
   referenceBuild: "GRCh37" | "GRCh38",
   filters: VcfFilterInput,
   panel?: GermlinePanelContent | null,
-  lookup: (sites: GnomadSite[]) => Promise<Map<string, number> | null> = lookupLocalGnomad
+  lookup: (sites: GnomadSite[]) => Promise<Map<string, number> | null> = lookupLocalGnomad,
+  majorLabBenign?: ReadonlySet<string>,
+  /** Null leaves the VEP clinical significance in place. Omit to read the local ClinVar VCF. */
+  clinvarBySite?: ReadonlyMap<string, string> | null
 ) {
   const parsed = parseVcf(text, referenceBuild);
+  let clinvarNote: string | null = null;
+  if (clinvarBySite === null) {
+    // Caller asked to keep the significance already written on the variant.
+  } else if (clinvarBySite) {
+    applyClinvarAlleles(parsed, clinvarBySite);
+  } else {
+    const wanted = new Set(parsed.map(variant => gnomadSiteKey(variant)));
+    const matched = await clinvarSignificanceForSites(wanted);
+    if (matched) applyClinvarAlleles(parsed, matched);
+    else clinvarNote = "ClinVar classifications were left as VEP wrote them. The local ClinVar VCF is not installed.";
+  }
   let genes: VcfFilters["genes"] = null;
   let matches: { id: string; label: string; geneCount: number }[] = [];
   let unmatched: string[] = [];
@@ -87,6 +119,19 @@ export async function selectVcfRecords(
   const hpoGenes = hpoGenesToApply(genes, parsed.length, recordsWithoutGene);
   const inheritance = await inheritanceByGene();
   const track = filters.track ?? "carrier";
+  let majorLabNote: string | null = null;
+  let majorLabSites: ReadonlySet<string> = new Set();
+  if (majorLabBenign) {
+    majorLabSites = majorLabBenign;
+  } else if (track !== "none") {
+    try {
+      await access(submissionSummaryPath());
+      majorLabSites = await loadMajorLabBenignSites();
+    } catch {
+      majorLabNote =
+        "Major-laboratory ClinVar submissions were not applied. submission_summary.txt.gz is not next to the ClinVar VCF.";
+    }
+  }
   const filtered = applyVcfFilters(parsed, {
     genes: hpoGenes,
     panelGenes,
@@ -101,9 +146,10 @@ export async function selectVcfRecords(
     excludeClinvarVus: false,
     track,
     inheritance,
+    majorLabBenign: majorLabSites,
   });
   const gnomadFilled = await fillMissingPopulationAf(
-    filtered.kept,
+    [...filtered.kept, ...filtered.held.map(item => item.variant)],
     filters.maxAf,
     referenceBuild,
     lookup
@@ -112,6 +158,8 @@ export async function selectVcfRecords(
     ? dropAboveMaxAf(filtered, filters.maxAf ?? 0, { track, inheritance })
     : filtered;
   const notes: string[] = [];
+  if (clinvarNote) notes.push(clinvarNote);
+  if (majorLabNote) notes.push(majorLabNote);
   if (genes && hpoGenes === null && parsed.length > 0) {
     notes.push(
       `HPO terms were not applied because none of the ${parsed.length.toLocaleString("en-US")} records include a gene symbol.`
@@ -195,8 +243,11 @@ const DROP_ORDER: FilterReason[] = [
   "af",
   "impact",
   "clinvar",
+  "lab",
   "vus",
   "clinvarMix",
+  "intron",
+  "utr",
   "hpo",
   "panel",
 ];
@@ -247,7 +298,9 @@ export function filterTimelineSteps(input: {
       reason: "af",
       label: `gnomAD allele frequency is at most ${input.filters.maxAf}`,
       detail:
-        "A plain ClinVar pathogenic or likely pathogenic call in an autosomal-recessive or X-linked gene stays above this limit. Hereditary cancer keeps that exception for autosomal-recessive genes, plus named founder alleles. Low-penetrance and risk-allele calls follow the limit. A missing frequency is read from the local gnomAD file. A site still missing there is kept.",
+        input.filters.track === "none"
+          ? "Every variant above this frequency is removed. ClinVar class and inheritance are not used. A missing frequency is read from the local gnomAD file. A site still missing there is kept."
+          : "A plain ClinVar pathogenic or likely pathogenic call stays above this limit when the gene is autosomal dominant or autosomal recessive. Carrier and rare-disease orders also keep an X-linked gene. Low-penetrance and risk-allele calls follow the limit. A missing frequency is read from the local gnomAD file. A site still missing there is kept.",
     });
   }
   if ((input.filters.track ?? "carrier") === "carrier") {
@@ -255,7 +308,54 @@ export function filterTimelineSteps(input: {
       reason: "vus",
       label: "ClinVar VUS is removed",
       detail:
-        "Carrier screening removes Uncertain significance. Rare disease and hereditary cancer keep a VUS that is under the frequency limit. Benign and likely benign stay when they are under the limit.",
+        "Carrier screening removes Uncertain significance. Rare disease and hereditary cancer keep a VUS that is under the frequency limit.",
+    });
+  }
+  if ((input.filters.track ?? "carrier") !== "none") {
+    const carrierBenign = (input.filters.track ?? "carrier") === "carrier";
+    enabled.push({
+      reason: "clinvar",
+      label: carrierBenign
+        ? "ClinVar benign is removed when non-coding or homozygous"
+        : "ClinVar benign or likely benign is removed",
+      detail: carrierBenign
+        ? "A Benign or Likely benign call is removed when the site is non-coding, including intronic, or when the genotype is homozygous. A heterozygous coding benign or likely benign call stays."
+        : "Rare disease and hereditary cancer set aside every Benign or Likely benign call. A VUS stays when it is under the frequency limit.",
+    });
+  }
+  if ((input.filters.track ?? "carrier") !== "none") {
+    enabled.push({
+      reason: "lab",
+      label: "Benign or likely benign from a major laboratory",
+      detail:
+        "A submission of Benign or Likely benign from GeneDx, Invitae, Labcorp, Natera, Baylor Genetics, Ambry Genetics, Blueprint Genetics, PreventionGenetics, or Fulgent Genetics removes the variant.",
+    });
+  }
+  if ((input.filters.track ?? "carrier") === "carrier") {
+    enabled.push({
+      reason: "intron",
+      label: "Intronic variant is ClinVar pathogenic or likely pathogenic",
+      detail:
+        "Carrier screening keeps an intronic variant only when ClinVar calls it pathogenic or likely pathogenic. A low-penetrance or risk-allele call is removed.",
+    });
+    enabled.push({
+      reason: "utr",
+      label: "UTR variant is ClinVar pathogenic or likely pathogenic",
+      detail:
+        "Carrier screening keeps a UTR, upstream, or downstream variant only when ClinVar calls it pathogenic or likely pathogenic.",
+    });
+  } else if ((input.filters.track ?? "carrier") !== "none") {
+    enabled.push({
+      reason: "intron",
+      label: `Intronic variant is within ${INTRON_FLANK_BP} bp of the exon`,
+      detail:
+        "A variant farther into the intron is removed. A plain pathogenic or likely pathogenic call beyond that distance can still stay.",
+    });
+    enabled.push({
+      reason: "utr",
+      label: `5' UTR variant is within ${UTR_START_FLANK_BP} bp of the start codon`,
+      detail:
+        "Other 5' UTR variants, the 3' UTR, and upstream or downstream variants are removed. A change that deletes the start codon stays. A plain pathogenic or likely pathogenic call can still stay.",
     });
   }
   if (input.filters.codingOnly) {
@@ -294,9 +394,15 @@ function dropReason(reason: FilterReason, filters: VcfFilterInput): string {
   if (reason === "depth") return `read depth was below ${filters.minDepth}`;
   if (reason === "af") return `allele frequency was above ${filters.maxAf}`;
   if (reason === "impact") return "the consequence was low-impact or modifier";
-  if (reason === "clinvar") return "ClinVar was Benign, Likely benign, or Benign/Likely benign";
+  if (reason === "clinvar")
+    return "ClinVar was Benign or Likely benign on a non-coding site, or the genotype was homozygous";
+  if (reason === "lab")
+    return "GeneDx, Invitae, Labcorp, Natera, Baylor Genetics, Ambry Genetics, Blueprint Genetics, PreventionGenetics, or Fulgent Genetics called it Benign or Likely benign";
   if (reason === "vus") return "ClinVar was Uncertain significance on a carrier screen";
   if (reason === "clinvarMix") return "ClinVar was only VUS with Benign or Likely benign";
+  if (reason === "intron") return `the variant was more than ${INTRON_FLANK_BP} bp into the intron`;
+  if (reason === "utr")
+    return `the variant was in the UTR or outside the transcript, and not within ${UTR_START_FLANK_BP} bp of the start codon`;
   if (reason === "hpo") return "the gene was missing or outside the HPO list";
   return "the variant was outside the gene list or panel";
 }

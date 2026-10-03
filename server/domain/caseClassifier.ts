@@ -134,7 +134,13 @@ export async function enqueueFilteredCaseVariants(args: {
   const rows = await db
     .select({ id: variants.id, gene: variants.gene, hgvsC: variants.hgvsC })
     .from(variants)
-    .where(and(eq(variants.organizationId, args.organizationId), eq(variants.caseId, args.caseId)))
+    .where(
+      and(
+        eq(variants.organizationId, args.organizationId),
+        eq(variants.caseId, args.caseId),
+        isNull(variants.heldReason)
+      )
+    )
     .orderBy(desc(variants.triageScore), variants.id);
 
   const existing = await db

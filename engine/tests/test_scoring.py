@@ -264,7 +264,7 @@ def test_apply_clingen_disease_mechanism_sets_lof_from_score_3():
     assert recessive["disease_mechanism"] == "Unknown"
 
 
-def test_apply_acmg_clingen_hi_30_is_pvs1_with_unknown_mechanism():
+def test_apply_acmg_clingen_hi_30_is_pvs1_without_lookup_caveat():
     out = apply_acmg({
         "consequence": "nonsense",
         "disease_mechanism": "Unknown",
@@ -272,7 +272,7 @@ def test_apply_acmg_clingen_hi_30_is_pvs1_with_unknown_mechanism():
     })
     pvs1 = [c for c in out["criteria"] if c["code"] == "PVS1"]
     assert len(pvs1) == 1
-    assert "Mechanism unknown" in pvs1[0]["desc"]
+    assert "Mechanism unknown" not in pvs1[0]["desc"]
 
 
 def test_apply_acmg_inframe_splice_with_plp_is_pvs1_strong():

@@ -28,6 +28,7 @@ export const variantReingestSet = {
   alternateDepth: sql`excluded."alternateDepth"`,
   impact: sql`excluded."impact"`,
   clinvarSignificance: sql`excluded."clinvarSignificance"`,
+  heldReason: sql`excluded."heldReason"`,
   annotation: sql`excluded."annotation"`,
   chromosome: sql`excluded."chromosome"`,
   position: sql`excluded."position"`,

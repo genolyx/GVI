@@ -362,7 +362,9 @@ def apply_acmg(parsed_data, splice_points=None, nmd_points=None):
                 "type": "pathogenic",
                 "weight": "very_strong",
             })
-        if not lof_is_known_mechanism(parsed_data):
+        # The lookup caveat is only for a gene ClinGen did not score.
+        # Score 3 is loss of function. Any other returned score is still a ClinGen answer.
+        if _clingen_haplo_score_int(parsed_data) is None and not lof_is_known_mechanism(parsed_data):
             for criterion in criteria:
                 if criterion["code"] in ("PVS1", "PVS1_Strong") and "Mechanism unknown" not in criterion["desc"]:
                     criterion["desc"] = criterion["desc"].rstrip(".") + ". Mechanism unknown."

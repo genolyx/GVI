@@ -75,7 +75,7 @@ function lossOfFunctionSentence(doc: CurationDocument, parsed: Parsed): string |
 
   if (lost != null && lost > 0) {
     const kind = (doc.variant.consequence || "null variant").replace(/_/g, " ");
-    return `${kind} removes ${pct(lost)} of the protein${nmd ? `, and ${nmd.charAt(0).toLowerCase()}${nmd.slice(1)}` : ""}.`;
+    return `${kind} removes ${pct(lost)} of the protein${nmd ? `, and ${nmd}` : ""}.`;
   }
 
   return null;
@@ -112,8 +112,9 @@ export function criterionEvidence(doc: CurationDocument, code: string, rationale
 
   if (base === "PVS1" || base === "PM4") {
     const sentence = lossOfFunctionSentence(doc, parsed) || fallback;
-    const mechanism = text(parsed.disease_mechanism).toLowerCase();
-    if (base === "PVS1" && (mechanism === "unknown" || mechanism.startsWith("unknown "))) {
+    const haplo = text(parsed.clingen_haplo_score);
+    const clingenReturned = haplo !== "" && haplo.toUpperCase() !== "N/A";
+    if (base === "PVS1" && !clingenReturned) {
       return `${sentence.replace(/\.\s*$/, "")}. Mechanism unknown — look up.`;
     }
     return sentence;

@@ -1,11 +1,12 @@
 import { OmimFactCells, type OmimFact } from "@/components/OmimFacts";
 import { TableWidthToggle, tableFrameClass, tableWidthClass, type TableWidthMode } from "@/components/TableWidthToggle";
 import { AnalysisLogDialog } from "./AnalysisLogDialog";
-import { clinvarShortLabels } from "@/lib/clinvarLabel";
+import { clinvarRecordUrl, clinvarShortLabels } from "@/lib/clinvarLabel";
 import { EffectLabel } from "@/components/EffectLabel";
 import { alleleDepthLabel, zygosityLabel } from "@/lib/genotype";
 import { classificationTone, entryAction, entryChip, focusClassifierRun, workbenchStatusClass, workbenchStatusLabel } from "./status";
 import { SortHeader, compareSortValues, type SortDirection } from "./sort";
+import { shortCallLabel } from "@shared/curation/institutional";
 import { codingHgvs, displayHgvs, displayTranscript } from "@shared/transcript";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -35,8 +36,11 @@ export type CarrierVariantRow = {
   referenceDepth: number | null;
   alternateDepth: number | null;
   clinvarSignificance: string | null;
+  heldReason?: string | null;
   reviewStatus: string;
   germlineClassification: string | null;
+  institutionalLabel?: string | null;
+  institutionalClass?: string | null;
   diseaseContext: string | null;
   omim?: OmimFact[];
   chromosome: string;
@@ -83,7 +87,34 @@ const CLASS_OPTIONS = [
   "Benign",
 ] as const;
 
-const TABS = ["Variants", "Secondary findings", "PGx", "Review Case", "Gene database"] as const;
+const TABS = ["Variants", "ClinVar filtered", "Secondary findings", "PGx", "Review Case", "Gene database"] as const;
+
+function ClinVarChips({ significance, href }: { significance: string; href: string | null }) {
+  const chips = clinvarShortLabels(significance).map(label => (
+    <Badge key={label} variant="outline" className={cn(entryChip, classificationTone(classificationClass(label)))}>
+      {label}
+    </Badge>
+  ));
+  if (!href) return <span className="inline-flex flex-wrap gap-1">{chips}</span>;
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer noopener"
+      title="Open this call in ClinVar"
+      className="inline-flex flex-wrap gap-1 text-primary underline-offset-2 hover:underline"
+    >
+      {chips}
+    </a>
+  );
+}
+
+function heldReasonLabel(reason: string | null | undefined) {
+  if (reason === "vus") return "ClinVar VUS";
+  if (reason === "lab") return "Major lab benign";
+  if (reason === "benign") return "ClinVar benign";
+  return reason || "";
+}
 
 function isPlp(value: string | null) {
   const text = (value || "").toLowerCase();
@@ -92,8 +123,8 @@ function isPlp(value: string | null) {
 
 function classificationClass(label: string) {
   const text = label.toLowerCase();
-  if (text === "path" || text === "lp" || text.includes("pathogenic")) return "pathogenic";
-  if (text === "benign" || text === "lb" || text.includes("benign")) return "benign";
+  if (text === "p" || text === "path" || text === "lp" || text.includes("pathogenic")) return "pathogenic";
+  if (text === "b" || text === "benign" || text === "lb" || text.includes("benign")) return "benign";
   return "vus";
 }
 
@@ -140,7 +171,7 @@ type VariantSortKey =
   | "af"
   | "clinvar"
   | "acmg"
-  | "tags";
+  | "institutional";
 
 function variantSortValue(
   row: CarrierVariantRow,
@@ -164,6 +195,7 @@ function variantSortValue(
   }
   if (key === "clinvar") return row.clinvarSignificance || "";
   if (key === "acmg") return row.germlineClassification || (runStatus ? workbenchStatusLabel(runStatus) : "");
+  if (key === "institutional") return row.institutionalLabel || "";
   return row.reviewStatus === "unreviewed" ? "" : row.reviewStatus;
 }
 
@@ -243,10 +275,28 @@ export function GermlineCarrierReview({
       },
     }
   );
+  const runHeld = trpc.curation.enqueueVariant.useMutation({
+    onSuccess: async result => {
+      toast.success(result.deduped ? "Already queued." : "Queued for classification.");
+      await classifier.refetch();
+    },
+    onError: err => toast.error(err.message),
+  });
   const enqueueClassifier = trpc.curation.enqueueCase.useMutation({
     onSuccess: async result => {
       toast.success(result.message);
       await Promise.all([classifier.refetch(), utils.variants.list.invalidate()]);
+    },
+    onError: err => toast.error(err.message),
+  });
+  const cancelClassifier = trpc.curation.cancelCase.useMutation({
+    onSuccess: async result => {
+      toast.success(
+        result.cancelled
+          ? `Cancelled ${result.cancelled} waiting variant${result.cancelled === 1 ? "" : "s"}. Any variant already running will finish.`
+          : "Nothing else was waiting. Any variant already running will finish."
+      );
+      await classifier.refetch();
     },
     onError: err => toast.error(err.message),
   });
@@ -271,6 +321,12 @@ export function GermlineCarrierReview({
     row => row.status === "queued" || row.status === "loading" || row.status === "running"
   );
   const queuedCount = classifierRuns.filter(row => row.status === "queued").length;
+  const cancelledCount = classifierRuns.filter(row => row.status === "cancelled").length;
+  const runningCount = classifierRuns.filter(row => row.status === "running" || row.status === "loading").length;
+  const classifiedPercent =
+    classifiedCount + queuedCount + runningCount > 0
+      ? Math.round((classifiedCount / (classifiedCount + queuedCount + runningCount)) * 100)
+      : 0;
   const focusedRun = focusClassifierRun(classifierRuns);
   const focusedVariant = focusedRun?.variantId
     ? variants.find(row => row.id === focusedRun.variantId)
@@ -282,9 +338,6 @@ export function GermlineCarrierReview({
     focusedVariant?.hgvsC || focusedRun?.input?.hgvsC || focusedRun?.hgvsC
   );
   const focusedLabel = focusedRun ? `${focusedGene} ${focusedHgvs}`.trim() : "";
-  const classifiedPercent = classifierRuns.length
-    ? Math.round((classifiedCount / classifierRuns.length) * 100)
-    : 0;
   const save = trpc.germlineReview.save.useMutation({
     onSuccess: () => toast.success("Review saved."),
     onError: err => toast.error(err.message),
@@ -353,25 +406,50 @@ export function GermlineCarrierReview({
     setSelected(
       new Set(
         review.data.selectedVariantIds ??
-          variants.filter(row => isPlp(row.germlineClassification)).map(row => row.id)
+          variants.filter(row => !row.heldReason && isPlp(row.germlineClassification)).map(row => row.id)
       )
     );
   }, [review.data, variants, loading, patientAlias]);
 
+  const reviewVariants = useMemo(
+    () =>
+      variants.filter(
+        row =>
+          !row.heldReason ||
+          Boolean(row.germlineClassification) ||
+          runByVariant.get(row.id) === "succeeded"
+      ),
+    [variants, classifier.data]
+  );
+  const heldVariants = useMemo(
+    () =>
+      variants.filter(
+        row =>
+          Boolean(row.heldReason) &&
+          !row.germlineClassification &&
+          runByVariant.get(row.id) !== "succeeded"
+      ),
+    [variants, classifier.data]
+  );
+  const secondaryCount = secondaryFindingsConsent
+    ? reviewVariants.filter(row => isAcmgSecondaryFindingGene(row.gene)).length
+    : 0;
+  const showingHeld = tab === "ClinVar filtered";
+  const tableVariants = showingHeld ? heldVariants : reviewVariants;
   const genes = useMemo(
     () =>
       Array.from(
-        new Set(variants.map(row => (row.gene || "").toUpperCase()).filter(Boolean))
+        new Set(tableVariants.map(row => (row.gene || "").toUpperCase()).filter(Boolean))
       ).sort(),
-    [variants]
+    [tableVariants]
   );
   const banner = carrierReviewBanner(
-    variants.map(row => ({
+    reviewVariants.map(row => ({
       gene: row.gene,
       classification: row.germlineClassification,
     }))
   );
-  const visible = variants.filter(row => {
+  const visible = tableVariants.filter(row => {
     const query = search.trim().toLowerCase();
     if (query) {
       const haystack = [
@@ -460,34 +538,47 @@ export function GermlineCarrierReview({
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">
         {patientAlias}
-        {panelName ? ` · ${panelName}` : ""} · {variants.length.toLocaleString()} variants
+        {panelName ? ` · ${panelName}` : ""} · {reviewVariants.length.toLocaleString()} variants
         {banner.pathogenic ? ` · ${banner.pathogenic} P/LP` : ""}
         {banner.vus ? ` · ${banner.vus} VUS` : ""}
       </p>
       {classifierActive ? (
-        <button
-          type="button"
-          onClick={() => setLogOpen(true)}
-          className="flex w-full items-center gap-4 rounded-xl border border-sky-400 bg-sky-50 px-4 py-4 text-left text-sky-950 shadow-sm dark:border-sky-300/30 dark:bg-sky-300/10 dark:text-sky-100 dark:shadow-none"
-        >
+        <div className="flex w-full items-center gap-4 rounded-xl border border-sky-400 bg-sky-50 px-4 py-4 text-left text-sky-950 shadow-sm dark:border-sky-300/30 dark:bg-sky-300/10 dark:text-sky-100 dark:shadow-none">
           <Loader2 className="size-6 shrink-0 animate-spin text-sky-700 dark:text-sky-200" />
-          <span className="min-w-0 flex-1">
+          <button type="button" onClick={() => setLogOpen(true)} className="min-w-0 flex-1 text-left">
             <span className="block text-base font-semibold">Classifier running</span>
             <span className="mt-1 block truncate font-mono text-sm">{focusedLabel}</span>
             <span className="mt-1 block text-sm">
-              {classifiedCount} of {classifierRuns.length} classified · {queuedCount} waiting
+              {classifiedCount} classified · {runningCount} running · {queuedCount} waiting
             </span>
             <span className="mt-2 block h-2 overflow-hidden rounded-full bg-sky-200 dark:bg-sky-300/20">
               <span className="block h-full bg-sky-600 dark:bg-sky-300" style={{ width: `${classifiedPercent}%` }} />
             </span>
+          </button>
+          <span className="flex shrink-0 flex-col items-stretch gap-2">
+            {canCurate ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={cancelClassifier.isPending}
+                onClick={() => cancelClassifier.mutate({ organizationId, caseId })}
+              >
+                {cancelClassifier.isPending ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+                Cancel
+              </Button>
+            ) : null}
+            <Button type="button" size="sm" variant="outline" onClick={() => setLogOpen(true)}>
+              Log
+            </Button>
           </span>
-          <span className="shrink-0 text-sm font-medium text-sky-800">Log</span>
-        </button>
+        </div>
       ) : (
       <div className="flex flex-wrap items-center gap-3">
         {classifierRuns.length ? (
           <p className="text-xs text-muted-foreground">
-            Variant classifier: {classifiedCount} of {classifierRuns.length} classified
+            Variant classifier: {classifiedCount} classified
+            {cancelledCount ? ` · ${cancelledCount} cancelled` : ""}
           </p>
         ) : null}
         {classifierRuns.length ? (
@@ -551,12 +642,18 @@ export function GermlineCarrierReview({
               tab === item ? "bg-card text-foreground shadow-sm" : "text-muted-foreground"
             }`}
           >
-            {item}
+            {item === "Variants"
+              ? `Variants (${reviewVariants.length})`
+              : item === "ClinVar filtered"
+                ? `ClinVar filtered (${heldVariants.length})`
+                : item === "Secondary findings"
+                  ? `Secondary findings (${secondaryCount})`
+                  : item}
           </button>
         ))}
       </div>
 
-      {tab === "Variants" || tab === "Secondary findings" ? (
+      {tab === "Variants" || tab === "Secondary findings" || tab === "ClinVar filtered" ? (
         secondary && !secondaryFindingsConsent ? (
           <div className="rounded-xl border border-dashed px-4 py-10 text-center">
             <p className="text-sm font-medium">Secondary findings were not consented</p>
@@ -569,6 +666,11 @@ export function GermlineCarrierReview({
           {secondary ? (
             <p className="text-xs leading-5 text-muted-foreground">
               Consent is on for this case. These are the stored variants whose gene is on the ACMG SF v3.2 list. The new-case checkbox does not pull a second variant set.
+            </p>
+          ) : null}
+          {showingHeld ? (
+            <p className="text-xs leading-5 text-muted-foreground">
+              These passed the panel, frequency, and intron or UTR window. Carrier screening sets aside a ClinVar VUS, a homozygous benign call, or a benign call from a major laboratory. Rare disease and hereditary cancer set aside Benign and Likely benign calls. They are not classified until you press Run.
             </p>
           ) : null}
           <div className="flex flex-wrap items-center gap-2">
@@ -586,7 +688,7 @@ export function GermlineCarrierReview({
             >
               <option value="">All Classifications</option>
               {CLASS_OPTIONS.map(item => (
-                <option key={item}>{item}</option>
+                <option key={item} value={item}>{shortCallLabel(item)}</option>
               ))}
             </select>
             <select
@@ -607,10 +709,10 @@ export function GermlineCarrierReview({
               className="h-10 rounded-lg border border-input bg-background px-3 text-sm"
             >
               <option value="">All ClinVar</option>
-              <option value="Pathogenic">Pathogenic</option>
-              <option value="Likely pathogenic">Likely Pathogenic</option>
+              <option value="Pathogenic">P</option>
+              <option value="Likely pathogenic">LP</option>
               <option value="Uncertain">VUS</option>
-              <option value="Benign">Benign/Likely Benign</option>
+              <option value="Benign">B / LB</option>
             </select>
             <select
               aria-label="VAF filter"
@@ -704,7 +806,7 @@ export function GermlineCarrierReview({
                       ["af", "gnomAD AF"],
                       ["clinvar", "ClinVar"],
                       ["acmg", "ACMG"],
-                      ["tags", "Tags"],
+                      ["institutional", "Institutional"],
                     ] as const
                   ).map(([key, label]) => (
                     <SortHeader
@@ -728,7 +830,13 @@ export function GermlineCarrierReview({
                   </tr>
                 ) : listed.length ? (
                   sortedListed.map(row => (
-                    <tr key={row.id} className="border-t border-border/60">
+                    <tr
+                      key={row.id}
+                      className={cn(
+                        "border-t border-border/60",
+                        selected.has(row.id) && "[&>td]:bg-sky-400/20"
+                      )}
+                    >
                       <td className="px-3 py-2">
                         <Checkbox
                           checked={selected.has(row.id)}
@@ -744,21 +852,13 @@ export function GermlineCarrierReview({
                       </td>
                       <td className="px-3 py-2">{row.gene || "—"}</td>
                       <td className="px-3 py-2">{clippedHgvs(codingHgvs(row.hgvsC))}</td>
-                      <td className="px-3 py-2 align-top">
-                        {clippedHgvs(row.hgvsP)}
-                        {row.consequence ? (
-                          <EffectLabel
-                            value={row.consequence}
-                            className="mt-1 block max-w-[16rem] text-[11px] leading-4 text-muted-foreground"
-                          />
-                        ) : null}
-                      </td>
+                      <td className="px-3 py-2">{clippedHgvs(row.hgvsP)}</td>
                       <td className="px-3 py-2" title={row.transcript || undefined}>
                         {displayTranscript(row.transcript) || "—"}
                       </td>
                       <OmimFactCells items={row.omim} className="px-3 py-2" />
-                      <td className="max-w-[14rem] px-3 py-2 align-top">
-                        <EffectLabel value={row.consequence} className="block text-[12px] leading-4" />
+                      <td className="max-w-[14rem] px-3 py-2">
+                        <EffectLabel value={row.consequence} className="block" />
                       </td>
                       <td className="px-3 py-2" title={zygosityLabel(row.zygosity, row.readDepth, row.alternateDepth).title}>
                         {zygosityLabel(row.zygosity, row.readDepth, row.alternateDepth).label}
@@ -772,21 +872,21 @@ export function GermlineCarrierReview({
                       <td className="px-3 py-2">{formatAf(row.populationAf)}</td>
                       <td className="px-3 py-2" title={row.clinvarSignificance || undefined}>
                         {row.clinvarSignificance && clinvarShortLabels(row.clinvarSignificance).length ? (
-                          <span className="inline-flex flex-wrap gap-1">
-                            {clinvarShortLabels(row.clinvarSignificance).map(label => (
-                              <Badge key={label} variant="outline" className={cn(entryChip, classificationTone(classificationClass(label)))}>
-                                {label}
-                              </Badge>
-                            ))}
-                          </span>
+                          <ClinVarChips
+                            significance={row.clinvarSignificance}
+                            href={showingHeld ? clinvarRecordUrl(row) : null}
+                          />
                         ) : (
                           "—"
                         )}
                       </td>
                       <td className="px-3 py-2">
                         {row.germlineClassification ? (
-                          <Badge variant="outline" className={cn(entryChip, classificationTone(classificationClass(row.germlineClassification)))}>
-                            {row.germlineClassification}
+                          <Badge
+                            variant="outline"
+                            className={cn(entryChip, classificationTone(classificationClass(row.germlineClassification)))}
+                          >
+                            {shortCallLabel(row.germlineClassification)}
                           </Badge>
                         ) : runByVariant.get(row.id) === "queued" || runByVariant.get(row.id) === "loading" || runByVariant.get(row.id) === "running" || runByVariant.get(row.id) === "failed" ? (
                           <Badge variant="outline" className={cn(entryChip, workbenchStatusClass(runByVariant.get(row.id) || ""))}>
@@ -797,12 +897,51 @@ export function GermlineCarrierReview({
                         )}
                       </td>
                       <td className="px-3 py-2">
-                        {row.reviewStatus === "unreviewed" ? "—" : row.reviewStatus}
+                        {row.institutionalLabel ? (
+                          <Badge
+                            variant="outline"
+                            className={cn(entryChip, classificationTone(row.institutionalClass))}
+                          >
+                            {shortCallLabel(row.institutionalLabel)}
+                          </Badge>
+                        ) : (
+                          "—"
+                        )}
                       </td>
                       <td className="px-3 py-2">
-                        <Button type="button" size="sm" variant="outline" className={entryAction} onClick={() => onClassify(row.id)}>
-                          Classify
-                        </Button>
+                        {showingHeld ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className={entryAction}
+                            disabled={
+                              !canCurate ||
+                              runHeld.isPending ||
+                              runByVariant.get(row.id) === "queued" ||
+                              runByVariant.get(row.id) === "loading" ||
+                              runByVariant.get(row.id) === "running"
+                            }
+                            title={heldReasonLabel(row.heldReason)}
+                            onClick={() =>
+                              runHeld.mutate({
+                                organizationId,
+                                variantId: row.id,
+                                runLiterature: false,
+                              })
+                            }
+                          >
+                            {runByVariant.get(row.id) === "queued" ||
+                            runByVariant.get(row.id) === "loading" ||
+                            runByVariant.get(row.id) === "running"
+                              ? "Running"
+                              : "Run"}
+                          </Button>
+                        ) : (
+                          <Button type="button" size="sm" variant="outline" className={entryAction} onClick={() => onClassify(row.id)}>
+                            Classify
+                          </Button>
+                        )}
                       </td>
                     </tr>
                   ))
@@ -811,7 +950,9 @@ export function GermlineCarrierReview({
                     <td colSpan={16} className="px-3 py-6 text-muted-foreground">
                       {secondary
                         ? "None of the stored variants are on the ACMG SF v3.2 list."
-                        : "No variants match these filters."}
+                        : showingHeld
+                          ? "No ClinVar VUS or benign variants were held."
+                          : "No variants match these filters."}
                     </td>
                   </tr>
                 )}

@@ -11,6 +11,7 @@ import { useOrganization } from "@/contexts/OrganizationContext";
 import { formatDateTime } from "@/lib/datetime";
 import { cn } from "@/lib/utils";
 import { trpc } from "@/lib/trpc";
+import { shortCallLabel } from "@shared/curation/institutional";
 import { isSingleVariantBatch } from "@shared/curation/workbench";
 import { codingHgvs, displayHgvs, displayTranscript } from "@shared/transcript";
 import { ArrowLeft, ArrowRight, Loader2 } from "lucide-react";
@@ -786,7 +787,7 @@ export default function WorkbenchHomePage() {
                                 classificationTone(acmg.class)
                               )}
                             >
-                              {acmg.label}
+                              {shortCallLabel(acmg.label)}
                             </Badge>
                           ) : (
                             <span className="text-muted-foreground">—</span>
@@ -801,7 +802,7 @@ export default function WorkbenchHomePage() {
                                 classificationTone(entry.institutionalClass)
                               )}
                             >
-                              {entry.institutionalLabel}
+                              {shortCallLabel(entry.institutionalLabel)}
                             </Badge>
                           ) : (
                             <span className="text-muted-foreground">—</span>

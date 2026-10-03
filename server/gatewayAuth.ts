@@ -5,6 +5,7 @@ import { z } from "zod";
 import { analysisEvents, analysisJobs, cases } from "../drizzle/schema";
 import { writeAuditEvent } from "./domain/audit";
 import { requireDb } from "./domain/tenant";
+import { notifyCase } from "./telegramNotify";
 
 /** Case statuses the gateway may advance; never overwrite a reported case. */
 const GATEWAY_UPDATABLE_CASE_STATUSES = ["queued", "running", "review_ready", "failed"] as const;
@@ -119,6 +120,18 @@ export function registerGatewayAuthRoutes(app: Express) {
             )
           );
       });
+      const previous = job.status;
+      if (input.status === "failed" && previous !== "failed") {
+        void notifyCase(job.organizationId, job.caseId, "failed", input.errorMessage || input.message);
+      } else if (
+        (input.status === "review_ready" || input.status === "completed") &&
+        previous !== "review_ready" &&
+        previous !== "completed"
+      ) {
+        void notifyCase(job.organizationId, job.caseId, "completed");
+      } else if (input.status === "running" && previous !== "running") {
+        void notifyCase(job.organizationId, job.caseId, "running");
+      }
       await writeAuditEvent({
         organizationId: job.organizationId,
         actorUserId: null,

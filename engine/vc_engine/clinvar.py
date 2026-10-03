@@ -27,6 +27,29 @@ def clinvar_portal_url(clinvar_id):
     return f"https://www.ncbi.nlm.nih.gov/clinvar/{s}/"
 
 
+def clinvar_allele_search_term(gene, transcript, change):
+    """HGVS search for this transcript, so a bare c. change cannot open another isoform."""
+    hgvs = (change or "").strip()
+    if not hgvs:
+        return ""
+    tx = (transcript or "").strip()
+    symbol = (gene or "").strip()
+    if tx and symbol:
+        return f"{tx}({symbol}):{hgvs}"
+    if tx:
+        return f"{tx}:{hgvs}"
+    if symbol:
+        return f"{symbol}[gene] AND {hgvs}"
+    return hgvs
+
+
+def clinvar_allele_search_url(gene, transcript, change):
+    term = clinvar_allele_search_term(gene, transcript, change)
+    if not term:
+        return ""
+    return f"https://www.ncbi.nlm.nih.gov/clinvar/?term={urllib.parse.quote(term)}"
+
+
 def _clinvar_multi_vid_search_url(vids):
     """ClinVar web search for one or more Variation IDs (OR query)."""
     clean = []

@@ -27,6 +27,7 @@ import {
 } from "../domain/acmg";
 import type { AmpSuggestion } from "../domain/amp";
 import { writeAuditEvent } from "../domain/audit";
+import { clinvarVariationIdAt } from "../domain/clinvarAllele";
 import {
   institutionalClassForLabel,
   institutionalLabelForAcmg,
@@ -79,7 +80,8 @@ async function recomputeGermlineClassification(
   organizationId: number,
   interpretationId: number,
   variantId: number,
-  runId?: number
+  runId?: number,
+  writeInstitutional = false
 ) {
   const criteria = await db
     .select()
@@ -111,22 +113,24 @@ async function recomputeGermlineClassification(
     );
   const label = institutionalLabelForAcmg(suggestion.classification);
   const cssClass = institutionalClassForLabel(label);
-  const latestRunId = runId
-    ? runId
-    : (
-        await db
-          .select({ id: curationRuns.id })
-          .from(curationRuns)
-          .where(
-            and(
-              eq(curationRuns.organizationId, organizationId),
-              eq(curationRuns.variantId, variantId),
-              eq(curationRuns.status, "succeeded")
+  const latestRunId = !writeInstitutional
+    ? undefined
+    : runId
+      ? runId
+      : (
+          await db
+            .select({ id: curationRuns.id })
+            .from(curationRuns)
+            .where(
+              and(
+                eq(curationRuns.organizationId, organizationId),
+                eq(curationRuns.variantId, variantId),
+                eq(curationRuns.status, "succeeded")
+              )
             )
-          )
-          .orderBy(desc(curationRuns.completedAt))
-          .limit(1)
-      )[0]?.id;
+            .orderBy(desc(curationRuns.completedAt))
+            .limit(1)
+        )[0]?.id;
   if (latestRunId) {
     await db
       .update(curationRuns)
@@ -178,7 +182,7 @@ export const variantsRouter = router({
           ])
           .default("position"),
         sortDirection: z.enum(["asc", "desc"]).default("asc"),
-        limit: z.number().int().min(1).max(500).default(100),
+        limit: z.number().int().min(1).max(8000).default(100),
         offset: z.number().int().min(0).default(0),
       })
     )
@@ -243,6 +247,7 @@ export const variantsRouter = router({
           alternateDepth: variants.alternateDepth,
           impact: variants.impact,
           clinvarSignificance: variants.clinvarSignificance,
+          heldReason: variants.heldReason,
           reviewStatus: variants.reviewStatus,
           triageTier: variants.triageTier,
           triageScore: variants.triageScore,
@@ -252,8 +257,25 @@ export const variantsRouter = router({
           somaticTier: interpretations.somaticTier,
           oncogenicity: interpretations.oncogenicity,
           interpretationStatus: interpretations.status,
+          institutionalLabel: curationRuns.institutionalLabel,
+          institutionalClass: curationRuns.institutionalClass,
         })
         .from(variants)
+        .leftJoin(
+          curationRuns,
+          and(
+            eq(curationRuns.variantId, variants.id),
+            eq(curationRuns.organizationId, variants.organizationId),
+            sql`${curationRuns.id} = (
+              select r.id from curation_runs r
+              where r."variantId" = ${variants.id}
+                and r."organizationId" = ${variants.organizationId}
+                and r.status = 'succeeded'
+              order by r."completedAt" desc nulls last, r.id desc
+              limit 1
+            )`
+          )
+        )
         .leftJoin(
           interpretations,
           and(
@@ -430,9 +452,27 @@ export const variantsRouter = router({
           ? suggestAcmgClassification(metCriteria)
           : null;
 
+      const alleleClinvar = record.variant.clinvarSignificance;
+      const clinvarVariationId = alleleClinvar
+        ? (
+            await clinvarVariationIdAt(
+              record.variant.chromosome,
+              record.variant.position,
+              record.variant.referenceAllele,
+              record.variant.alternateAllele
+            )
+          ).id
+        : null;
       return {
         ...record,
-        evidence,
+        evidence: evidence.filter(
+          item =>
+            !(
+              item.source === "ClinVar" &&
+              item.origin === "engine" &&
+              !alleleClinvar
+            )
+        ),
         interpretations: interpretationRows,
         criteria,
         acmgSuggestion,
@@ -451,6 +491,7 @@ export const variantsRouter = router({
           : null,
         conversations,
         audit,
+        clinvarVariationId,
       };
     }),
 
@@ -1010,7 +1051,8 @@ export const variantsRouter = router({
         input.organizationId,
         interpretation.id,
         input.variantId,
-        input.runId
+        input.runId,
+        true
       );
       await writeAuditEvent({
         organizationId: input.organizationId,

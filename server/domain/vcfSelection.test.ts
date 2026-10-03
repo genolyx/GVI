@@ -29,8 +29,11 @@ const dropped = {
   af: 3,
   impact: 0,
   clinvar: 0,
+  lab: 0,
   vus: 0,
   clinvarMix: 0,
+  intron: 0,
+  utr: 0,
   hpo: 0,
   panel: 0,
 };
@@ -111,8 +114,11 @@ describe("VCF frequency and HPO applicability", () => {
           af: 30,
           impact: 20,
           clinvar: 5,
+          lab: 0,
           vus: 0,
           clinvarMix: 0,
+          intron: 0,
+          utr: 0,
           hpo: 25,
           panel: 0,
         },
@@ -136,8 +142,12 @@ describe("VCF frequency and HPO applicability", () => {
       "FILTER is PASS | 90",
       "gnomAD allele frequency is at most 0.01 | 60",
       "ClinVar VUS is removed | 60",
-      "Consequence is HIGH or MODERATE | 40",
-      "Gene is in the HPO list (458 genes) | 15",
+      "ClinVar benign is removed when non-coding or homozygous | 55",
+      "Benign or likely benign from a major laboratory | 55",
+      "Intronic variant is ClinVar pathogenic or likely pathogenic | 55",
+      "UTR variant is ClinVar pathogenic or likely pathogenic | 55",
+      "Consequence is HIGH or MODERATE | 35",
+      "Gene is in the HPO list (458 genes) | 10",
     ]);
   });
 
@@ -178,7 +188,9 @@ describe("local gnomAD fallback", () => {
         new Map([
           ["8:10610142:G:C", 0.407027],
           ["8:200:A:G", 0.0001],
-        ])
+        ]),
+      new Set(),
+      null
     );
     expect(selection.filtered.kept.map(variant => variant.position)).toEqual([200]);
     expect(selection.filtered.kept[0]?.populationAf).toBe("0.0001");
@@ -193,7 +205,9 @@ describe("local gnomAD fallback", () => {
       "GRCh38",
       openFilters,
       null,
-      async () => new Map([["8:200:A:G", 0]])
+      async () => new Map([["8:200:A:G", 0]]),
+      new Set(),
+      null
     );
     expect(selection.filtered.kept).toHaveLength(1);
     expect(selection.filtered.kept[0]?.populationAf).toBe("0");
@@ -209,7 +223,9 @@ describe("local gnomAD fallback", () => {
       async () => {
         called = true;
         return new Map();
-      }
+      },
+      new Set(),
+      null
     );
     expect(called).toBe(false);
     expect(selection.filtered.kept).toHaveLength(0);

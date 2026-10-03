@@ -1,7 +1,15 @@
 import { parseGeneList } from "@shared/geneList";
 import { describe, expect, it } from "vitest";
 import { parseVcf } from "./vcf";
-import { applyVcfFilters, isClinvarBenignCall, isClinvarBenignVusMix, isClinvarVusCall } from "./vcfFilter";
+import {
+  applyVcfFilters,
+  isClinvarBenignCall,
+  isClinvarBenignVusMix,
+  isClinvarVusCall,
+  isHomozygousGenotype,
+  fivePrimeStartDistance,
+  nearestIntronOffset,
+} from "./vcfFilter";
 
 const VCF = [
   "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE",
@@ -179,6 +187,181 @@ describe("VCF workbench filters", () => {
     expect(rareDisease.kept).toHaveLength(1);
   });
 
+  it("drops a non-coding ClinVar benign call and a homozygous benign call", () => {
+    expect(isHomozygousGenotype("1/1")).toBe(true);
+    expect(isHomozygousGenotype("1|1")).toBe(true);
+    expect(isHomozygousGenotype("0/1")).toBe(false);
+    expect(isHomozygousGenotype("1/0")).toBe(false);
+    expect(isHomozygousGenotype("1")).toBe(false);
+
+    const benignFilters = {
+      genes: null,
+      maxAf: null,
+      minQual: null,
+      minGenotypeQuality: null,
+      minDepth: null,
+      passOnly: false,
+      codingOnly: false,
+      excludeClinvarBenign: false,
+      excludeClinvarVus: false,
+      track: "carrier" as const,
+    };
+    const rows = parseVcf(
+      [
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE",
+        "17\t100\t.\tC\tT\t80\tPASS\tGENE=TP53;HGVSC=c.100-50C>T;IMPACT=MODIFIER;CONSEQUENCE=intron_variant;CLNSIG=Benign\tGT:DP:GQ\t0/1:40:50",
+        "17\t200\t.\tC\tT\t80\tPASS\tGENE=TP53;HGVSC=c.524G>A;IMPACT=MODERATE;CLNSIG=Benign\tGT:DP:GQ\t0/1:40:50",
+        "17\t300\t.\tC\tT\t80\tPASS\tGENE=BRCA1;HGVSC=c.68_69del;IMPACT=HIGH;CLNSIG=Likely_benign\tGT:DP:GQ\t1/1:40:50",
+        "17\t400\t.\tC\tT\t80\tPASS\tGENE=BRCA1;HGVSC=c.200-5C>T;IMPACT=MODIFIER;CLNSIG=Pathogenic\tGT:DP:GQ\t0/1:40:50",
+        "1\t500\t.\tA\tG\t80\tPASS\tGENE=HBB;HGVSC=c.20A>T;IMPACT=MODERATE;CLNSIG=Benign\tGT:DP:GQ\t1/0:40:50",
+        "2\t600\t.\tA\tG\t80\tPASS\tGENE=CFTR;HGVSC=c.1-10A>G;IMPACT=MODIFIER;CONSEQUENCE=intron_variant;CLNSIG=Benign\tGT:DP:GQ\t0/1:40:50",
+      ].join("\n"),
+      "GRCh38"
+    );
+    const result = applyVcfFilters(rows, benignFilters);
+    expect(result.kept.map(row => row.hgvsC)).toEqual([
+      "c.524G>A",
+      "c.200-5C>T",
+      "c.20A>T",
+    ]);
+    expect(result.dropped.clinvar).toBe(3);
+
+    const untyped = applyVcfFilters([rows[0]], { ...benignFilters, track: "none" });
+    expect(untyped.kept).toHaveLength(1);
+    expect(untyped.dropped.clinvar).toBe(0);
+  });
+
+  it("keeps an intronic variant within 20 bp and drops a deeper one", () => {
+    expect(nearestIntronOffset("c.200-2G>A")).toBe(2);
+    expect(nearestIntronOffset("NM_000492.4:c.1066-11A>G")).toBe(11);
+    expect(nearestIntronOffset("c.1056+347805G>A")).toBe(347805);
+    expect(nearestIntronOffset("c.463+128_463+129insAGT")).toBe(128);
+    expect(nearestIntronOffset("c.1177+109_1178-99del")).toBeNull();
+    expect(nearestIntronOffset("c.524G>A")).toBeNull();
+
+    const filters = {
+      genes: null,
+      maxAf: null,
+      minQual: null,
+      minGenotypeQuality: null,
+      minDepth: null,
+      passOnly: false,
+      codingOnly: false,
+      excludeClinvarBenign: false,
+      excludeClinvarVus: false,
+      track: "carrier" as const,
+      inheritance: new Map([["CFTR", "AR"]]),
+    };
+    const rows = parseVcf(
+      [
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE",
+        "7\t100\t.\tA\tG\t80\tPASS\tGENE=CFTR;HGVSC=c.200-2G>A;IMPACT=HIGH;CONSEQUENCE=splice_acceptor_variant&intron_variant\tGT\t0/1",
+        "7\t200\t.\tA\tG\t80\tPASS\tGENE=CFTR;HGVSC=c.1066-11A>G;IMPACT=LOW;CONSEQUENCE=splice_region_variant&intron_variant\tGT\t0/1",
+        "7\t300\t.\tA\tG\t80\tPASS\tGENE=CFTR;HGVSC=c.1066-21A>G;IMPACT=MODIFIER;CONSEQUENCE=intron_variant\tGT\t0/1",
+        "7\t400\t.\tG\tA\t80\tPASS\tGENE=CFTR;HGVSC=c.3718-2477C>T;IMPACT=MODIFIER;CONSEQUENCE=intron_variant;CLNSIG=Pathogenic\tGT\t0/1",
+        "7\t500\t.\tA\tG\t80\tPASS\tGENE=CFTR;HGVSC=c.1177+109_1178-99del;IMPACT=MODIFIER;CONSEQUENCE=intron_variant\tGT\t0/1",
+        "16\t600\t.\tG\tA\t80\tPASS\tGENE=WWOX;HGVSC=c.1056+347805G>A;IMPACT=MODIFIER;CONSEQUENCE=intron_variant\tGT\t0/1",
+      ].join("\n"),
+      "GRCh38"
+    );
+    const result = applyVcfFilters(rows, filters);
+    expect(result.kept.map(row => row.hgvsC)).toEqual(["c.3718-2477C>T"]);
+    expect(result.dropped.intron).toBe(5);
+
+    const rareDisease = applyVcfFilters(rows, { ...filters, track: "rare_disease" });
+    expect(rareDisease.kept.map(row => row.hgvsC)).toEqual([
+      "c.200-2G>A",
+      "c.1066-11A>G",
+      "c.3718-2477C>T",
+      "c.1177+109_1178-99del",
+    ]);
+    expect(rareDisease.dropped.intron).toBe(2);
+
+    const untyped = applyVcfFilters([rows[5]], { ...filters, track: "none" });
+    expect(untyped.kept).toHaveLength(1);
+  });
+
+  it("keeps a 5' UTR variant next to the start codon and drops the rest of the UTR", () => {
+    expect(fivePrimeStartDistance("c.-3A>G")).toBe(3);
+    expect(fivePrimeStartDistance("c.-7_1del")).toBe(0);
+    expect(fivePrimeStartDistance("c.-9_-8insAGGAGG")).toBe(8);
+    expect(fivePrimeStartDistance("c.-20C>G")).toBe(20);
+    expect(fivePrimeStartDistance("c.*10A>G")).toBeNull();
+    expect(fivePrimeStartDistance("c.1A>G")).toBeNull();
+
+    const filters = {
+      genes: null,
+      maxAf: null,
+      minQual: null,
+      minGenotypeQuality: null,
+      minDepth: null,
+      passOnly: false,
+      codingOnly: false,
+      excludeClinvarBenign: false,
+      excludeClinvarVus: false,
+      track: "carrier" as const,
+      inheritance: new Map([["CFTR", "AR"]]),
+    };
+    const rows = parseVcf(
+      [
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE",
+        "1\t100\t.\tA\tG\t80\tPASS\tGENE=H6PD;HGVSC=c.-7_1del;IMPACT=HIGH;CONSEQUENCE=splice_acceptor_variant&5_prime_UTR_variant&intron_variant\tGT\t0/1",
+        "1\t200\t.\tG\tA\t80\tPASS\tGENE=MLYCD;HGVSC=c.-7G>A;IMPACT=MODIFIER;CONSEQUENCE=5_prime_UTR_variant\tGT\t0/1",
+        "1\t300\t.\tC\tG\t80\tPASS\tGENE=PEX5;HGVSC=c.-20C>G;IMPACT=MODIFIER;CONSEQUENCE=5_prime_UTR_variant\tGT\t0/1",
+        "1\t400\t.\tA\tG\t80\tPASS\tGENE=CFTR;HGVSC=c.*10A>G;IMPACT=MODIFIER;CONSEQUENCE=3_prime_UTR_variant;CLNSIG=Pathogenic\tGT\t0/1",
+        "1\t500\t.\tA\tG\t80\tPASS\tGENE=TTN;HGVSC=c.*50A>G;IMPACT=MODIFIER;CONSEQUENCE=3_prime_UTR_variant\tGT\t0/1",
+        "1\t600\t.\tA\tG\t80\tPASS\tGENE=TTN;HGVSC=c.-200A>G;IMPACT=MODIFIER;CONSEQUENCE=upstream_gene_variant\tGT\t0/1",
+        "1\t700\t.\tA\tT\t80\tPASS\tGENE=GAA;HGVSC=c.1A>T;IMPACT=HIGH;CONSEQUENCE=start_lost\tGT\t0/1",
+      ].join("\n"),
+      "GRCh38"
+    );
+    const result = applyVcfFilters(rows, filters);
+    expect(result.kept.map(row => row.hgvsC)).toEqual(["c.*10A>G", "c.1A>T"]);
+    expect(result.dropped.intron).toBe(1);
+    expect(result.dropped.utr).toBe(4);
+
+    const rareDisease = applyVcfFilters(rows, { ...filters, track: "rare_disease" });
+    expect(rareDisease.kept.map(row => row.hgvsC)).toEqual([
+      "c.-7_1del",
+      "c.-7G>A",
+      "c.*10A>G",
+      "c.1A>T",
+    ]);
+
+    const untyped = applyVcfFilters([rows[4]], { ...filters, track: "none" });
+    expect(untyped.kept).toHaveLength(1);
+  });
+
+  it("drops a coding variant a major laboratory called benign", () => {
+    const rows = parseVcf(
+      [
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE",
+        "11\t5227002\t.\tT\tC\t80\tPASS\tGENE=HBB;HGVSC=c.20A>T;IMPACT=MODERATE\tGT\t0/1",
+      ].join("\n"),
+      "GRCh38"
+    );
+    const filters = {
+      genes: null,
+      maxAf: null,
+      minQual: null,
+      minGenotypeQuality: null,
+      minDepth: null,
+      passOnly: false,
+      codingOnly: false,
+      excludeClinvarBenign: false,
+      excludeClinvarVus: false,
+      track: "carrier" as const,
+      majorLabBenign: new Set(["11:5227002:T:C"]),
+    };
+    const result = applyVcfFilters(rows, filters);
+    expect(result.kept).toHaveLength(0);
+    expect(result.dropped.lab).toBe(1);
+
+    const untyped = applyVcfFilters(rows, { ...filters, track: "none" });
+    expect(untyped.kept).toHaveLength(1);
+    expect(untyped.dropped.lab).toBe(0);
+  });
+
   it("keeps a common recessive pathogenic allele and drops the same frequency when it is low penetrance", () => {
     const inheritance = new Map([["HBB", "AR"], ["HFE", "AR"]]);
     const filters = {
@@ -225,6 +408,91 @@ describe("VCF workbench filters", () => {
     );
     expect(result.kept.map(row => row.hgvsC)).toEqual(["c.20A>T", "c.187C>G"]);
     expect(result.dropped.af).toBe(1);
+  });
+
+  it("uses only frequency and quality when no test type is selected", () => {
+    const result = applyVcfFilters(
+      [
+        {
+          ...parsed[0],
+          gene: "HBB",
+          hgvsC: "c.20A>T",
+          populationAf: "0.05",
+          clinvarSignificance: "Pathogenic",
+        },
+        {
+          ...parsed[0],
+          gene: "TULP1",
+          hgvsC: "c.4A>G",
+          populationAf: "0.0001",
+          clinvarSignificance: "Uncertain significance",
+        },
+      ],
+      {
+        genes: null,
+        maxAf: 0.001,
+        minQual: null,
+        minGenotypeQuality: null,
+        minDepth: null,
+        passOnly: false,
+        codingOnly: false,
+        excludeClinvarBenign: false,
+        excludeClinvarVus: false,
+        track: "none",
+        inheritance: new Map([["HBB", "AR"]]),
+      }
+    );
+    expect(result.kept.map(row => row.gene)).toEqual(["TULP1"]);
+    expect(result.dropped.af).toBe(1);
+    expect(result.dropped.vus).toBe(0);
+  });
+
+  it("holds a coding ClinVar VUS or homozygous benign call and leaves deep introns out", () => {
+    const filters = {
+      genes: null,
+      panelGenes: new Set(["TP53", "BRCA1"]),
+      maxAf: 0.001,
+      minQual: null,
+      minGenotypeQuality: null,
+      minDepth: null,
+      passOnly: false,
+      codingOnly: false,
+      excludeClinvarBenign: false,
+      excludeClinvarVus: false,
+      track: "carrier" as const,
+      majorLabBenign: new Set(["17:400:C:T"]),
+    };
+    const rows = parseVcf(
+      [
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tSAMPLE",
+        "17\t100\t.\tC\tT\t80\tPASS\tGENE=TP53;HGVSC=c.524G>A;IMPACT=MODERATE;gnomAD_AF=0.0001;CLNSIG=Uncertain_significance\tGT:DP:GQ\t0/1:40:50",
+        "17\t200\t.\tC\tT\t80\tPASS\tGENE=BRCA1;HGVSC=c.68_69del;IMPACT=HIGH;gnomAD_AF=0.0001;CLNSIG=Likely_benign\tGT:DP:GQ\t1/1:40:50",
+        "17\t300\t.\tC\tT\t80\tPASS\tGENE=TP53;HGVSC=c.100-400C>T;IMPACT=MODIFIER;CONSEQUENCE=intron_variant;gnomAD_AF=0.0001;CLNSIG=Uncertain_significance\tGT:DP:GQ\t0/1:40:50",
+        "17\t400\t.\tC\tT\t80\tPASS\tGENE=BRCA1;HGVSC=c.5266dup;IMPACT=HIGH;gnomAD_AF=0.0001;CLNSIG=Benign\tGT:DP:GQ\t0/1:40:50",
+        "1\t500\t.\tA\tG\t80\tPASS\tGENE=CFTR;HGVSC=c.1521_1523del;IMPACT=MODERATE;gnomAD_AF=0.0001;CLNSIG=Uncertain_significance\tGT:DP:GQ\t0/1:40:50",
+      ].join("\n"),
+      "GRCh38"
+    );
+    const result = applyVcfFilters(rows, filters);
+    expect(result.held.map(item => `${item.reason} ${item.variant.hgvsC}`)).toEqual([
+      "vus c.524G>A",
+      "benign c.68_69del",
+      "lab c.5266dup",
+    ]);
+    expect(result.kept).toHaveLength(0);
+
+    const rareDisease = applyVcfFilters(rows, { ...filters, track: "rare_disease" });
+    expect(rareDisease.kept.map(row => row.hgvsC)).toEqual(["c.524G>A"]);
+    expect(rareDisease.held.map(item => `${item.reason} ${item.variant.hgvsC}`)).toEqual([
+      "benign c.68_69del",
+      "benign c.5266dup",
+    ]);
+    const cancer = applyVcfFilters(
+      [{ ...rows[0], clinvarSignificance: "Uncertain significance" }],
+      { ...filters, track: "hereditary_cancer", majorLabBenign: new Set() }
+    );
+    expect(cancer.kept).toHaveLength(1);
+    expect(cancer.held).toHaveLength(0);
   });
 
   it("reads a panel file and a comma-separated list as gene symbols", () => {

@@ -118,10 +118,11 @@ export function isNamedCancerFounder(variant: AlleleIdentity): boolean {
   return matchesNamed(variant, CANCER_FOUNDERS);
 }
 
-function recessiveExemption(inheritance: string, track: FrequencyTrack): boolean {
+function inheritanceExemption(inheritance: string, track: FrequencyTrack): boolean {
   const parts = new Set(inheritance.split("/").filter(Boolean));
-  if (track === "hereditary_cancer") return parts.has("AR");
-  return parts.has("AR") || parts.has("X-linked");
+  if (parts.has("AD") || parts.has("AR")) return true;
+  if (track === "hereditary_cancer") return false;
+  return parts.has("X-linked");
 }
 
 /**
@@ -132,10 +133,11 @@ export function keepsAtAnyFrequency(
   variant: AlleleIdentity,
   context: FrequencyContext
 ): boolean {
+  if (context.track === "none") return false;
   if (context.track === "hereditary_cancer" && isNamedCancerFounder(variant)) return true;
   if (isReducedPenetranceCall(variant.clinvarSignificance)) return false;
   if (isNamedReducedPenetrance(variant)) return false;
   if (!isPlainPathogenicCall(variant.clinvarSignificance)) return false;
   const inheritance = context.inheritance.get((variant.gene || "").trim().toUpperCase()) ?? "";
-  return recessiveExemption(inheritance, context.track);
+  return inheritanceExemption(inheritance, context.track);
 }

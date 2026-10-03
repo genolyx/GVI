@@ -8,6 +8,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { EngineMarkup } from "@/lib/engineMarkup";
 import { trpc } from "@/lib/trpc";
 import type { CurationDocument } from "@shared/curation/document";
+import { hgmdPs4Check } from "@shared/curation/hgmdPs4";
 import { criteriaWithSavedReview } from "@shared/curation/savedCriteria";
 import { criteriaWithSpliceReview, spliceReviewCriterion } from "@shared/curation/spliceAcmg";
 import {
@@ -224,6 +225,13 @@ function AcmgPanel({
     return criteriaWithSavedReview(withSplice, accept?.criteria);
   }, [document, accept?.criteria]);
   const splice = spliceReviewCriterion(document.engine.parsedData);
+  const ps4Check = hgmdPs4Check(
+    document.engine.parsedData.hgmd_local,
+    document.engine.parsedData.hgmd_excel_pmids
+  );
+  const ps4Met =
+    criteria.some(item => item.baseCode === "PS4") ||
+    accept?.criteria?.some(item => item.code === "PS4" && item.state === "met");
   const splicePending = Boolean(
     splice &&
       !document.acmg.criteria.some(item => item.baseCode === splice.code || item.code === splice.engineCode) &&
@@ -370,6 +378,21 @@ function AcmgPanel({
             The engine applied no ACMG criteria to this variant.
           </p>
         )}
+        {ps4Check && !ps4Met ? (
+          <Card className="border-dashed border-sky-400 bg-sky-400/10 shadow-none">
+            <CardContent className="p-3">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <Badge variant="outline" className="border-sky-400 font-mono text-[10px] text-sky-800 dark:text-sky-200">
+                  PS4
+                </Badge>
+                <Badge variant="secondary" className="text-[9px]">Check</Badge>
+              </div>
+              <p className="mt-2 text-[11px] leading-5 text-sky-900 dark:text-sky-100">
+                Suggestive. {ps4Check.note} It is not in the classification until you apply it.
+              </p>
+            </CardContent>
+          </Card>
+        ) : null}
       </div>
     </div>
   );

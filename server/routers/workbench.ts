@@ -16,6 +16,7 @@ import { checkHumanGeneSymbol } from "../domain/geneSymbol";
 import { loadOmimCatalog, omimForGene } from "../domain/omimCatalog";
 import { requireDb, requireOrganizationPermission } from "../domain/tenant";
 import { lookupVariantIdentity } from "../domain/variantIdentity";
+import { notifyGvc, variantSubject } from "../telegramNotify";
 
 const orgInput = z.object({ organizationId: z.number().int().positive() });
 
@@ -501,6 +502,7 @@ export const workbenchRouter = router({
         after: { batchId: input.batchId, gene: input.gene, hgvsC: input.hgvsC },
         req: ctx.req,
       });
+      notifyGvc(variantSubject(intake), "registered");
       return { id, batchId: input.batchId, reused: null };
     }),
 
@@ -518,6 +520,7 @@ export const workbenchRouter = router({
         input: intake,
       });
       if (copied) {
+        notifyGvc(variantSubject(intake), "completed");
         await writeAuditEvent({
           organizationId: input.organizationId,
           actorUserId: ctx.user.id,
@@ -546,6 +549,7 @@ export const workbenchRouter = router({
         after: { batchId: batch.id, gene: input.gene, hgvsC: input.hgvsC, single: true },
         req: ctx.req,
       });
+      notifyGvc(variantSubject(intake), "registered");
       try {
         ensureCurationWorker();
       } catch (error) {
@@ -563,7 +567,7 @@ export const workbenchRouter = router({
     .input(orgInput.extend({ batchId: z.number().int().positive() }))
     .mutation(async ({ ctx, input }) => {
       await requireOrganizationPermission(ctx.user.id, input.organizationId, "curation:run");
-      await requireBatch(input.organizationId, input.batchId);
+      const batch = await requireBatch(input.organizationId, input.batchId);
       const db = await requireDb();
       const released = await db
         .update(curationRuns)
@@ -586,6 +590,9 @@ export const workbenchRouter = router({
           code: "PRECONDITION_FAILED",
           message: "Nothing to run. Add a variant, or wait for the one already running.",
         });
+      }
+      if (!batch.name.startsWith("Case ") && !isSingleVariantBatch(batch.name)) {
+        notifyGvc(batch.name, "running");
       }
       try {
         const worker = ensureCurationWorker();
@@ -613,10 +620,13 @@ export const workbenchRouter = router({
     .input(orgInput.extend({ batchId: z.number().int().positive() }))
     .mutation(async ({ ctx, input }) => {
       await requireOrganizationPermission(ctx.user.id, input.organizationId, "curation:run");
-      await requireBatch(input.organizationId, input.batchId);
+      const batch = await requireBatch(input.organizationId, input.batchId);
       const released = await requeueSucceeded(input.organizationId, eq(curationRuns.batchId, input.batchId));
       if (!released.length) {
         throw new TRPCError({ code: "PRECONDITION_FAILED", message: "This batch has no finished variants to re-run." });
+      }
+      if (!batch.name.startsWith("Case ") && !isSingleVariantBatch(batch.name)) {
+        notifyGvc(batch.name, "running");
       }
       return startRequeue(input.organizationId, ctx.user.id, released, ctx.req);
     }),

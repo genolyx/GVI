@@ -1,4 +1,5 @@
 import type { CurationDocument } from "@shared/curation/document";
+import { hgmdPs4Check } from "@shared/curation/hgmdPs4";
 import { useEffect, useRef, useState } from "react";
 
 type AnalyzeResult = {
@@ -22,7 +23,7 @@ const SCRIPTS = [
   "/samvc/splice-viz.js?v=exon-teal",
   "/samvc/junction-align-viz.js?v=base-letters",
   "/samvc/copy-paste-builder.js",
-  "/samvc/classifier-parsed-panel.js?v=logic-evidence-19",
+  "/samvc/classifier-parsed-panel.js?v=ps4-hgmd-1",
 ];
 
 let scriptsPromise: Promise<void> | null = null;
@@ -61,8 +62,11 @@ function loadSamVcScripts() {
 }
 
 function analyzeResult(document: CurationDocument): AnalyzeResult {
+  const parsed_data = { ...document.engine.parsedData };
+  const ps4Check = hgmdPs4Check(parsed_data.hgmd_local, parsed_data.hgmd_excel_pmids);
+  if (ps4Check) parsed_data.ps4_hgmd_check = ps4Check.note;
   return {
-    parsed_data: document.engine.parsedData,
+    parsed_data,
     results_acmg: document.engine.resultsAcmg,
     results_custom: document.engine.resultsCustom,
     literature: document.engine.literature,
@@ -99,10 +103,16 @@ export function SamVcPanel({ document }: { document: CurationDocument }) {
         const gene = (result.effective_gene || document.variant.gene || "").toUpperCase();
         if (profileRef.current) {
           let summary = result.gene_summary || "";
-          summary = summary.replace(
-            "Mechanism treated as <b>Unknown</b> for PVS1.",
-            "Mechanism unknown — look up.",
-          );
+          const haplo = String(result.parsed_data?.clingen_haplo_score ?? "").trim();
+          const clingenScore = haplo && haplo.toUpperCase() !== "N/A" ? Number.parseInt(haplo, 10) : null;
+          const placeholder = "Mechanism treated as <b>Unknown</b> for PVS1.";
+          if (clingenScore === 3) {
+            summary = summary.replace(placeholder, "Loss of function (ClinGen haploinsufficiency score 3).");
+          } else if (clingenScore == null || Number.isNaN(clingenScore)) {
+            summary = summary.replace(placeholder, "Mechanism unknown — look up.");
+          } else {
+            summary = summary.replace(placeholder, `ClinGen haploinsufficiency score ${haplo}.`);
+          }
           profileRef.current.innerHTML = summary
             ? `<div class="gene-profile-header">Gene Profile: ${gene}</div><div class="gene-profile-content">${summary}</div>`
             : "";

@@ -1,5 +1,5 @@
 import { TRPCError } from "@trpc/server";
-import { and, asc, count, desc, eq, inArray, like, or } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, isNull, like, or } from "drizzle-orm";
 import type { Request } from "express";
 import { createHash, randomUUID } from "node:crypto";
 import { gunzipSync } from "node:zlib";
@@ -23,12 +23,13 @@ import {
 import { protectedProcedure, router } from "../_core/trpc";
 import { writeAuditEvent } from "../domain/audit";
 import { requireDb, requireOrganizationPermission } from "../domain/tenant";
-import { frequencyTrackForOrder } from "@shared/germlineFrequency";
+import { FREQUENCY_TRACKS } from "@shared/germlineFrequency";
 import {
   germlineOrderRow,
   germlineOrderSchema,
 } from "@shared/germlineOrder";
 import { classifierQueueMessage, enqueueFilteredCaseVariants } from "../domain/caseClassifier";
+import { notifyCase, notifyGvc } from "../telegramNotify";
 import { runTriagePass } from "../domain/triagePass";
 import {
   germlinePanelHash,
@@ -45,6 +46,7 @@ import {
 } from "../domain/vepAnnotate";
 import { ingestFailureMessage, variantReingestSet, variantReingestTarget } from "../domain/vcfIngest";
 import { hpoGeneGroupsForText, loadHpoIndex, searchHpoTerms } from "../domain/hpoGenes";
+import { resolveGermlineScope } from "../domain/geneScope";
 import {
   emptyVcfSelectionLog,
   selectVcfRecords,
@@ -114,23 +116,35 @@ async function requireCase(organizationId: number, caseId: number) {
   return rows[0];
 }
 
-async function frequencyTrackForCase(organizationId: number, caseId: number) {
+async function germlineFiltersForRun(
+  organizationId: number,
+  caseId: number,
+  purpose: "germline" | "somatic",
+  filters: VcfFilterInput | null
+): Promise<VcfFilterInput | null> {
+  if (purpose !== "germline") return filters;
   const db = await requireDb();
-  const rows = await db
-    .select({
-      testCategory: germlineOrderDetails.testCategory,
-      packageCode: germlineOrderDetails.packageCode,
-      otherTestType: germlineOrderDetails.otherTestType,
-    })
-    .from(germlineOrderDetails)
+  const [panelRow] = await db
+    .select({ genes: germlineCasePanels.genes, regions: germlineCasePanels.regions })
+    .from(germlineCasePanels)
     .where(
       and(
-        eq(germlineOrderDetails.organizationId, organizationId),
-        eq(germlineOrderDetails.caseId, caseId)
+        eq(germlineCasePanels.organizationId, organizationId),
+        eq(germlineCasePanels.caseId, caseId)
       )
     )
     .limit(1);
-  return frequencyTrackForOrder(rows[0] ?? {});
+  const [caseRow] = await db
+    .select({ phenotypeText: cases.phenotypeText })
+    .from(cases)
+    .where(and(eq(cases.id, caseId), eq(cases.organizationId, organizationId)))
+    .limit(1);
+  return resolveGermlineScope({
+    purpose,
+    panel: panelRow,
+    filters,
+    phenotypeText: caseRow?.phenotypeText,
+  });
 }
 
 async function startOriginalVcfRun(args: {
@@ -158,6 +172,12 @@ async function startOriginalVcfRun(args: {
       message: "A VCF file is required",
     });
   }
+  const vcfFilters = await germlineFiltersForRun(
+    organizationId,
+    caseId,
+    args.purpose,
+    args.vcfFilters
+  );
   await db
     .delete(variants)
     .where(
@@ -178,7 +198,7 @@ async function startOriginalVcfRun(args: {
       storageKey: file.storageKey,
       sha256: file.sha256,
     })),
-    vcfFilters: args.vcfFilters,
+    vcfFilters,
   };
   const jobId = await db.transaction(async tx => {
     const result = await tx
@@ -231,7 +251,7 @@ async function startOriginalVcfRun(args: {
     vcfFile,
     referenceBuild: args.referenceBuild,
     purpose: args.purpose,
-    vcfFilters: args.vcfFilters,
+    vcfFilters,
   }).catch(error => {
     console.error("[vcf_ingest] background rerun failed", { caseId, jobId, error });
   });
@@ -282,10 +302,15 @@ async function ingestVcfForJob(params: {
     vcfFile,
     referenceBuild,
     purpose,
-    vcfFilters,
   } = params;
   const db = await requireDb();
   try {
+    const vcfFilters = await germlineFiltersForRun(
+      organizationId,
+      caseId,
+      purpose,
+      params.vcfFilters ?? null
+    );
     const signedUrl = await storageGetSignedUrl(vcfFile.storageKey);
     const response = await fetch(signedUrl);
     if (!response.ok)
@@ -309,6 +334,7 @@ async function ingestVcfForJob(params: {
       )
       .returning({ id: analysisJobs.id });
     if (!started.length || stoppedJobIds.has(jobId)) return;
+    void notifyCase(organizationId, caseId, "running");
     await db
       .update(cases)
       .set({ status: "running" })
@@ -470,10 +496,15 @@ async function ingestVcfForJob(params: {
         lines
       );
     }
+    const held = selection?.filtered.held ?? [];
+    const heldNote = held.length
+      ? ` ${held.length.toLocaleString()} ClinVar VUS or benign variant(s) were saved for review and were not queued.`
+      : "";
     const keptNote = selection
-      ? ` Kept ${parsed.length.toLocaleString()} of ${selection.parsedCount.toLocaleString()} after the filters that could be applied.${selection.notes.length ? ` ${selection.notes.join(" ")}` : ""}`
+      ? ` Kept ${parsed.length.toLocaleString()} of ${selection.parsedCount.toLocaleString()} after the filters that could be applied.${heldNote}${selection.notes.length ? ` ${selection.notes.join(" ")}` : ""}`
       : "";
     if (stoppedJobIds.has(jobId)) return;
+    let completed = false;
     await db.transaction(async tx => {
       for (let offset = 0; offset < parsed.length; offset += 500) {
         await tx
@@ -481,6 +512,23 @@ async function ingestVcfForJob(params: {
           .values(
             parsed.slice(offset, offset + 500).map(variant => ({
               ...variantInsertRow(variant),
+              heldReason: null,
+              organizationId,
+              caseId,
+            }))
+          )
+          .onConflictDoUpdate({
+            target: [...variantReingestTarget],
+            set: variantReingestSet,
+          });
+      }
+      for (let offset = 0; offset < held.length; offset += 500) {
+        await tx
+          .insert(variants)
+          .values(
+            held.slice(offset, offset + 500).map(item => ({
+              ...variantInsertRow(item.variant),
+              heldReason: item.reason,
               organizationId,
               caseId,
             }))
@@ -506,6 +554,7 @@ async function ingestVcfForJob(params: {
         )
         .returning({ id: analysisJobs.id });
       if (!finished.length) return;
+      completed = true;
       await tx.insert(analysisEvents).values({
         organizationId,
         jobId,
@@ -524,6 +573,7 @@ async function ingestVcfForJob(params: {
           )
         );
     });
+    if (completed) void notifyCase(organizationId, caseId, "completed");
     if (purpose === "germline") {
       try {
         await runTriagePass(organizationId, caseId);
@@ -593,6 +643,7 @@ async function ingestVcfForJob(params: {
           inArray(cases.status, ["queued", "running"])
         )
       );
+    void notifyCase(organizationId, caseId, "failed", message);
   } finally {
     stoppedJobIds.delete(jobId);
   }
@@ -778,7 +829,8 @@ export const casesRouter = router({
             .where(
               and(
                 eq(variants.organizationId, input.organizationId),
-                eq(variants.caseId, input.caseId)
+                eq(variants.caseId, input.caseId),
+                isNull(variants.heldReason)
               )
             ),
           db
@@ -1332,6 +1384,7 @@ export const casesRouter = router({
       });
       caseId = created.caseId;
       sampleIds = created.sampleIds;
+      notifyGvc(input.caseNumber, "registered");
       } catch (error) {
         if (!caseNumberTaken(error)) throw error;
         const existing = await db
@@ -1754,10 +1807,16 @@ export const casesRouter = router({
           });
         }
       }
+      const previewFilters = await resolveGermlineScope({
+        purpose: "germline",
+        panel: panelScope,
+        filters: input,
+        phenotypeText: input.hpo,
+      });
       const result = await selectVcfRecords(
         input.vcfText,
         input.referenceBuild,
-        input,
+        previewFilters ?? input,
         panelScope
       );
       return {
@@ -1849,14 +1908,22 @@ export const casesRouter = router({
           message: "A VCF file is required",
         });
       }
+      if (clinicalCase.purpose === "germline" && !input.vcfFilters?.track) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Choose a filter test type before running this VCF.",
+        });
+      }
       const idempotencyKey = randomUUID();
       const pipeline = "vcf_ingest" as const;
-      const submittedFilters = input.vcfFilters
-        ? withFrequencyTrack(
-            input.vcfFilters,
-            await frequencyTrackForCase(input.organizationId, input.caseId)
-          )
-        : null;
+      const submittedFilters = await germlineFiltersForRun(
+        input.organizationId,
+        input.caseId,
+        clinicalCase.purpose,
+        input.vcfFilters?.track
+          ? withFrequencyTrack(input.vcfFilters, input.vcfFilters.track)
+          : null
+      );
       const manifest = {
         schemaVersion: "1.0",
         serviceCode: "gvi_vcf_ingest",
@@ -2047,7 +2114,12 @@ export const casesRouter = router({
         caseId: z.number().int().positive(),
         panelId: z.number().int().positive().optional(),
         genesText: z.string().max(500_000).optional(),
-        maxAf: z.number().min(0).max(1).optional(),
+        maxAf: z.number().min(0).max(1).nullable().optional(),
+        minQual: z.number().min(0).max(1_000_000).nullable().optional(),
+        minGenotypeQuality: z.number().min(0).max(100).nullable().optional(),
+        minDepth: z.number().int().min(0).max(100_000).nullable().optional(),
+        passOnly: z.boolean().optional(),
+        track: z.enum(FREQUENCY_TRACKS).optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -2058,7 +2130,14 @@ export const casesRouter = router({
       );
       const genesText = input.genesText?.trim() ?? "";
       const changingPanel = input.panelId != null || Boolean(genesText);
-      if (!changingPanel && input.maxAf === undefined) {
+      const changingFilters =
+        input.maxAf !== undefined ||
+        input.minQual !== undefined ||
+        input.minGenotypeQuality !== undefined ||
+        input.minDepth !== undefined ||
+        input.passOnly !== undefined ||
+        input.track !== undefined;
+      if (!changingPanel && !changingFilters) {
         throw new TRPCError({
           code: "BAD_REQUEST",
           message: "Choose a saved panel or enter a gene list.",
@@ -2203,21 +2282,30 @@ export const casesRouter = router({
           )
         : null;
       const previous = stored?.success ? stored.data : null;
+      if (!input.track) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Choose a filter test type before running this VCF.",
+        });
+      }
       const extraGenes = input.panelId != null ? genesText : "";
       const vcfFilters = withFrequencyTrack(
         {
           hpo: "",
           genes: extraGenes,
-          maxAf: input.maxAf ?? previous?.maxAf ?? null,
-          minQual: previous?.minQual ?? null,
-          minGenotypeQuality: previous?.minGenotypeQuality ?? null,
-          minDepth: previous?.minDepth ?? null,
-          passOnly: previous?.passOnly ?? true,
-          codingOnly: previous?.codingOnly ?? true,
+          maxAf: input.maxAf !== undefined ? input.maxAf : previous?.maxAf ?? null,
+          minQual: input.minQual !== undefined ? input.minQual : previous?.minQual ?? null,
+          minGenotypeQuality:
+            input.minGenotypeQuality !== undefined
+              ? input.minGenotypeQuality
+              : previous?.minGenotypeQuality ?? null,
+          minDepth: input.minDepth !== undefined ? input.minDepth : previous?.minDepth ?? null,
+          passOnly: input.passOnly ?? previous?.passOnly ?? true,
+          codingOnly: false,
           excludeClinvarBenign: false,
           excludeClinvarVus: false,
         },
-        await frequencyTrackForCase(input.organizationId, input.caseId)
+        input.track
       );
       const run = await startOriginalVcfRun({
         organizationId: input.organizationId,
@@ -2312,6 +2400,7 @@ export const casesRouter = router({
           });
         }
       });
+      void notifyCase(input.organizationId, input.caseId, "failed", message);
       await writeAuditEvent({
         organizationId: input.organizationId,
         actorUserId: ctx.user.id,

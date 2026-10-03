@@ -11,6 +11,7 @@ import {
   ENGINE_HTML_KEYS,
   type CurationDocument,
 } from "../../shared/curation/document";
+import { alignClinvarClaim } from "./clinvarClaim";
 import { requireDb } from "./tenant";
 
 /**
@@ -105,11 +106,18 @@ function engineEvidence(document: CurationDocument) {
       UniProt: "uniprot_link",
       Ensembl: null,
     }[source];
+    let url = urlKey ? ((parsed[urlKey] as string) || null) : null;
+    if (source === "ClinVar") {
+      const variationId = String(parsed.clinvar_rcv || "").trim();
+      // A search with no variation id is not a citation. Nearby records are not this allele.
+      if (!/^\d+$/.test(variationId) || /not found in public databases/i.test(excerpt)) continue;
+      url = `https://www.ncbi.nlm.nih.gov/clinvar/variation/${variationId}/`;
+    }
     rows.push({
       source,
       title: `${source}: ${document.variant.gene} ${document.variant.hgvsC}`,
       excerpt,
-      url: urlKey ? ((parsed[urlKey] as string) || null) : null,
+      url,
       direction: "neutral",
       payload: { engineKey: key },
     });
@@ -122,6 +130,7 @@ export async function mergeCurationDocument(
   run: Pick<CurationRun, "id" | "organizationId" | "variantId" | "requestedBy">,
   document: CurationDocument
 ): Promise<MergeResult | null> {
+  document = await alignClinvarClaim(document);
   // Ad-hoc runs have no stored variant, so there is no interpretation to attach to.
   if (!run.variantId) return null;
 
@@ -275,6 +284,13 @@ export async function mergeCurationDocument(
       });
       criteriaWritten += 1;
     }
+
+    await tx
+      .update(variants)
+      .set({ heldReason: null })
+      .where(
+        and(eq(variants.organizationId, run.organizationId), eq(variants.id, variantId))
+      );
 
     return {
       interpretationId,

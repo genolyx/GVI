@@ -1,6 +1,13 @@
-import type { FrequencyTrack } from "@shared/germlineFrequency";
-import { keepsAtAnyFrequency, type FrequencyContext } from "./frequencyPolicy";
+import { INTRON_FLANK_BP, UTR_START_FLANK_BP, type FrequencyTrack } from "@shared/germlineFrequency";
+import {
+  isNamedReducedPenetrance,
+  isPlainPathogenicCall,
+  isReducedPenetranceCall,
+  keepsAtAnyFrequency,
+  type FrequencyContext,
+} from "./frequencyPolicy";
 import { variantOverlapsPanel } from "./germlinePanel";
+import { gnomadSiteKey } from "./gnomadLocal";
 
 export type FilterableVariant = {
   gene: string | null;
@@ -14,9 +21,13 @@ export type FilterableVariant = {
   genotypeQuality: number | null;
   callFilter: string | null;
   clinvarSignificance?: string | null;
+  /** Sample GT, such as 0/1 or 1/1. */
+  zygosity?: string | null;
+  consequence?: string | null;
   chromosome?: string;
   position?: number;
   referenceAllele?: string;
+  alternateAllele?: string;
 };
 
 export type VcfFilters = {
@@ -46,6 +57,11 @@ export type VcfFilters = {
   track?: FrequencyTrack;
   /** OMIM short labels keyed by gene symbol. An empty map grants no recessive exemption. */
   inheritance?: ReadonlyMap<string, string>;
+  /**
+   * Genomic sites a major laboratory called Benign or Likely benign.
+   * Keys are chromosome:position:ref:alt. Omitted or empty skips this rule.
+   */
+  majorLabBenign?: ReadonlySet<string>;
 };
 
 export type FilterReason =
@@ -56,14 +72,26 @@ export type FilterReason =
   | "af"
   | "impact"
   | "clinvar"
+  | "lab"
   | "vus"
   | "clinvarMix"
+  | "intron"
+  | "utr"
   | "hpo"
   | "panel";
+
+/** ClinVar drop that still passed the location, panel, frequency, and quality rules. */
+export type HoldReason = "vus" | "benign" | "lab";
 
 export type FilteredVcf<T> = {
   total: number;
   kept: T[];
+  /**
+   * Removed for a ClinVar VUS, a homozygous benign call, or a major-lab benign
+   * submission, after the intron, UTR, panel, frequency, and quality rules passed.
+   * These stay out of the classifier until a reviewer runs one.
+   */
+  held: { variant: T; reason: HoldReason }[];
   classifiable: {
     gene: string;
     hgvsC: string;
@@ -82,8 +110,11 @@ const emptyDrops = (): Record<FilterReason, number> => ({
   af: 0,
   impact: 0,
   clinvar: 0,
+  lab: 0,
   vus: 0,
   clinvarMix: 0,
+  intron: 0,
+  utr: 0,
   hpo: 0,
   panel: 0,
 });
@@ -132,6 +163,106 @@ export function isClinvarVusCall(value: string | null | undefined): boolean {
   return tokens.length > 0 && tokens.every(token => VUS_CLINVAR.has(token));
 }
 
+/** True when both alleles are the same alternate allele. 1/0 and 0/1 stay heterozygous. */
+export function isHomozygousGenotype(value: string | null | undefined): boolean {
+  if (!value) return false;
+  const alleles = value.trim().split(/[|/]/).filter(Boolean);
+  if (alleles.length < 2) return false;
+  return new Set(alleles).size === 1 && alleles[0] !== "0" && alleles[0] !== ".";
+}
+
+/** Intronic and other non-coding sites. Synonymous and splice-region calls stay coding. */
+export function isNoncodingSite(variant: FilterableVariant): boolean {
+  if (variant.impact === "MODIFIER") return true;
+  const consequence = (variant.consequence ?? "").toLowerCase();
+  return /(?:^|&)(?:intron_variant|5_prime_utr_variant|3_prime_utr_variant|upstream_gene_variant|downstream_gene_variant|intergenic_variant|non_coding_transcript_variant|non_coding_transcript_exon_variant)(?:&|$)/.test(
+    consequence
+  );
+}
+
+/**
+ * Nearest intron distance in a coding HGVS such as c.1056+347805 or c.4-129.
+ * Null when the allele is exonic, or when the change reaches both sides of an exon.
+ */
+export function nearestIntronOffset(hgvsC: string | null | undefined): number | null {
+  if (!hgvsC) return null;
+  const coding = hgvsC.match(/c\.[^\s]+/)?.[0] ?? hgvsC;
+  const parts = [...coding.matchAll(/(\d+)([+-])(\d+)/g)];
+  if (!parts.length) return null;
+  const signs = new Set(parts.map(part => part[2]));
+  const exons = new Set(parts.map(part => part[1]));
+  if (signs.size > 1 && exons.size > 1) return null;
+  const distances = parts
+    .map(part => Number(part[3]))
+    .filter(value => Number.isFinite(value));
+  return distances.length ? Math.min(...distances) : null;
+}
+
+/**
+ * Closest 5' UTR base to the start codon. Zero when the allele includes the ATG,
+ * as in c.-7_1del. Null when the HGVS has no 5' UTR coordinate.
+ */
+export function fivePrimeStartDistance(hgvsC: string | null | undefined): number | null {
+  if (!hgvsC) return null;
+  const coding = hgvsC.match(/c\.[^\s]+/)?.[0];
+  if (!coding || coding.includes("*")) return null;
+  const distances = [...coding.matchAll(/-(\d+)/g)].map(part => Number(part[1]));
+  if (!distances.length) return null;
+  if (/_1(?!\d)/.test(coding)) return 0;
+  return Math.min(...distances.filter(value => Number.isFinite(value)));
+}
+
+function isOutsideStartRegion(variant: FilterableVariant): boolean {
+  const consequence = (variant.consequence ?? "").toLowerCase();
+  if (
+    consequence.includes("upstream_gene_variant") ||
+    consequence.includes("downstream_gene_variant") ||
+    consequence.includes("3_prime_utr_variant")
+  ) {
+    return true;
+  }
+  if (!consequence.includes("5_prime_utr_variant")) return false;
+  const distance = fivePrimeStartDistance(variant.hgvsC);
+  return distance !== null && distance > UTR_START_FLANK_BP;
+}
+
+function isReportedPathogenic(variant: FilterableVariant): boolean {
+  if (isReducedPenetranceCall(variant.clinvarSignificance)) return false;
+  if (isNamedReducedPenetrance(variant)) return false;
+  return isPlainPathogenicCall(variant.clinvarSignificance);
+}
+
+function isIntronicSite(variant: FilterableVariant): boolean {
+  const consequence = (variant.consequence ?? "").toLowerCase();
+  return (
+    consequence.includes("intron_variant") ||
+    consequence.includes("splice_donor") ||
+    consequence.includes("splice_acceptor") ||
+    nearestIntronOffset(variant.hgvsC) !== null
+  );
+}
+
+function isUtrSite(variant: FilterableVariant): boolean {
+  const consequence = (variant.consequence ?? "").toLowerCase();
+  if (
+    consequence.includes("5_prime_utr_variant") ||
+    consequence.includes("3_prime_utr_variant") ||
+    consequence.includes("upstream_gene_variant") ||
+    consequence.includes("downstream_gene_variant")
+  ) {
+    return true;
+  }
+  if (fivePrimeStartDistance(variant.hgvsC) !== null) return true;
+  return /c\.\*/.test(variant.hgvsC ?? "");
+}
+
+function isBeyondIntronFlank(variant: FilterableVariant): boolean {
+  const offset = nearestIntronOffset(variant.hgvsC);
+  if (offset === null || offset <= INTRON_FLANK_BP) return false;
+  const consequence = (variant.consequence ?? "").toLowerCase();
+  return consequence.includes("intron_variant") || variant.impact === "MODIFIER";
+}
+
 /** True when the call mixes VUS with Benign or Likely benign and contains nothing else. */
 export function isClinvarBenignVusMix(value: string | null | undefined): boolean {
   const tokens = clinvarTokens(value);
@@ -144,6 +275,114 @@ export function isClinvarBenignVusMix(value: string | null | undefined): boolean
     else return false;
   }
   return benign && vus;
+}
+
+function majorLabBenignSite(
+  variant: FilterableVariant,
+  sites: ReadonlySet<string> | undefined
+): boolean {
+  if (!sites?.size) return false;
+  if (
+    variant.chromosome == null ||
+    variant.position == null ||
+    !variant.referenceAllele ||
+    !variant.alternateAllele
+  ) {
+    return false;
+  }
+  return sites.has(
+    gnomadSiteKey({
+      chromosome: variant.chromosome,
+      position: variant.position,
+      referenceAllele: variant.referenceAllele,
+      alternateAllele: variant.alternateAllele,
+    })
+  );
+}
+
+/** True when the variant fails a rule other than the ClinVar VUS, benign, or lab drop. */
+function failsOutsideClinvarHold(
+  variant: FilterableVariant,
+  filters: VcfFilters
+): boolean {
+  if (filters.passOnly && variant.callFilter && variant.callFilter !== "PASS") return true;
+  if (
+    filters.minQual !== null &&
+    variant.siteQuality !== null &&
+    variant.siteQuality < filters.minQual
+  ) {
+    return true;
+  }
+  if (
+    filters.minGenotypeQuality !== null &&
+    variant.genotypeQuality !== null &&
+    variant.genotypeQuality < filters.minGenotypeQuality
+  ) {
+    return true;
+  }
+  if (
+    filters.minDepth !== null &&
+    variant.readDepth !== null &&
+    variant.readDepth < filters.minDepth
+  ) {
+    return true;
+  }
+  const af = alleleFrequency(variant.populationAf);
+  const aboveLimit = filters.maxAf !== null && af !== null && af > filters.maxAf;
+  if (aboveLimit && !keepsAtAnyFrequency(variant, frequencyContext(filters))) return true;
+  const track = filters.track ?? "carrier";
+  if (track === "carrier") {
+    if (isIntronicSite(variant) && !isReportedPathogenic(variant)) return true;
+    if (isUtrSite(variant) && !isReportedPathogenic(variant)) return true;
+  } else if (track !== "none") {
+    if (isBeyondIntronFlank(variant) && !keepsAtAnyFrequency(variant, frequencyContext(filters))) {
+      return true;
+    }
+    if (isOutsideStartRegion(variant) && !keepsAtAnyFrequency(variant, frequencyContext(filters))) {
+      return true;
+    }
+  }
+  if (filters.codingOnly && (variant.impact === "LOW" || variant.impact === "MODIFIER")) return true;
+  const gene = (variant.gene || "").toUpperCase();
+  if (filters.genes && (!gene || !filters.genes.has(gene))) return true;
+  const geneMatch = !filters.panelGenes || Boolean(gene && filters.panelGenes.has(gene));
+  const regions = filters.panelRegions;
+  const regionMatch = !regions?.length || variantOverlapsPanel(variant, regions);
+  if (filters.panelGenes && regions?.length) {
+    if (!geneMatch && !regionMatch) return true;
+  } else if (!geneMatch || !regionMatch) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Carrier holds a benign call only when it is non-coding or homozygous, so a
+ * heterozygous coding benign call can still be upgraded.
+ * Rare disease and hereditary cancer hold every Benign or Likely benign call.
+ */
+function benignCallIsHeld(variant: FilterableVariant, track: string): boolean {
+  if (track === "carrier") return isNoncodingSite(variant) || isHomozygousGenotype(variant.zygosity);
+  return track === "rare_disease" || track === "hereditary_cancer";
+}
+
+/**
+ * A ClinVar removal that belongs on the review tab.
+ * Off-target, deep-intron, and UTR drops stay out of this list.
+ */
+export function clinvarHoldReason(
+  variant: FilterableVariant,
+  filters: VcfFilters
+): HoldReason | null {
+  const track = filters.track ?? "carrier";
+  if (track === "none") return null;
+  if (failsOutsideClinvarHold(variant, filters)) return null;
+  if (track === "carrier" && isClinvarVusCall(variant.clinvarSignificance)) return "vus";
+  if (isClinvarBenignCall(variant.clinvarSignificance) && benignCallIsHeld(variant, track)) {
+    return "benign";
+  }
+  if (majorLabBenignSite(variant, filters.majorLabBenign)) return "lab";
+  return null;
 }
 
 function firstFail(
@@ -174,11 +413,24 @@ function firstFail(
   const aboveLimit =
     filters.maxAf !== null && af !== null && af > filters.maxAf;
   if (aboveLimit && !keepsAtAnyFrequency(variant, frequencyContext(filters))) return "af";
+  const track = filters.track ?? "carrier";
+  if (track === "carrier" && isClinvarVusCall(variant.clinvarSignificance)) return "vus";
   if (
-    (filters.track ?? "carrier") === "carrier" &&
-    isClinvarVusCall(variant.clinvarSignificance)
+    track !== "none" &&
+    isClinvarBenignCall(variant.clinvarSignificance) &&
+    benignCallIsHeld(variant, track)
   )
-    return "vus";
+    return "clinvar";
+  if (track !== "none" && majorLabBenignSite(variant, filters.majorLabBenign)) return "lab";
+  if (track === "carrier") {
+    if (isIntronicSite(variant) && !isReportedPathogenic(variant)) return "intron";
+    if (isUtrSite(variant) && !isReportedPathogenic(variant)) return "utr";
+  } else if (track !== "none") {
+    if (isBeyondIntronFlank(variant) && !keepsAtAnyFrequency(variant, frequencyContext(filters)))
+      return "intron";
+    if (isOutsideStartRegion(variant) && !keepsAtAnyFrequency(variant, frequencyContext(filters)))
+      return "utr";
+  }
   if (
     filters.codingOnly &&
     (variant.impact === "LOW" || variant.impact === "MODIFIER")
@@ -205,6 +457,7 @@ export function applyVcfFilters<T extends FilterableVariant>(
 ): FilteredVcf<T> {
   const dropped = emptyDrops();
   const kept: T[] = [];
+  const held: FilteredVcf<T>["held"] = [];
   const classifiable: FilteredVcf<T>["classifiable"] = [];
   const seen = new Set<string>();
   let missingHgvs = 0;
@@ -212,6 +465,8 @@ export function applyVcfFilters<T extends FilterableVariant>(
     const reason = firstFail(variant, filters);
     if (reason) {
       dropped[reason] += 1;
+      const hold = clinvarHoldReason(variant, filters);
+      if (hold) held.push({ variant, reason: hold });
       continue;
     }
     kept.push(variant);
@@ -231,7 +486,7 @@ export function applyVcfFilters<T extends FilterableVariant>(
       hgvsP: variant.hgvsP,
     });
   }
-  return { total: variants.length, kept, classifiable, dropped, missingHgvs };
+  return { total: variants.length, kept, held, classifiable, dropped, missingHgvs };
 }
 
 /** Second pass after a local gnomAD lookup fills frequencies the VCF left blank. */
@@ -254,6 +509,10 @@ export function dropAboveMaxAf<T extends FilterableVariant>(
     }
     kept.push(variant);
   }
+  const held = (result.held ?? []).filter(item => {
+    const af = alleleFrequency(item.variant.populationAf);
+    return af === null || af <= maxAf || keepsAtAnyFrequency(item.variant, policy);
+  });
   const rebuilt = applyVcfFilters(kept, {
     genes: null,
     maxAf: null,
@@ -268,6 +527,7 @@ export function dropAboveMaxAf<T extends FilterableVariant>(
   return {
     ...result,
     kept,
+    held,
     dropped,
     classifiable: rebuilt.classifiable,
     missingHgvs: rebuilt.missingHgvs,

@@ -1104,6 +1104,13 @@ export const variants = pgTable(
     alternateDepth: integer("alternateDepth"),
     impact: variantImpactEnum("impact").default("UNKNOWN").notNull(),
     clinvarSignificance: text("clinvarSignificance"),
+    /**
+     * Set when the variant passed location, panel, frequency, and quality, then
+     * was removed for a ClinVar VUS, a homozygous benign call, or a major-lab
+     * benign submission. Null variants are the review list and are classified.
+     * vus, benign, and lab stay off the classifier until a reviewer runs one.
+     */
+    heldReason: varchar("heldReason", { length: 16 }),
     reviewStatus: variantReviewStatusEnum("reviewStatus")
       .default("unreviewed")
       .notNull(),

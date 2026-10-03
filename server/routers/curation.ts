@@ -5,6 +5,7 @@ import { cases, curationRunEvents, curationRuns, variants } from "../../drizzle/
 import { curationDocumentSchema } from "../../shared/curation/document";
 import { protectedProcedure, router } from "../_core/trpc";
 import { writeAuditEvent } from "../domain/audit";
+import { alignClinvarClaim } from "../domain/clinvarClaim";
 import { classifierQueueMessage, enqueueFilteredCaseVariants, ensureCaseCurationBatch } from "../domain/caseClassifier";
 import {
   assertCurationSupported,
@@ -215,6 +216,46 @@ export const curationRouter = router({
         req: ctx.req,
       });
       return { ...result, message: classifierQueueMessage(result) };
+    }),
+
+  /** Stop every variant still waiting on a case. A variant a worker already started is left to finish. */
+  cancelCase: protectedProcedure
+    .input(orgInput.extend({ caseId: z.number().int().positive() }))
+    .mutation(async ({ ctx, input }) => {
+      await requireOrganizationPermission(ctx.user.id, input.organizationId, "curation:run");
+      const db = await requireDb();
+      const cancelled = await db
+        .update(curationRuns)
+        .set({ status: "cancelled", completedAt: new Date() })
+        .where(
+          and(
+            eq(curationRuns.organizationId, input.organizationId),
+            eq(curationRuns.caseId, input.caseId),
+            eq(curationRuns.status, "queued")
+          )
+        )
+        .returning({ id: curationRuns.id });
+      if (cancelled.length) {
+        await db.insert(curationRunEvents).values(
+          cancelled.map(row => ({
+            organizationId: input.organizationId,
+            runId: row.id,
+            status: "cancelled",
+            message: "Cancelled before a worker claimed it.",
+            progressPercent: 0,
+          }))
+        );
+        await writeAuditEvent({
+          organizationId: input.organizationId,
+          actorUserId: ctx.user.id,
+          action: "curation.case_cancelled",
+          entityType: "case",
+          entityId: input.caseId,
+          after: { cancelled: cancelled.length },
+          req: ctx.req,
+        });
+      }
+      return { cancelled: cancelled.length };
     }),
 
   /**
@@ -443,7 +484,7 @@ export const curationRouter = router({
         caseId: run.caseId,
         documentHash: run.documentHash,
         completedAt: run.completedAt,
-        document: parsed.data,
+        document: await alignClinvarClaim(parsed.data),
       };
     }),
 

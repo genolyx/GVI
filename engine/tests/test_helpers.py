@@ -1193,6 +1193,28 @@ def test_non_col_inframe_del_skips_gly_xy_map():
     assert 'COL' in (viz.get('reason') or '')
 
 
+def test_clinvar_same_allele_rejects_a_spanning_neighbor():
+    """A deletion that covers the base is not the SNV's ClinVar record."""
+    from vc_engine.analyze import _clinvar_vcf_record_same_allele
+    from vc_engine.clinvar import clinvar_allele_search_url
+
+    class Rec:
+        def __init__(self, pos, ref, alts):
+            self.pos = pos
+            self.ref = ref
+            self.alts = alts
+
+    deletion = Rec(132901487, "ATGACA", ["A"])
+    other_snv = Rec(132902726, "T", ["A"])
+    this_snv = Rec(132902726, "T", ["G"])
+    assert _clinvar_vcf_record_same_allele(deletion, 132902726, "T", "G") is False
+    assert _clinvar_vcf_record_same_allele(other_snv, 132902726, "T", "G") is False
+    assert _clinvar_vcf_record_same_allele(this_snv, 132902726, "T", "G") is True
+    url = clinvar_allele_search_url("TSC1", "NM_000368.5", "c.2270A>C")
+    assert "NM_000368.5%28TSC1%29%3Ac.2270A%3EC" in url
+    assert "%5Bgene%5D" not in url
+
+
 def test_nipbl_clinvar_microsatellite_name_score():
     """ClinVar c.6726AGA[2] is the same allele as lab c.6732_6734del."""
     from vc_engine.analyze import (

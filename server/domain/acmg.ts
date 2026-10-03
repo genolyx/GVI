@@ -115,52 +115,14 @@ function tally(criteria: readonly AppliedCriterion[]): AcmgCounts {
   return counts;
 }
 
-/**
- * Suggest a germline classification from the applied criteria.
- *
- * Advisory only: the combining rules cannot capture the judgement a reviewer
- * brings, so callers present this alongside the human classification rather than
- * writing it to an approved interpretation.
- */
-export function suggestAcmgClassification(
-  criteria: readonly AppliedCriterion[] | readonly string[]
-): AcmgSuggestion {
-  const applied: AppliedCriterion[] = criteria.map(entry =>
-    typeof entry === "string" ? { code: entry } : entry
-  );
-  const counts = tally(applied);
-  const { veryStrong, strong, moderate, supporting, benignStandalone, benignStrong, benignSupporting } =
-    counts;
+type SideCall = {
+  classification: GermlineClassification;
+  rationale: string;
+};
 
-  const hasPathogenicEvidence = veryStrong + strong + moderate + supporting > 0;
-  const hasBenignEvidence = benignStandalone + benignStrong + benignSupporting > 0;
-
-  if (hasPathogenicEvidence && hasBenignEvidence) {
-    return {
-      classification: "VUS",
-      rationale:
-        "Both pathogenic and benign evidence applied — expert review of conflicting evidence required.",
-      conflict: true,
-      counts,
-    };
-  }
-  if (benignStandalone >= 1 || benignStrong >= 2) {
-    return {
-      classification: "Benign",
-      rationale: "Meets ACMG 2015 benign combination criteria.",
-      conflict: false,
-      counts,
-    };
-  }
-  if ((benignStrong >= 1 && benignSupporting >= 1) || benignSupporting >= 2) {
-    return {
-      classification: "Likely Benign",
-      rationale: "Meets ACMG 2015 likely benign combination criteria.",
-      conflict: false,
-      counts,
-    };
-  }
-
+/** Pathogenic or Likely Pathogenic when the pathogenic column of Table 5 is met. */
+function pathogenicCall(counts: AcmgCounts): SideCall | null {
+  const { veryStrong, strong, moderate, supporting } = counts;
   const pathogenic =
     (veryStrong >= 1 && strong >= 1) ||
     (veryStrong >= 1 && moderate >= 2) ||
@@ -174,11 +136,8 @@ export function suggestAcmgClassification(
     return {
       classification: "Pathogenic",
       rationale: "Meets ACMG 2015 pathogenic combination criteria.",
-      conflict: false,
-      counts,
     };
   }
-
   const likelyPathogenic =
     (veryStrong >= 1 && moderate >= 1) ||
     (strong >= 1 && moderate >= 1) ||
@@ -190,10 +149,59 @@ export function suggestAcmgClassification(
     return {
       classification: "Likely Pathogenic",
       rationale: "Meets ACMG 2015 likely pathogenic combination criteria.",
-      conflict: false,
+    };
+  }
+  return null;
+}
+
+/** Benign or Likely Benign when the benign column of Table 5 is met. */
+function benignCall(counts: AcmgCounts): SideCall | null {
+  const { benignStandalone, benignStrong, benignSupporting } = counts;
+  if (benignStandalone >= 1 || benignStrong >= 2) {
+    return {
+      classification: "Benign",
+      rationale: "Meets ACMG 2015 benign combination criteria.",
+    };
+  }
+  if ((benignStrong >= 1 && benignSupporting >= 1) || benignSupporting >= 2) {
+    return {
+      classification: "Likely Benign",
+      rationale: "Meets ACMG 2015 likely benign combination criteria.",
+    };
+  }
+  return null;
+}
+
+/**
+ * Suggest a germline classification from the applied criteria.
+ *
+ * Each side of ACMG 2015 Table 5 is scored on its own. A single code from the
+ * other side does not freeze the call: conflict is only when the pathogenic
+ * column and the benign column are both fulfilled. Advisory only — callers
+ * present this alongside the human classification rather than writing it to an
+ * approved interpretation.
+ */
+export function suggestAcmgClassification(
+  criteria: readonly AppliedCriterion[] | readonly string[]
+): AcmgSuggestion {
+  const applied: AppliedCriterion[] = criteria.map(entry =>
+    typeof entry === "string" ? { code: entry } : entry
+  );
+  const counts = tally(applied);
+  const pathogenic = pathogenicCall(counts);
+  const benign = benignCall(counts);
+
+  if (pathogenic && benign) {
+    return {
+      classification: "VUS",
+      rationale:
+        "Both pathogenic and benign combination criteria are met — expert review of conflicting evidence required.",
+      conflict: true,
       counts,
     };
   }
+  if (pathogenic) return { ...pathogenic, conflict: false, counts };
+  if (benign) return { ...benign, conflict: false, counts };
 
   return {
     classification: "VUS",

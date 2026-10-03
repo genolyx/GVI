@@ -82,7 +82,7 @@ describe("engine vs reviewer divergence", () => {
   it("surfaces conflicting evidence ahead of the pending-review notice", () => {
     const divergence = describeClassificationDivergence(
       "VUS",
-      suggestAcmgClassification(["PVS1", "BA1"]),
+      suggestAcmgClassification(["PVS1", "PS1", "BA1"]),
       criteria
     );
     // The reviewer agrees with the VUS the conflict produced, so the message must

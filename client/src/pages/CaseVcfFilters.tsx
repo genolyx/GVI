@@ -6,6 +6,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { trpc } from "@/lib/trpc";
 import {
   DEFAULT_MAX_ALLELE_FREQUENCY,
+  FREQUENCY_TRACKS,
   FREQUENCY_TRACK_LABEL,
   frequencyTrackSummary,
   type FrequencyTrack,
@@ -34,16 +35,64 @@ export const defaultVcfFilters: CaseVcfFilterValues = {
   minGq: "",
   minDepth: "",
   passOnly: true,
-  codingOnly: true,
+  codingOnly: false,
   excludeClinvarBenign: false,
   excludeClinvarVus: false,
 };
 
-export function FrequencyRules({ track }: { track: FrequencyTrack }) {
+export function FrequencyRules({
+  track,
+  showTitle = true,
+}: {
+  track: FrequencyTrack;
+  showTitle?: boolean;
+}) {
   return (
     <div className="space-y-1 text-xs leading-5 text-muted-foreground">
-      <p className="font-medium text-foreground">{FREQUENCY_TRACK_LABEL[track]}</p>
+      {showTitle ? (
+        <p className="font-medium text-foreground">{FREQUENCY_TRACK_LABEL[track]}</p>
+      ) : null}
       <p>{frequencyTrackSummary(track)}</p>
+    </div>
+  );
+}
+
+export function FilterTestTypeField({
+  id,
+  track,
+  onChange,
+}: {
+  id: string;
+  track: FrequencyTrack | "";
+  onChange: (track: FrequencyTrack) => void;
+}) {
+  return (
+    <div className="space-y-2">
+      <Label htmlFor={id}>
+        Filter test type
+        {track ? null : <span className="text-destructive"> *</span>}
+      </Label>
+      <select
+        id={id}
+        required
+        className={`h-10 w-full max-w-xs rounded-lg border bg-background px-3 text-sm ${
+          track ? "border-input" : "border-destructive"
+        }`}
+        value={track}
+        onChange={event => {
+          const value = event.target.value;
+          if ((FREQUENCY_TRACKS as readonly string[]).includes(value)) {
+            onChange(value as FrequencyTrack);
+          }
+        }}
+      >
+        <option value="">-</option>
+        {FREQUENCY_TRACKS.map(item => (
+          <option key={item} value={item}>
+            {FREQUENCY_TRACK_LABEL[item]}
+          </option>
+        ))}
+      </select>
     </div>
   );
 }
@@ -53,6 +102,40 @@ function optionalNumber(value: string): number | null {
   if (!trimmed) return null;
   const parsed = Number(trimmed);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function numberField(value: unknown): string {
+  return typeof value === "number" && Number.isFinite(value) ? String(value) : "";
+}
+
+/** Last analysis job, so Edit order can start from the filters that run used. */
+export function filtersFromJobManifest(manifest: unknown): {
+  values: CaseVcfFilterValues;
+  track: FrequencyTrack | null;
+} {
+  const raw =
+    manifest && typeof manifest === "object"
+      ? (manifest as { vcfFilters?: unknown }).vcfFilters
+      : null;
+  const filters = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const trackValue = filters.track;
+  const track =
+    typeof trackValue === "string" &&
+    (FREQUENCY_TRACKS as readonly string[]).includes(trackValue)
+      ? (trackValue as FrequencyTrack)
+      : null;
+  return {
+    track,
+    values: {
+      ...defaultVcfFilters,
+      maxAf: numberField(filters.maxAf),
+      minQual: numberField(filters.minQual),
+      minGq: numberField(filters.minGenotypeQuality),
+      minDepth: numberField(filters.minDepth),
+      passOnly: filters.passOnly !== false,
+      codingOnly: false,
+    },
+  };
 }
 
 export function vcfFiltersPayload(
@@ -68,7 +151,7 @@ export function vcfFiltersPayload(
     minGenotypeQuality: optionalNumber(values.minGq),
     minDepth: optionalNumber(values.minDepth),
     passOnly: values.passOnly,
-    codingOnly: values.codingOnly,
+    codingOnly: false,
     excludeClinvarBenign: false,
     excludeClinvarVus: false,
     track,
@@ -92,9 +175,12 @@ const DROP_LABELS: Record<string, string> = {
   depth: "read depth",
   filter: "FILTER not PASS",
   impact: "low-impact or modifier",
-  clinvar: "ClinVar benign or likely benign",
+  clinvar: "ClinVar benign, non-coding or homozygous",
+  lab: "Benign or likely benign from a major laboratory",
   vus: "ClinVar VUS on carrier screening",
   clinvarMix: "ClinVar VUS with benign",
+  intron: "more than 20 bp into the intron",
+  utr: "UTR or flanking, away from the start codon",
 };
 
 function geneListCode(name: string, taken: Set<string>): string {
@@ -293,7 +379,7 @@ export function GeneListField({
       ) : null}
       <p className="text-xs leading-5 text-muted-foreground">
         {listedGenes === null
-          ? "Paste symbols or load a file. Commas, spaces, and new lines all work. Leave this empty to keep every gene."
+          ? "Paste symbols, load a file, or choose a saved list such as Carrier 2000+. Commas, spaces, and new lines all work. HPO terms can be used instead of a list."
           : listedGenes.size === 0
             ? "No gene symbols were recognized in that text."
             : `${listedGenes.size.toLocaleString()} ${listedGenes.size === 1 ? "gene" : "genes"}. A variant must be in this list${hpo.trim() ? " and linked to the HPO terms above" : ""}.`}
@@ -311,6 +397,7 @@ export function CaseVcfFilters({
   onChange,
   panelScope,
   track,
+  onTrackChange,
 }: {
   organizationId: number;
   referenceBuild: "GRCh37" | "GRCh38";
@@ -319,7 +406,8 @@ export function CaseVcfFilters({
   values: CaseVcfFilterValues;
   onChange: (values: CaseVcfFilterValues) => void;
   panelScope?: { panelId?: number; bedText?: string } | null;
-  track: FrequencyTrack;
+  track: FrequencyTrack | "";
+  onTrackChange: (track: FrequencyTrack) => void;
 }) {
   const preview = trpc.cases.previewVcf.useMutation({
     onError: error => toast.error(error.message),
@@ -336,6 +424,7 @@ export function CaseVcfFilters({
 
   return (
     <div className="space-y-8">
+      <FilterTestTypeField id="case-filter-track" track={track} onChange={onTrackChange} />
       <div className="grid gap-x-6 gap-y-5 sm:grid-cols-2 xl:grid-cols-4">
         <div className="space-y-2">
           <Label htmlFor="case-af">Maximum allele frequency</Label>
@@ -355,23 +444,22 @@ export function CaseVcfFilters({
           <Input id="case-dp" value={values.minDepth} onChange={event => set({ minDepth: event.target.value })} inputMode="numeric" placeholder="10" className="font-mono" />
         </div>
       </div>
-      <div className="flex flex-wrap gap-x-10 gap-y-3">
+      <div className="space-y-2">
         <label className="flex items-center gap-2.5 text-sm">
           <Checkbox checked={values.passOnly} onCheckedChange={checked => set({ passOnly: checked === true })} />
           FILTER is PASS
         </label>
-        <label className="flex items-center gap-2.5 text-sm">
-          <Checkbox checked={values.codingOnly} onCheckedChange={checked => set({ codingOnly: checked === true })} />
-          Coding changes only
-        </label>
+        <p className="max-w-xl text-xs leading-5 text-muted-foreground">
+          The VCF FILTER column. PASS means the caller did not flag the site. Uncheck this to also keep sites the caller marked, such as LowQual.
+        </p>
       </div>
-      <FrequencyRules track={track} />
+      {track ? <FrequencyRules track={track} showTitle={false} /> : null}
       <Button
         type="button"
         variant="outline"
-        disabled={!file || preview.isPending}
+        disabled={!file || !track || preview.isPending}
         onClick={async () => {
-          if (!file) return;
+          if (!file || !track) return;
           try {
             const vcfText = await readVcf(file);
             if (vcfText.length > 20_000_000) {

@@ -30,15 +30,15 @@ import {
 } from "./CaseVcfFilters";
 import { HpoTermField } from "./HpoTermField";
 import { GermlineOrderFields } from "./GermlineOrderFields";
-import { frequencyTrackForOrder } from "@shared/germlineFrequency";
+import { type FrequencyTrack } from "@shared/germlineFrequency";
 import {
   defaultGermlineOrder,
   germlineOrderMissing,
-  normalizeGermlineOrder,
   type GermlineOrderInput,
 } from "@shared/germlineOrder";
+import { hasGeneScopeChoice } from "@shared/geneScope";
 import { detectReferenceBuild } from "@shared/vcfAssembly";
-import { readVcfHeader } from "@/lib/readVcfHeader";
+import { isVcfFileName, readVcfHeader } from "@/lib/readVcfHeader";
 import { putFileWithProgress } from "@/lib/uploadFile";
 
 type FormState = {
@@ -125,6 +125,7 @@ export default function NewCasePage() {
   const [submissionError, setSubmissionError] = useState("");
   const [filters, setFilters] =
     useState<CaseVcfFilterValues>(defaultVcfFilters);
+  const [filterTrack, setFilterTrack] = useState<FrequencyTrack | "">("");
   const [createdCaseId, setCreatedCaseId] = useState<number | null>(null);
   const [savedPanelId, setSavedPanelId] = useState("");
   const [bedPanelName, setBedPanelName] = useState("");
@@ -134,10 +135,6 @@ export default function NewCasePage() {
   const [assemblyNote, setAssemblyNote] = useState("");
   const [assemblyFromHeader, setAssemblyFromHeader] = useState(false);
   const assemblyRequest = useRef(0);
-  const germlinePanels = trpc.germlinePanels.list.useQuery(
-    { organizationId: activeOrganizationId || 0 },
-    { enabled: Boolean(activeOrganizationId) }
-  );
   const createCase = trpc.cases.create.useMutation();
   const requestUpload = trpc.cases.requestUpload.useMutation();
   const completeUpload = trpc.cases.completeUpload.useMutation();
@@ -186,11 +183,12 @@ export default function NewCasePage() {
     });
   };
   const handleSubmit = async () => {
-    if (
+      if (
       !activeOrganizationId ||
       !form.projectId ||
       !form.consentClinicalAnalysis ||
-      !form.referenceBuild
+      !form.referenceBuild ||
+      (form.purpose === "germline" && !filterTrack)
     )
       return;
     try {
@@ -281,12 +279,8 @@ export default function NewCasePage() {
         organizationId: activeOrganizationId,
         caseId: created.id,
         vcfFilters:
-          form.inputType === "vcf" && form.purpose === "germline"
-            ? vcfFiltersPayload(
-                filters,
-                form.phenotypeText,
-                frequencyTrackForOrder(normalizeGermlineOrder(order))
-              )
+          form.inputType === "vcf" && form.purpose === "germline" && filterTrack
+            ? vcfFiltersPayload(filters, form.phenotypeText, filterTrack)
             : undefined,
       });
       setProgress(100);
@@ -302,6 +296,13 @@ export default function NewCasePage() {
       toast.error(message);
     }
   };
+  const geneScopeReady =
+    form.purpose !== "germline" ||
+    hasGeneScopeChoice({
+      panelGenes: savedPanelId || bedText.trim() ? 1 : 0,
+      hpo: form.phenotypeText,
+      genes: filters.genes,
+    });
   const missing = [
     !form.projectId ? "Project" : "",
     form.caseNumber.trim().length < 2 ? "Case number" : "",
@@ -319,6 +320,8 @@ export default function NewCasePage() {
         ]
       : germlineOrderMissing(order)),
     !form.consentClinicalAnalysis ? "Clinical analysis consent" : "",
+    geneScopeReady ? "" : "Gene panel or HPO terms",
+    form.purpose === "germline" && !filterTrack ? "Filter test type" : "",
   ].filter(Boolean);
   const valid = missing.length === 0;
   if (!hasPermission("case:create"))
@@ -544,43 +547,6 @@ export default function NewCasePage() {
                     placeholder="WES"
                   />
                 </Field>
-                <Field label="Interpretation panel">
-                  <select
-                    value={savedPanelId}
-                    onChange={event => {
-                      const id = event.target.value;
-                      setSavedPanelId(id);
-                      if (id) {
-                        setBedText("");
-                        setBedFileName("");
-                        const selected = germlinePanels.data?.find(
-                          panel => panel.id === Number(id)
-                        );
-                        if (selected) update("panelName", selected.name);
-                      }
-                    }}
-                    className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm"
-                  >
-                    <option value="">Whole VCF, no saved panel</option>
-                    {germlinePanels.data
-                      ?.filter(
-                        panel =>
-                          !panel.genomeBuild ||
-                          panel.genomeBuild === form.referenceBuild
-                      )
-                      .map(panel => (
-                        <option key={panel.id} value={panel.id}>
-                          {panel.name} · {panel.geneCount.toLocaleString()} genes
-                          {panel.regionCount
-                            ? ` · ${panel.regionCount.toLocaleString()} intervals`
-                            : ""}
-                        </option>
-                      ))}
-                  </select>
-                  <p className="mt-1 text-[10px] leading-4 text-muted-foreground">
-                    A saved panel is copied onto this case. Later edits to the catalog do not change cases already created.
-                  </p>
-                </Field>
                 <Field label="Or attach a BED for this case">
                   <Input
                     type="file"
@@ -628,7 +594,7 @@ export default function NewCasePage() {
           </Field>
           {form.purpose === "germline" ? (
             <>
-              <Field label="HPO terms">
+              <Field label="HPO terms" required={!geneScopeReady} invalid={!geneScopeReady}>
                 <HpoTermField
                   value={form.phenotypeText}
                   onChange={value => update("phenotypeText", value)}
@@ -643,6 +609,14 @@ export default function NewCasePage() {
                 values={filters}
                 onChange={setFilters}
                 hpo={form.phenotypeText}
+                onListId={id => {
+                  setSavedPanelId(id);
+                  if (id) {
+                    setBedText("");
+                    setBedFileName("");
+                    setBedPanelName("");
+                  }
+                }}
               />
             </>
           ) : (
@@ -873,10 +847,17 @@ export default function NewCasePage() {
             label="VCF or VCF.GZ"
             required
             invalid={!vcf}
-            accept=".vcf,.vcf.gz"
+            accept=""
+            hint="Click to select a .vcf or .vcf.gz file"
             file={vcf}
             onChange={file => {
               const request = ++assemblyRequest.current;
+              if (file && !isVcfFileName(file.name)) {
+                setVcf(null);
+                setAssemblyFromHeader(false);
+                setAssemblyNote("Choose a .vcf or .vcf.gz file.");
+                return;
+              }
               setVcf(file);
               if (!file) {
                 if (assemblyFromHeader) {
@@ -929,7 +910,8 @@ export default function NewCasePage() {
                     ? { bedText }
                     : null
               }
-              track={frequencyTrackForOrder(normalizeGermlineOrder(order))}
+              track={filterTrack}
+              onTrackChange={setFilterTrack}
             />
           ) : null}
         </CardContent>
@@ -1050,6 +1032,7 @@ function FileInput({
   file,
   required,
   invalid,
+  hint,
   onChange,
 }: {
   label: string;
@@ -1057,6 +1040,7 @@ function FileInput({
   file: File | null;
   required?: boolean;
   invalid?: boolean;
+  hint?: string;
   onChange: (file: File | null) => void;
 }) {
   return (
@@ -1080,15 +1064,19 @@ function FileInput({
         <p className="mt-1 truncate text-[11px] text-muted-foreground">
           {file
             ? `${(file.size / 1024 / 1024).toFixed(2)} MB`
-            : "Click to select file"}
+            : hint || "Click to select file"}
         </p>
       </div>
       {file ? <CheckCircle2 className="size-4 text-emerald-600" /> : null}
       <input
         type="file"
-        accept={accept}
+        {...(accept ? { accept } : {})}
         className="hidden"
-        onChange={event => onChange(event.target.files?.[0] || null)}
+        onChange={event => {
+          const chosen = event.target.files?.[0] || null;
+          event.target.value = "";
+          onChange(chosen);
+        }}
       />
     </label>
   );

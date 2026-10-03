@@ -1030,9 +1030,9 @@ if (skippedExonPill && autoPill && /Skipped exon P\/LP/i.test(autoPill) && /Skip
 
 let mechanismAlertPill = '';
 const clingenLof = clingenHaploScoreInt(res.parsed_data.clingen_haplo_score) === 3;
+const clingenAbsent = !clingenHaploScorePresent(res.parsed_data.clingen_haplo_score);
 const storedMech = String(res.parsed_data.disease_mechanism || '').trim();
-const mechUnknown = !storedMech || /^unknown\b/i.test(storedMech);
-let mech = clingenLof && !mechUnknown ? 'LOF' : (storedMech || 'Unknown');
+let mech = clingenLof ? 'LOF' : (storedMech || 'Unknown');
 const spliceLofPrimary = !!(
     res.parsed_data.splice_lof_mechanism_established
     || res.parsed_data.spliceai_exon_skip_spliceai_primary
@@ -1041,10 +1041,10 @@ const isMechanismTruncating = !res.parsed_data.cryptic_natural_stop_preserved &&
     csq.includes('nonsense') || csq.includes('frameshift') || csq === 'start_lost' || res.parsed_data.is_splice_frameshift || res.parsed_data.splice_is_in_frame === false
 );
 if (isMechanismTruncating) {
-    if (mech === 'Unknown' || mech === 'GOF') {
+    if ((mech === 'Unknown' || mech === 'GOF') && (clingenAbsent || mech === 'GOF')) {
         if (spliceLofPrimary) {
             mechanismAlertPill = `<span class="data-pill" style="border-color: #10b981; background: rgba(16, 185, 129, 0.1); color:#34d399;">Mechanism Check: <strong>Splice LOF primary (whole-exon skip)</strong> — truncation expected even when gene mechanism is ${mech}</span>`;
-        } else {
+        } else if (clingenAbsent || mech === 'GOF') {
             mechanismAlertPill = `<div class="eval-allele-wide"><span class="data-pill" style="border-color: #fca5a5; background: rgba(239, 68, 68, 0.2); color:#fca5a5;">⚠️ CRITICAL: TRUNCATING MUTATION WITHOUT ESTABLISHED LOF MECHANISM (${mech})</span></div>`;
         }
     } else if (mech === 'LOF' || mech === 'Both') {
@@ -1366,6 +1366,11 @@ ${noncodingCurationHtml}
     ${res.parsed_data.clinvar_rcv ? `<a href="https://www.ncbi.nlm.nih.gov/clinvar/variation/${res.parsed_data.clinvar_rcv}/" target="_blank" style="color:var(--primary); text-decoration:underline;">${res.parsed_data.clinvar_sig || 'Link'}</a>` : `<a href="${res.parsed_data.clinvar_search_link || res.parsed_data.c_allele_search_link || '#'}" target="_blank" style="color:var(--text-muted); text-decoration:underline;">Search</a>`}
 </strong></span>
 ${hgmdBadge}
+${(() => {
+  const note = String(res.parsed_data.ps4_hgmd_check || '').trim();
+  if (!note) return '';
+  return `<div class="eval-allele-wide" style="margin-top:8px;"><span class="data-pill" style="border-color:#38bdf8;background:rgba(14,165,233,0.12);color:#7dd3fc;display:block;max-width:fit-content;">PS4 suggestive — check papers. <strong>Not applied.</strong> ${esc(note)}</span></div>`;
+})()}
 ${clingenPill}
 ${grPill}
 ${(!res.parsed_data.noncoding_track && res.parsed_data.uniprot_link) ? `<span class="data-pill">UniProt: <strong><a href="${res.parsed_data.uniprot_link}" target="_blank" style="color:var(--primary); text-decoration:underline;">View Target</a></strong></span>` : ''}

@@ -2,6 +2,7 @@ import { SamVcPanel } from "@/components/curation/SamVcPanel";
 import { StatePanel } from "@/components/StatePanel";
 import { Button } from "@/components/ui/button";
 import { INSTITUTIONAL_CLASSIFICATIONS } from "@shared/curation/institutional";
+import { hgmdPs4Check } from "@shared/curation/hgmdPs4";
 import { spliceReviewCriterion } from "@shared/curation/spliceAcmg";
 import { useOrganization } from "@/contexts/OrganizationContext";
 import { trpc } from "@/lib/trpc";
@@ -75,30 +76,11 @@ export default function BatchReviewPage() {
     },
     onError: error => toast.error(error.message),
   });
-  const addPvs1 = trpc.variants.applyPvs1.useMutation({
-    onSuccess: async result => {
-      setLabel(result.institutionalLabel);
-      await Promise.all([
-        criteriaDetail.refetch(),
-        batch.refetch(),
-        utils.variants.list.invalidate(),
-        utils.variants.detail.invalidate(),
-      ]);
-      toast.success(
-        result.alreadyApplied
-          ? `PVS1 is already applied. Classification is ${result.classification}.`
-          : `PVS1 added. Classification is now ${result.classification}.`
-      );
-    },
-    onError: error => toast.error(error.message),
-  });
-
   const prev = index > 0 ? entries[index - 1] : undefined;
   const next = index >= 0 && index < entries.length - 1 ? entries[index + 1] : undefined;
 
   const engineCriteria = documentQuery.data?.document.acmg.criteria ?? [];
   const spliceReview = spliceReviewCriterion(documentQuery.data?.document.engine.parsedData);
-  const pvs1Strength = spliceReview?.code === "PVS1" ? spliceReview.strength : "very_strong";
   const pvs1Met =
     engineCriteria.some(criterion => criterion.baseCode === "PVS1") ||
     (criteriaDetail.data?.criteria ?? []).some(
@@ -142,6 +124,11 @@ export default function BatchReviewPage() {
       rationale: item.note || "Added during review.",
     }));
   const criteria = [...engineCriteria, ...reviewerCriteria];
+  const ps4Check = hgmdPs4Check(
+    documentQuery.data?.document.engine.parsedData.hgmd_local,
+    documentQuery.data?.document.engine.parsedData.hgmd_excel_pmids
+  );
+  const ps4Already = criteria.some(criterion => criterion.baseCode === "PS4" || criterion.code === "PS4");
   const input = entry.input;
 
   return (
@@ -164,22 +151,6 @@ export default function BatchReviewPage() {
           </div>
           <div className="flex flex-wrap items-center gap-2">
             {call ? <span className="text-sm font-semibold">{call}</span> : null}
-            {canEdit && variantId && !pvs1Met ? (
-              <Button
-                variant="outline"
-                disabled={addPvs1.isPending}
-                onClick={() =>
-                  addPvs1.mutate({
-                    organizationId: activeOrganizationId!,
-                    variantId,
-                    runId: entry.id,
-                    strength: pvs1Strength,
-                  })
-                }
-              >
-                Add PVS1
-              </Button>
-            ) : null}
             {entries.length > 1 ? (
               <label className="flex items-center gap-2 text-xs text-muted-foreground">
                 Variant
@@ -257,7 +228,7 @@ export default function BatchReviewPage() {
               >
                 <option value="">Not set</option>
                 {INSTITUTIONAL_CLASSIFICATIONS.map(option => (
-                  <option key={option.label} value={option.label}>{option.label}</option>
+                  <option key={option.label} value={option.label}>{option.short}</option>
                 ))}
               </select>
               {canEdit ? (
@@ -281,28 +252,22 @@ export default function BatchReviewPage() {
                     {criterion.code}
                   </span>
                 )) : <span className="text-sm italic text-muted-foreground">No criteria met</span>}
+                {ps4Check && !ps4Already ? (
+                  <span title={ps4Check.note} className="rounded-md border border-dashed border-sky-400 bg-sky-400/10 px-2 py-1 font-mono text-xs font-semibold text-sky-800 dark:text-sky-200">
+                    PS4 check
+                  </span>
+                ) : null}
               </div>
+              {ps4Check && !ps4Already ? (
+                <p className="mt-3 text-sm leading-relaxed text-sky-800 dark:text-sky-200">
+                  PS4 is suggestive. HGMD {ps4Check.tag}
+                  {ps4Check.pmids.length ? ` · PMIDs ${ps4Check.pmids.join(", ")}` : ""}. Check those papers. It is not in the classification until you apply it.
+                </p>
+              ) : null}
               {spliceReview?.code === "PVS1" && !pvs1Met ? (
                 <p className="mt-3 text-sm leading-relaxed text-muted-foreground">{spliceReview.rationale}</p>
               ) : null}
               <p className="mt-3 text-lg font-semibold">{call || "—"}</p>
-              {canEdit && variantId && !pvs1Met ? (
-                <Button
-                  className="mt-3"
-                  variant="outline"
-                  disabled={addPvs1.isPending}
-                  onClick={() =>
-                    addPvs1.mutate({
-                      organizationId: activeOrganizationId!,
-                      variantId,
-                      runId: entry.id,
-                      strength: pvs1Strength,
-                    })
-                  }
-                >
-                  Add PVS1
-                </Button>
-              ) : null}
               {pvs1Met && reviewerCriteria.some(item => item.code === "PVS1") ? (
                 <p className="mt-2 text-xs text-muted-foreground">
                   PVS1 was added in review. The classification includes it.

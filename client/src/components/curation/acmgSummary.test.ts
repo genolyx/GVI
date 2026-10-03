@@ -38,6 +38,7 @@ describe("criterion evidence sentences", () => {
           nmd_escape: false,
           nmd_escape_truncation_fraction: 0.7956,
           exon_skip_predicted_hgvs_p: "p.Glu107fsTer5",
+          clingen_haplo_score: "3",
         },
       }),
       "PVS1",
@@ -48,7 +49,7 @@ describe("criterion evidence sentences", () => {
     );
   });
 
-  it("asks for a mechanism lookup when PVS1 is met and the mechanism is unknown", () => {
+  it("asks for a mechanism lookup only when ClinGen returns no haploinsufficiency score", () => {
     const sentence = criterionEvidence(
       doc({
         consequence: "splice_donor_variant&intron_variant",
@@ -58,12 +59,29 @@ describe("criterion evidence sentences", () => {
           nmd_escape_truncation_fraction: 0.7956,
           exon_skip_predicted_hgvs_p: "p.Glu107fsTer5",
           disease_mechanism: "Unknown",
+          clingen_haplo_score: "N/A",
         },
       }),
       "PVS1",
       "Canonical splice predicted out-of-frame (presumed NMD)"
     );
     expect(sentence).toContain("Mechanism unknown — look up.");
+  });
+
+  it("states PVS1 without a lookup when ClinGen returned a score", () => {
+    const frameshift = {
+      consequence: "frameshift_variant",
+      parsed: {
+        disease_mechanism: "Unknown",
+        nmd_escape: false,
+        nmd_escape_truncation_fraction: 0.237,
+      },
+    };
+    const lof = criterionEvidence(doc({ ...frameshift, parsed: { ...frameshift.parsed, clingen_haplo_score: "3" } }), "PVS1", "null");
+    const recessive = criterionEvidence(doc({ ...frameshift, parsed: { ...frameshift.parsed, clingen_haplo_score: "30" } }), "PVS1", "null");
+    expect(lof).not.toContain("look up");
+    expect(recessive).not.toContain("look up");
+    expect(lof).toContain("NMD is expected");
   });
 
   it("cites the gnomAD frequency for PM2", () => {

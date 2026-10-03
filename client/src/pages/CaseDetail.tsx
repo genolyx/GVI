@@ -3,6 +3,7 @@ import { PageHeader } from "@/components/PageHeader";
 import { UploadProgress } from "@/components/UploadProgress";
 import { StatePanel } from "@/components/StatePanel";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -23,23 +24,27 @@ import {
   Loader2,
   Terminal,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLocation, useParams } from "wouter";
 import { toast } from "sonner";
 import { formatDateTime } from "@/lib/datetime";
 import { putFileWithProgress } from "@/lib/uploadFile";
+import { GENE_SCOPE_REQUIRED, hasGeneScopeChoice } from "@shared/geneScope";
+import { isVcfFileName } from "@/lib/readVcfHeader";
 import { GermlineOrderFields } from "./GermlineOrderFields";
 import { HpoTermField } from "./HpoTermField";
 import {
   CaseVcfFilters,
+  FilterTestTypeField,
   FrequencyRules,
   GeneListField,
+  filtersFromJobManifest,
   GeneSymbolList,
   defaultVcfFilters,
   vcfFiltersPayload,
   type CaseVcfFilterValues,
 } from "./CaseVcfFilters";
-import { frequencyTrackForOrder, FREQUENCY_TRACK_LABEL } from "@shared/germlineFrequency";
+import { frequencyTrackForOrder, FREQUENCY_TRACK_LABEL, type FrequencyTrack } from "@shared/germlineFrequency";
 import {
   defaultGermlineOrder,
   GERMLINE_SERVICE_LABEL,
@@ -217,6 +222,7 @@ export default function CaseDetailPage() {
   const [draftVcf, setDraftVcf] = useState<File | null>(null);
   const [draftFilters, setDraftFilters] =
     useState<CaseVcfFilterValues>(defaultVcfFilters);
+  const [draftTrack, setDraftTrack] = useState<FrequencyTrack | "">("");
   const [submittingDraft, setSubmittingDraft] = useState(false);
   const [uploadLabel, setUploadLabel] = useState("Uploading");
   const [uploadPercent, setUploadPercent] = useState(0);
@@ -326,21 +332,46 @@ export default function CaseDetailPage() {
     );
   const item = query.data;
   const draftHasVcf = item.files.some(file => file.kind === "vcf");
+  const draftHasGeneScope =
+    item.purpose !== "germline" ||
+    hasGeneScopeChoice({
+      panelGenes: item.germlinePanel?.geneCount ?? 0,
+      panelRegions: item.germlinePanel?.regionCount ?? 0,
+      hpo: item.phenotypeText ?? "",
+      genes: draftFilters.genes,
+    });
   const applyScope = async (scope: {
     panelId?: number;
     genesText?: string;
-    maxAf?: number;
+    maxAf?: number | null;
+    minQual?: number | null;
+    minGenotypeQuality?: number | null;
+    minDepth?: number | null;
+    passOnly?: boolean;
+    track?: FrequencyTrack;
   }) => {
     if (!activeOrganizationId) return;
     const canRun = item.status === "review_ready" || item.status === "failed";
-    const frequencyOnly = scope.panelId == null && !scope.genesText && scope.maxAf != null;
+    const changingPanel = scope.panelId != null || Boolean(scope.genesText);
+    const scopeReady =
+      item.purpose !== "germline" ||
+      hasGeneScopeChoice({
+        panelGenes: changingPanel ? 1 : item.germlinePanel?.geneCount ?? 0,
+        panelRegions: changingPanel ? 0 : item.germlinePanel?.regionCount ?? 0,
+        hpo: requestDraft.phenotypeText,
+        genes: scope.genesText,
+      });
+    if (!scopeReady) {
+      toast.error(GENE_SCOPE_REQUIRED);
+      return;
+    }
     if (
       canRun &&
       draftHasVcf &&
       !window.confirm(
-        frequencyOnly
-          ? `Run ${item.caseNumber} again with maximum allele frequency ${scope.maxAf}? The current panel stays. Stored variants will be replaced.`
-          : `Replace the panel on ${item.caseNumber} and run the existing VCF again? The panel is the gene list for this run. HPO terms stay on the order and do not remove variants. Stored variants will be replaced.`
+        changingPanel
+          ? `Replace the panel on ${item.caseNumber} and run the existing VCF with these filters? Stored variants will be replaced.`
+          : `Run ${item.caseNumber} again with these filters? The current panel stays. Stored variants will be replaced.`
       )
     ) {
       return;
@@ -412,11 +443,10 @@ export default function CaseDetailPage() {
       await submitCase.mutateAsync({
         organizationId: activeOrganizationId,
         caseId: item.id,
-        vcfFilters: vcfFiltersPayload(
-          draftFilters,
-          item.phenotypeText ?? "",
-          frequencyTrackForOrder(item.germlineOrder ?? {})
-        ),
+        vcfFilters:
+          item.purpose === "germline" && draftTrack
+            ? vcfFiltersPayload(draftFilters, item.phenotypeText ?? "", draftTrack)
+            : undefined,
       });
       toast.success("Analysis request submitted.");
       setDraftVcf(null);
@@ -508,7 +538,7 @@ export default function CaseDetailPage() {
               {item.germlinePanel
                 ? ` ${item.germlinePanel.name} (${item.germlinePanel.geneCount.toLocaleString()} genes) is already attached and limits the variants.`
                 : ""}{" "}
-              Choose the VCF, then submit. FILTER PASS and coding changes stay on unless you change them below.
+              Choose the VCF, then submit. Intronic changes stay. FILTER PASS stays on unless you turn it off below.
             </p>
             {draftHasVcf ? (
               <p className="text-sm">A VCF is already on this case.</p>
@@ -531,15 +561,23 @@ export default function CaseDetailPage() {
                   <p className="mt-1 truncate text-[11px] text-muted-foreground">
                     {draftVcf
                       ? `${(draftVcf.size / 1024 / 1024).toFixed(2)} MB`
-                      : "Click to select file"}
+                      : "Click to select a .vcf or .vcf.gz file"}
                   </p>
                 </div>
                 {draftVcf ? <CheckCircle2 className="size-4 text-emerald-600" /> : null}
                 <input
                   type="file"
-                  accept=".vcf,.vcf.gz"
                   className="hidden"
-                  onChange={event => setDraftVcf(event.target.files?.[0] || null)}
+                  onChange={event => {
+                    const chosen = event.target.files?.[0] || null;
+                    event.target.value = "";
+                    if (chosen && !isVcfFileName(chosen.name)) {
+                      setDraftVcf(null);
+                      toast.error("Choose a .vcf or .vcf.gz file.");
+                      return;
+                    }
+                    setDraftVcf(chosen);
+                  }}
                 />
               </label>
             )}
@@ -557,16 +595,25 @@ export default function CaseDetailPage() {
                     ? { panelId: item.germlinePanel.panelId }
                     : null
                 }
-                track={frequencyTrackForOrder(item.germlineOrder ?? {})}
+                track={draftTrack}
+                onTrackChange={setDraftTrack}
               />
             ) : null}
             {submittingDraft ? (
               <UploadProgress label={uploadLabel} percent={uploadPercent} />
             ) : null}
+            {draftHasGeneScope ? null : (
+              <p className="text-sm text-destructive">{GENE_SCOPE_REQUIRED}</p>
+            )}
             <div className="flex justify-end border-t border-border/70 pt-5">
               <Button
                 size="lg"
-                disabled={submittingDraft || (!draftHasVcf && !draftVcf)}
+                disabled={
+                  submittingDraft ||
+                  (!draftHasVcf && !draftVcf) ||
+                  !draftHasGeneScope ||
+                  (item.purpose === "germline" && !draftTrack)
+                }
                 onClick={() => {
                   void submitDraft();
                 }}
@@ -736,6 +783,7 @@ export default function CaseDetailPage() {
           caseStatus={item.status}
           hasVcf={draftHasVcf}
           applyingScope={applyPanel.isPending || saveOrder.isPending}
+          savedManifest={item.jobs[0]?.manifest}
           onApplyScope={scope => {
             void applyScope(scope);
           }}
@@ -946,6 +994,58 @@ function dash(value: string | null | undefined) {
   return value && value.trim() ? value : "—";
 }
 
+function readLimit(
+  value: string,
+  label: string,
+  max: number,
+  integer = false
+): number | null | "invalid" {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const parsed = Number(trimmed);
+  if (
+    !Number.isFinite(parsed) ||
+    parsed < 0 ||
+    parsed > max ||
+    (integer && !Number.isInteger(parsed))
+  ) {
+    toast.error(`${label} must be a number from 0 to ${max}.`);
+    return "invalid";
+  }
+  return parsed;
+}
+
+function LimitField({
+  id,
+  label,
+  value,
+  placeholder,
+  hint,
+  onChange,
+}: {
+  id: string;
+  label: string;
+  value: string;
+  placeholder: string;
+  hint: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div className="space-y-2">
+      <Label htmlFor={id}>{label}</Label>
+      <Input
+        id={id}
+        value={value}
+        onChange={event => onChange(event.target.value)}
+        inputMode="decimal"
+        placeholder={placeholder}
+        className="font-mono"
+      />
+      <p className="text-xs leading-5 text-muted-foreground">{hint}</p>
+    </div>
+  );
+}
+
 function numberOrBlank(value: unknown, blank: string) {
   return typeof value === "number" && Number.isFinite(value) ? String(value) : blank;
 }
@@ -965,8 +1065,8 @@ function appliedFilterRows(jobs: Array<{ manifest: unknown }>): Array<[string, s
     ["Minimum read depth", numberOrBlank(filters.minDepth, "No minimum")],
   ];
   const track = filters.track;
-  if (track === "carrier" || track === "rare_disease" || track === "hereditary_cancer") {
-    rows.unshift(["Frequency track", FREQUENCY_TRACK_LABEL[track]]);
+  if (typeof track === "string" && track in FREQUENCY_TRACK_LABEL) {
+    rows.unshift(["Frequency track", FREQUENCY_TRACK_LABEL[track as FrequencyTrack]]);
   } else {
     if (typeof filters.excludeClinvarBenign === "boolean") {
       rows.splice(3, 0, [
@@ -1191,6 +1291,7 @@ function GermlineOrderSection({
   caseStatus,
   hasVcf,
   applyingScope,
+  savedManifest,
   onApplyScope,
 }: {
   order: { [K in keyof Omit<GermlineOrderInput, "service">]: string } | null;
@@ -1222,17 +1323,34 @@ function GermlineOrderSection({
   caseStatus: string;
   hasVcf: boolean;
   applyingScope: boolean;
-  onApplyScope: (scope: { panelId?: number; genesText?: string; maxAf?: number }) => void;
+  savedManifest: unknown;
+  onApplyScope: (scope: {
+    panelId?: number;
+    genesText?: string;
+    maxAf?: number | null;
+    minQual?: number | null;
+    minGenotypeQuality?: number | null;
+    minDepth?: number | null;
+    passOnly?: boolean;
+    track?: FrequencyTrack;
+  }) => void;
 }) {
-  const [scopeFilters, setScopeFilters] = useState<CaseVcfFilterValues>({
-    ...defaultVcfFilters,
-    maxAf: "",
-  });
+  const [scopeFilters, setScopeFilters] = useState<CaseVcfFilterValues>(defaultVcfFilters);
   const [scopePanelId, setScopePanelId] = useState("");
+  const [scopeTrack, setScopeTrack] = useState<FrequencyTrack | "">("");
+  const wasEditing = useRef(false);
+  useEffect(() => {
+    if (editing && !wasEditing.current) {
+      const saved = filtersFromJobManifest(savedManifest);
+      setScopeFilters(saved.values);
+      setScopePanelId("");
+      setScopeTrack(saved.track ?? "");
+    }
+    wasEditing.current = editing;
+  }, [editing, savedManifest]);
   const canRun = caseStatus === "review_ready" || caseStatus === "failed";
-  const frequencyText = scopeFilters.maxAf.trim();
   const scopeReady = Boolean(
-    scopePanelId || scopeFilters.genes.trim() || (frequencyText && hasVcf && canRun)
+    scopeTrack && ((hasVcf && canRun) || scopePanelId || scopeFilters.genes.trim())
   );
   const empty: Record<keyof GermlineOrderInput, string> = {
     ...defaultGermlineOrder,
@@ -1281,9 +1399,8 @@ function GermlineOrderSection({
           <section className="space-y-4 rounded-xl border border-border/70 p-4">
             <h3 className="text-sm font-semibold">Case request</h3>
             <p className="text-xs leading-5 text-muted-foreground">
-              Assay, HPO terms, and clinical indication can be corrected here. Saving the order does not re-run the VCF.
-              A panel or gene list is the gene filter for this run. HPO terms stay on the order and do not remove variants.
-              {hasVcf && canRun ? " The VCF already stored here is used." : ""}
+              Saving the order does not re-run the VCF. Apply and run uses the filters below on the VCF already stored here.
+              A panel or gene list is the gene filter. HPO terms stay on the order and do not remove variants.
             </p>
             <div className="space-y-3 rounded-xl border border-border/70 p-4">
               <p className="text-sm font-medium">Panel or gene list</p>
@@ -1301,42 +1418,85 @@ function GermlineOrderSection({
                 }}
                 onListId={setScopePanelId}
               />
-              <div className="space-y-2">
-                <Label htmlFor="case-rerun-af">Maximum allele frequency</Label>
-                <Input
+              <FilterTestTypeField
+                id="case-rerun-track"
+                track={scopeTrack}
+                onChange={setScopeTrack}
+              />
+              {scopeTrack ? <FrequencyRules track={scopeTrack} showTitle={false} /> : null}
+              <div className="grid gap-4 sm:grid-cols-2">
+                <LimitField
                   id="case-rerun-af"
+                  label="Maximum allele frequency"
                   value={scopeFilters.maxAf}
-                  onChange={event =>
-                    setScopeFilters(current => ({ ...current, maxAf: event.target.value }))
-                  }
-                  inputMode="decimal"
                   placeholder="0.001"
-                  className="max-w-xs font-mono"
+                  hint="Blank skips the limit. 0.001 is 0.1%. 0.05 is 5%."
+                  onChange={maxAf => setScopeFilters(current => ({ ...current, maxAf }))}
                 />
+                <LimitField
+                  id="case-rerun-qual"
+                  label="Minimum QUAL"
+                  value={scopeFilters.minQual}
+                  placeholder="30"
+                  hint="Blank skips QUAL."
+                  onChange={minQual => setScopeFilters(current => ({ ...current, minQual }))}
+                />
+                <LimitField
+                  id="case-rerun-gq"
+                  label="Minimum genotype quality (GQ)"
+                  value={scopeFilters.minGq}
+                  placeholder="20"
+                  hint="Blank skips GQ."
+                  onChange={minGq => setScopeFilters(current => ({ ...current, minGq }))}
+                />
+                <LimitField
+                  id="case-rerun-dp"
+                  label="Minimum read depth (DP)"
+                  value={scopeFilters.minDepth}
+                  placeholder="10"
+                  hint="Blank skips read depth."
+                  onChange={minDepth => setScopeFilters(current => ({ ...current, minDepth }))}
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="flex items-center gap-2.5 text-sm">
+                  <Checkbox
+                    checked={scopeFilters.passOnly}
+                    onCheckedChange={checked =>
+                      setScopeFilters(current => ({ ...current, passOnly: checked === true }))
+                    }
+                  />
+                  FILTER is PASS
+                </label>
                 <p className="text-xs leading-5 text-muted-foreground">
-                  Leave blank to keep the last run. 0.001 is 0.1%. 0.05 removes variants whose gnomAD frequency is above 5%.
+                  PASS means the caller did not flag the site. Uncheck this to also keep sites marked LowQual or another filter name.
                 </p>
-                <FrequencyRules
-                  track={frequencyTrackForOrder({
-                    testCategory: draft.testCategory,
-                    packageCode: draft.packageCode,
-                    otherTestType: draft.otherTestType,
-                  })}
-                />
               </div>
               <Button
                 type="button"
                 disabled={!scopeReady || applyingScope || caseStatus === "queued" || caseStatus === "running"}
                 onClick={() => {
-                  const maxAf = frequencyText ? Number(frequencyText) : undefined;
-                  if (frequencyText && (maxAf == null || !Number.isFinite(maxAf) || maxAf < 0 || maxAf > 1)) {
-                    toast.error("Maximum allele frequency must be a number from 0 to 1.");
+                  const maxAf = readLimit(scopeFilters.maxAf, "Maximum allele frequency", 1);
+                  const minQual = readLimit(scopeFilters.minQual, "Minimum QUAL", 1_000_000);
+                  const minGq = readLimit(scopeFilters.minGq, "Minimum genotype quality", 100);
+                  const minDepth = readLimit(scopeFilters.minDepth, "Minimum read depth", 100_000, true);
+                  if (
+                    maxAf === "invalid" ||
+                    minQual === "invalid" ||
+                    minGq === "invalid" ||
+                    minDepth === "invalid"
+                  ) {
                     return;
                   }
                   onApplyScope({
                     panelId: scopePanelId ? Number(scopePanelId) : undefined,
                     genesText: scopeFilters.genes.trim() || undefined,
                     maxAf,
+                    minQual,
+                    minGenotypeQuality: minGq,
+                    minDepth,
+                    passOnly: scopeFilters.passOnly,
+                    track: scopeTrack || undefined,
                   });
                 }}
               >

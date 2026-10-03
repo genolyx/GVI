@@ -20,6 +20,7 @@ import {
   reapExpiredCurationLeases,
 } from "./domain/curationQueue";
 import { requireDb } from "./domain/tenant";
+import { notifyCuration } from "./telegramNotify";
 import { storageCreateUploadUrl } from "./storage";
 
 /**
@@ -229,6 +230,7 @@ export function registerEngineApiRoutes(app: Express) {
               eq(curationRuns.status, "loading")
             )
           );
+        void notifyCuration(run, "running");
       }
       await db.insert(curationRunEvents).values({
         organizationId: run.organizationId,
@@ -348,6 +350,7 @@ export function registerEngineApiRoutes(app: Express) {
         });
       }
 
+      void notifyCuration(run, "completed");
       await writeAuditEvent({
         organizationId: run.organizationId,
         actorUserId: null,
@@ -427,6 +430,7 @@ export function registerEngineApiRoutes(app: Express) {
         });
       });
 
+      if (!requeue) void notifyCuration(run, "failed", input.error.message);
       res.json({ success: true, requeued: requeue });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Fail report rejected";

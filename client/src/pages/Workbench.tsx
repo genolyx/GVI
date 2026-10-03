@@ -12,7 +12,6 @@ import { StatePanel } from "@/components/StatePanel";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -29,19 +28,21 @@ import {
   SOMATIC_TIERS,
 } from "@shared/clinical-standards";
 import { isSplicePredictorSource } from "@shared/curation/document";
+import {
+  INSTITUTIONAL_CLASSIFICATIONS,
+  institutionalLabelForAcmg,
+} from "@shared/curation/institutional";
+import { clinvarRecordUrl } from "@/lib/clinvarLabel";
+import { hgmdPs4Check } from "@shared/curation/hgmdPs4";
 import { savedStrength, type SavedReviewCriterion } from "@shared/curation/savedCriteria";
 import {
   ArrowLeft,
-  BookOpen,
   Bot,
   CheckCircle2,
   ChevronRight,
-  ExternalLink,
   Filter,
   FlaskConical,
-  Loader2,
   Microscope,
-  RefreshCw,
   Save,
   Search,
   ShieldAlert,
@@ -50,7 +51,6 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { useLocation, useParams } from "wouter";
-import { formatDate, formatDateTime } from "@/lib/datetime";
 import SomaticWorkbenchPage from "./SomaticWorkbench";
 
 type Impact = "HIGH" | "MODERATE" | "LOW" | "MODIFIER" | "UNKNOWN";
@@ -106,11 +106,13 @@ function GermlineWorkbenchPage() {
   const [conversationId, setConversationId] = useState<number | undefined>();
   const [localMessages, setLocalMessages] = useState<Message[]>([]);
   const [classification, setClassification] = useState<string>("");
+  const [institutionalLabel, setInstitutionalLabel] = useState("");
+  const institutionalFollowsClassification = useRef(false);
   const [somaticTier, setSomaticTier] = useState<string>("");
   const [oncogenicity, setOncogenicity] = useState<string>("");
   const [rationale, setRationale] = useState("");
   const [diseaseContext, setDiseaseContext] = useState("");
-  const [detailTab, setDetailTab] = useState("evidence");
+  const [detailTab, setDetailTab] = useState("curation");
   const [activeCriterion, setActiveCriterion] =
     useState<(typeof ACMG_CRITERIA)[number]>("PVS1");
   const [criterionState, setCriterionState] = useState<CriterionState>("met");
@@ -132,7 +134,7 @@ function GermlineWorkbenchPage() {
       triageTier: tierFilter === "all" ? undefined : tierFilter,
       sortBy: tierFilter === "all" ? "impact" : "triageScore",
       sortDirection: tierFilter === "all" ? "asc" : "desc",
-      limit: 500,
+      limit: 8000,
     },
     { enabled: Boolean(activeOrganizationId && caseId && canReadVariants) }
   );
@@ -159,6 +161,11 @@ function GermlineWorkbenchPage() {
   const reviewRun = (classifierRuns.data ?? []).find(
     run => run.variantId === selectedId && run.status === "succeeded" && run.batchId
   );
+  const classifiedRun = (classifierRuns.data ?? []).find(
+    run => run.variantId === selectedId && run.status === "succeeded"
+  );
+  const storedInstitutional =
+    list.data?.find(row => row.id === selectedId)?.institutionalLabel ?? "";
   const detail = trpc.variants.detail.useQuery(
     { organizationId: activeOrganizationId || 0, variantId: selectedId || 0 },
     { enabled: Boolean(activeOrganizationId && selectedId && canReadVariants) }
@@ -166,6 +173,29 @@ function GermlineWorkbenchPage() {
   const ledgerEvidence = (detail.data?.evidence ?? []).filter(
     item => !isSplicePredictorSource(item.source)
   );
+  const classifiedDocument = trpc.curation.document.useQuery(
+    { organizationId: activeOrganizationId || 0, runId: classifiedRun?.id || 0 },
+    { enabled: Boolean(activeOrganizationId && classifiedRun?.id && canReadVariants) }
+  );
+  const evidenceLinks = useMemo(
+    () =>
+      ledgerEvidence.filter(item => {
+        if (!item.url) return false;
+        const excerpt = item.excerpt?.trim() ?? "";
+        if (!excerpt || excerpt === "N/A") return false;
+        if (/^HGMD:\s*Not Found$/i.test(excerpt)) return false;
+        if (/not found in public databases/i.test(excerpt)) return false;
+        if (item.source === "ClinVar") return false;
+        return true;
+      }),
+    [ledgerEvidence]
+  );
+  const ps4Check = useMemo(() => {
+    const parsed = classifiedDocument.data?.document.engine.parsedData;
+    if (parsed) return hgmdPs4Check(parsed.hgmd_local, parsed.hgmd_excel_pmids);
+    const hgmd = ledgerEvidence.find(item => item.source === "HGMD");
+    return hgmdPs4Check(hgmd?.excerpt);
+  }, [classifiedDocument.data?.document.engine.parsedData, ledgerEvidence]);
   const models = trpc.copilot.models.useQuery(undefined, {
     staleTime: 60_000,
     enabled: canReadVariants,
@@ -200,26 +230,44 @@ function GermlineWorkbenchPage() {
     setConversationId(detail.data?.conversations[0]?.id);
     setLocalMessages([]);
   }, [selectedId, detail.data?.interpretations, detail.data?.conversations]);
+  useEffect(() => {
+    institutionalFollowsClassification.current = false;
+  }, [selectedId]);
+  useEffect(() => {
+    if (institutionalFollowsClassification.current) return;
+    if (storedInstitutional) {
+      setInstitutionalLabel(storedInstitutional);
+      return;
+    }
+    const suggestion = detail.data?.acmgSuggestion?.classification;
+    setInstitutionalLabel(suggestion ? institutionalLabelForAcmg(suggestion) : "");
+  }, [selectedId, storedInstitutional, detail.data?.acmgSuggestion?.classification]);
   const savedCriterion = detail.data?.criteria.find(item => item.code === activeCriterion);
   useEffect(() => {
     const undecided =
       !savedCriterion || (savedCriterion.state === "not_met" && !savedCriterion.note?.trim());
     setCriterionState(undecided ? "met" : (savedCriterion.state as CriterionState));
-    setCriterionNote(undecided ? "" : savedCriterion.note || "");
+    setCriterionNote(
+      undecided
+        ? activeCriterion === "PS4" && ps4Check
+          ? ps4Check.note
+          : ""
+        : savedCriterion.note || ""
+    );
     setCriterionStrength(savedStrength(savedCriterion?.strengthOverride, activeCriterion));
-  }, [selectedId, activeCriterion, savedCriterion]);
+  }, [selectedId, activeCriterion, savedCriterion, ps4Check]);
 
-  const refresh = trpc.variants.refreshEvidence.useMutation({
-    onSuccess: async result => {
-      await detail.refetch();
-      toast.success(`Added ${result.count} items to the Evidence Ledger.`);
-    },
-    onError: error => toast.error(error.message),
-  });
   const setReviewStatus = trpc.variants.setReviewStatus.useMutation({
     onSuccess: async () => {
       await Promise.all([detail.refetch(), list.refetch()]);
       toast.success("Review status updated.");
+    },
+    onError: error => toast.error(error.message),
+  });
+  const saveInstitutional = trpc.workbench.setInstitutional.useMutation({
+    onSuccess: async () => {
+      await list.refetch();
+      toast.success("Institutional classification saved.");
     },
     onError: error => toast.error(error.message),
   });
@@ -231,11 +279,13 @@ function GermlineWorkbenchPage() {
     onError: error => toast.error(error.message),
   });
   const saveCriterion = trpc.variants.saveCriterion.useMutation({
-    onSuccess: async result => {
+    onSuccess: async (result, variables) => {
+      institutionalFollowsClassification.current = true;
+      setClassification(result.classification);
+      setInstitutionalLabel(institutionalLabelForAcmg(result.classification));
       await Promise.all([detail.refetch(), list.refetch()]);
-      toast.success(
-        `${activeCriterion} saved. Classification is now ${result.classification}.`
-      );
+      const verb = variables.state === "met" ? "added" : "removed";
+      toast.success(`${variables.code} ${verb}. Classification is now ${result.classification}.`);
     },
     onError: error => toast.error(error.message),
   });
@@ -266,6 +316,15 @@ function GermlineWorkbenchPage() {
       new Map(detail.data?.criteria.map(item => [item.code, item.state]) || []),
     [detail.data?.criteria]
   );
+  const engineCriteria = useMemo(() => {
+    const codes = classifiedRun?.summary?.criteriaCodes ?? [];
+    const bases: string[] = [];
+    for (const code of codes) {
+      const bare = code.split("_")[0];
+      if (bare && !bases.includes(bare)) bases.push(bare);
+    }
+    return bases;
+  }, [classifiedRun?.summary?.criteriaCodes]);
   const handleSave = (submitForReview: boolean) => {
     if (!selectedId || !caseQuery.data) return;
     saveInterpretation.mutate({
@@ -302,13 +361,7 @@ function GermlineWorkbenchPage() {
       question,
     });
   };
-  const failedMutation = refresh.error
-    ? {
-        title: "Failed to refresh public evidence",
-        message: refresh.error.message,
-        retry: () => refresh.variables && refresh.mutate(refresh.variables),
-      }
-    : saveInterpretation.error
+  const failedMutation = saveInterpretation.error
       ? {
           title: "Failed to save interpretation",
           message: saveInterpretation.error.message,
@@ -688,9 +741,6 @@ function GermlineWorkbenchPage() {
                       <h2 className="font-display text-lg font-semibold">
                         {detail.data.variant.gene || "Intergenic"}
                       </h2>
-                      <Badge variant="outline">
-                        {detail.data.variant.variantType}
-                      </Badge>
                       {reviewRun?.batchId ? (
                         <Button
                           type="button"
@@ -706,21 +756,33 @@ function GermlineWorkbenchPage() {
                           Review
                         </Button>
                       ) : null}
-                      {canEditInterpretation &&
-                      clinicalCase.purpose === "germline" &&
-                      !detail.data.criteria.some(
-                        item => item.code === "PVS1" && item.state === "met"
-                      ) ? (
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          className="h-6 px-2 text-[10px]"
-                          onClick={() => setDetailTab("curation")}
+                      {detail.data.variant.clinvarSignificance ? (
+                        <a
+                          href={
+                            detail.data.clinvarVariationId
+                              ? `https://www.ncbi.nlm.nih.gov/clinvar/variation/${detail.data.clinvarVariationId}/`
+                              : clinvarRecordUrl(detail.data.variant) || "https://www.ncbi.nlm.nih.gov/clinvar/"
+                          }
+                          target="_blank"
+                          rel="noreferrer"
+                          title={detail.data.variant.clinvarSignificance}
+                          className="inline-flex h-6 items-center rounded-full border border-input bg-background px-2.5 text-[10px] font-medium hover:bg-muted"
                         >
-                          Add PVS1
-                        </Button>
+                          ClinVar
+                        </a>
                       ) : null}
+                      {evidenceLinks.map(item => (
+                        <a
+                          key={item.id}
+                          href={item.url!}
+                          target="_blank"
+                          rel="noreferrer"
+                          title={item.excerpt || item.source}
+                          className="inline-flex h-6 items-center rounded-full border border-input bg-background px-2.5 text-[10px] font-medium hover:bg-muted"
+                        >
+                          {item.source}
+                        </a>
+                      ))}
                     </div>
                     <p className="mt-2 font-mono text-xs text-muted-foreground">
                       {detail.data.variant.hgvsC ||
@@ -773,12 +835,8 @@ function GermlineWorkbenchPage() {
               </div>
               <Tabs value={detailTab} onValueChange={setDetailTab} className="p-4">
                 <TabsList
-                  className={`grid w-full ${canEditInterpretation ? "grid-cols-4" : "grid-cols-3"}`}
+                  className={`grid w-full ${canEditInterpretation ? "grid-cols-3" : "grid-cols-2"}`}
                 >
-                  <TabsTrigger value="evidence">
-                    <BookOpen className="mr-2 size-3.5" />
-                    Evidence
-                  </TabsTrigger>
                   <TabsTrigger value="curation">
                     <Microscope className="mr-2 size-3.5" />
                     Curation
@@ -814,119 +872,6 @@ function GermlineWorkbenchPage() {
                       Promise.all([detail.refetch(), list.refetch()])
                     }
                   />
-                </TabsContent>
-                <TabsContent value="evidence" className="mt-4">
-                  <div className="mb-3 flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-semibold">Evidence Ledger</p>
-                      <p className="text-[10px] text-muted-foreground">
-                        Source · access time · clinical axis preserved
-                      </p>
-                    </div>
-                    {hasPermission("interpretation:edit") ? (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() =>
-                          refresh.mutate({
-                            organizationId: activeOrganizationId!,
-                            variantId: selectedId,
-                          })
-                        }
-                        disabled={refresh.isPending}
-                      >
-                        {refresh.isPending ? (
-                          <Loader2 className="mr-2 size-3.5 animate-spin" />
-                        ) : (
-                          <RefreshCw className="mr-2 size-3.5" />
-                        )}
-                        Refresh public evidence
-                      </Button>
-                    ) : null}
-                  </div>
-                  <ScrollArea className="h-[490px] pr-3">
-                    <div className="space-y-3">
-                      {ledgerEvidence.length ? (
-                        ledgerEvidence.map(item => (
-                          <Card key={item.id} className="shadow-none">
-                            <CardContent className="p-4">
-                              <div className="flex items-start justify-between gap-3">
-                                <div className="flex flex-wrap gap-1.5">
-                                  <Badge variant="outline">{item.source}</Badge>
-                                  <Badge variant="outline">
-                                    {item.clinicalDomain}
-                                  </Badge>
-                                </div>
-                                {item.url ? (
-                                  <a
-                                    href={item.url}
-                                    target="_blank"
-                                    rel="noreferrer"
-                                    className="text-muted-foreground hover:text-primary"
-                                  >
-                                    <ExternalLink className="size-3.5" />
-                                  </a>
-                                ) : null}
-                              </div>
-                              <p className="mt-3 text-xs font-semibold leading-5">
-                                {item.title}
-                              </p>
-                              <p className="mt-2 text-[11px] leading-5 text-muted-foreground">
-                                {item.excerpt}
-                              </p>
-                              <div className="mt-3 flex items-center justify-between border-t border-border/60 pt-2 text-[9px] text-muted-foreground">
-                                <span>
-                                  {item.direction} ·{" "}
-                                  {item.evidenceLevel || "level not assigned"}
-                                </span>
-                                <span>{formatDate(item.accessedAt)}</span>
-                              </div>
-                            </CardContent>
-                          </Card>
-                        ))
-                      ) : (
-                        <div className="rounded-xl border border-dashed py-14 text-center">
-                          <BookOpen className="mx-auto size-7 text-muted-foreground/35" />
-                          <p className="mt-3 text-xs font-medium">
-                            No evidence stored
-                          </p>
-                          <p className="mt-1 text-[10px] text-muted-foreground">
-                            Refresh public evidence, then have an expert review
-                            the sources.
-                          </p>
-                        </div>
-                      )}
-                      <div className="mt-5 border-t border-border/70 pt-4">
-                        <p className="mb-3 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                          Variant audit history
-                        </p>
-                        {detail.data.audit.length ? (
-                          detail.data.audit.map(event => (
-                            <div
-                              key={event.id}
-                              className="mb-2 flex items-start justify-between gap-3 rounded-lg bg-muted/50 px-3 py-2"
-                            >
-                              <div>
-                                <p className="text-[10px] font-medium">
-                                  {event.action}
-                                </p>
-                                <p className="mt-1 font-mono text-[9px] text-muted-foreground">
-                                  request {event.requestId.slice(0, 12)}
-                                </p>
-                              </div>
-                              <span className="whitespace-nowrap text-[9px] text-muted-foreground">
-                                {formatDateTime(event.createdAt)}
-                              </span>
-                            </div>
-                          ))
-                        ) : (
-                          <p className="text-[10px] text-muted-foreground">
-                            No variant change events recorded yet.
-                          </p>
-                        )}
-                      </div>
-                    </div>
-                  </ScrollArea>
                 </TabsContent>
                 {hasPermission("interpretation:edit") ? (
                   <TabsContent value="classification" className="mt-4">
@@ -991,19 +936,83 @@ function GermlineWorkbenchPage() {
                               <div className="mb-2 flex items-center justify-between">
                                 <Label>ACMG 2015 criteria</Label>
                                 <span className="text-[9px] text-muted-foreground">
-                                  Select a code to record assessment
+                                  Click a code to apply it. Click it again to remove it. A yellow border is an engine code you removed.
                                 </span>
                               </div>
+                              {engineCriteria.length ? (
+                                <p className="mb-2 text-[10px] text-muted-foreground">
+                                  Engine applied {engineCriteria.join(", ")}.
+                                </p>
+                              ) : null}
+                              {ps4Check && criteriaMap.get("PS4") !== "met" ? (
+                                <p className="mb-2 text-[10px] leading-4 text-sky-800 dark:text-sky-200">
+                                  PS4 is suggestive. HGMD {ps4Check.tag}
+                                  {ps4Check.pmids.length ? ` · PMIDs ${ps4Check.pmids.join(", ")}` : ""}. Check the papers, then apply it. It is not in the classification yet.
+                                </p>
+                              ) : null}
                               <div className="grid grid-cols-6 gap-1.5">
-                                {ACMG_CRITERIA.map(code => (
-                                  <button
-                                    key={code}
-                                    onClick={() => setActiveCriterion(code)}
-                                    className={`rounded-md border px-1 py-2 font-mono text-[9px] font-semibold ${activeCriterion === code ? "border-primary bg-primary text-primary-foreground" : criteriaMap.get(code) === "met" ? "border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-300/40 dark:bg-emerald-400/15 dark:text-emerald-100" : "border-border bg-card text-muted-foreground"}`}
-                                  >
-                                    {code}
-                                  </button>
-                                ))}
+                                {ACMG_CRITERIA.map(code => {
+                                  const met = criteriaMap.get(code) === "met";
+                                  const fromEngine = engineCriteria.includes(code);
+                                  const suggestive = code === "PS4" && Boolean(ps4Check) && !met && !fromEngine;
+                                  const saved = detail.data?.criteria.find(item => item.code === code);
+                                  return (
+                                    <button
+                                      key={code}
+                                      type="button"
+                                      title={
+                                        met
+                                          ? `Remove ${code}`
+                                          : fromEngine
+                                            ? `Engine applied ${code}. Click to add it back.`
+                                            : suggestive
+                                              ? `HGMD ${ps4Check?.tag}. Check the papers, then apply PS4.`
+                                              : `Apply ${code}`
+                                      }
+                                      disabled={saveCriterion.isPending}
+                                      onClick={() => {
+                                        setActiveCriterion(code);
+                                        if (suggestive || !currentInterpretation) return;
+                                        if (met) {
+                                          saveCriterion.mutate({
+                                            organizationId: activeOrganizationId!,
+                                            interpretationId: currentInterpretation.id,
+                                            code,
+                                            state: "not_met",
+                                            strengthOverride: savedStrength(saved?.strengthOverride, code),
+                                            note: saved?.note?.trim() || "Removed during review.",
+                                          });
+                                          return;
+                                        }
+                                        const kept = saved?.note?.trim();
+                                        saveCriterion.mutate({
+                                          organizationId: activeOrganizationId!,
+                                          interpretationId: currentInterpretation.id,
+                                          code,
+                                          state: "met",
+                                          strengthOverride: savedStrength(saved?.strengthOverride, code),
+                                          note:
+                                            kept && kept !== "Removed during review."
+                                              ? kept
+                                              : fromEngine
+                                                ? "Restored during review."
+                                                : "Applied during review.",
+                                        });
+                                      }}
+                                      className={`rounded-md border px-1 py-2 font-mono text-[9px] font-semibold ${
+                                        met
+                                          ? "border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-300/40 dark:bg-emerald-400/15 dark:text-emerald-100"
+                                          : fromEngine
+                                            ? "border-dashed border-amber-400 bg-amber-400/10 text-amber-800 dark:text-amber-200"
+                                            : suggestive
+                                              ? "border-dashed border-sky-400 bg-sky-400/10 text-sky-800 dark:text-sky-200"
+                                              : "border-border bg-card text-muted-foreground"
+                                      }`}
+                                    >
+                                      {code}
+                                    </button>
+                                  );
+                                })}
                               </div>
                               <div className="mt-3 rounded-xl border border-border bg-card p-3">
                                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1224,6 +1233,24 @@ function GermlineWorkbenchPage() {
                             placeholder="Describe evidence application, conflicting information, disease context, and limitations."
                           />
                         </div>
+                        {clinicalCase.purpose === "germline" ? (
+                          <div className="space-y-2">
+                            <Label>Institutional classification</Label>
+                            <select
+                              aria-label="Institutional classification"
+                              value={institutionalLabel}
+                              onChange={event => setInstitutionalLabel(event.target.value)}
+                              className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm"
+                            >
+                              <option value="">Not set</option>
+                              {INSTITUTIONAL_CLASSIFICATIONS.map(option => (
+                                <option key={option.label} value={option.label}>
+                                  {option.short}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        ) : null}
                         <div className="grid gap-2 sm:grid-cols-2">
                           <Button
                             variant="outline"
@@ -1236,16 +1263,37 @@ function GermlineWorkbenchPage() {
                             <Save className="mr-2 size-4" />
                             Save draft
                           </Button>
-                          <Button
-                            disabled={
-                              saveInterpretation.isPending ||
-                              rationale.trim().length < 20
-                            }
-                            onClick={() => handleSave(true)}
-                          >
-                            <CheckCircle2 className="mr-2 size-4" />
-                            Submit for review
-                          </Button>
+                          {clinicalCase.purpose === "germline" ? (
+                            <Button
+                              disabled={
+                                saveInstitutional.isPending ||
+                                !classifiedRun ||
+                                !institutionalLabel
+                              }
+                              onClick={() =>
+                                classifiedRun &&
+                                saveInstitutional.mutate({
+                                  organizationId: activeOrganizationId!,
+                                  runId: classifiedRun.id,
+                                  label: institutionalLabel,
+                                })
+                              }
+                            >
+                              <Save className="mr-2 size-4" />
+                              Save institutional classification
+                            </Button>
+                          ) : (
+                            <Button
+                              disabled={
+                                saveInterpretation.isPending ||
+                                rationale.trim().length < 20
+                              }
+                              onClick={() => handleSave(true)}
+                            >
+                              <CheckCircle2 className="mr-2 size-4" />
+                              Submit for review
+                            </Button>
+                          )}
                         </div>
                         {currentInterpretation?.status === "in_review" &&
                         hasPermission("interpretation:approve") ? (

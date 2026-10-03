@@ -101,21 +101,42 @@ describe("frequency exemptions", () => {
     ).toBe(true);
   });
 
-  it("keeps named cancer founders only on the cancer track", () => {
+  it("drops a common pathogenic allele when no test type is selected", () => {
+    expect(
+      keepsAtAnyFrequency(allele({ gene: "HBB", hgvsC: "c.20A>T", hgvsP: "p.Glu7Val" }), {
+        ...carrier,
+        track: "none",
+      })
+    ).toBe(false);
+    expect(
+      keepsAtAnyFrequency(
+        allele({ gene: "BRCA1", hgvsC: "c.68_69delAG" }),
+        { ...carrier, track: "none" }
+      )
+    ).toBe(false);
+  });
+
+  it("keeps a dominant ClinVar pathogenic allele above the limit on the clinical tracks", () => {
     const founder = allele({
       gene: "BRCA1",
       hgvsC: "c.68_69delAG",
       clinvarSignificance: "Pathogenic",
     });
-    expect(keepsAtAnyFrequency(founder, carrier)).toBe(false);
+    expect(keepsAtAnyFrequency(founder, carrier)).toBe(true);
+    expect(
+      keepsAtAnyFrequency(founder, { ...carrier, track: "rare_disease" })
+    ).toBe(true);
     expect(
       keepsAtAnyFrequency(founder, { ...carrier, track: "hereditary_cancer" })
     ).toBe(true);
+    const unlabeled = allele({
+      gene: "CHEK2",
+      hgvsC: "c.1100delC",
+      clinvarSignificance: null,
+    });
+    expect(keepsAtAnyFrequency(unlabeled, carrier)).toBe(false);
     expect(
-      keepsAtAnyFrequency(
-        allele({ gene: "CHEK2", hgvsC: "c.1100delC", clinvarSignificance: "Pathogenic" }),
-        { ...carrier, track: "hereditary_cancer" }
-      )
+      keepsAtAnyFrequency(unlabeled, { ...carrier, track: "hereditary_cancer" })
     ).toBe(true);
   });
 });
