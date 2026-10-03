@@ -1099,6 +1099,8 @@ export const variants = pgTable(
     populationAf: numeric("populationAf", { precision: 12, scale: 10 }),
     vaf: numeric("vaf", { precision: 12, scale: 10 }),
     readDepth: integer("readDepth"),
+    /** FORMAT AD count for the reference allele. Total depth can be higher. */
+    referenceDepth: integer("referenceDepth"),
     alternateDepth: integer("alternateDepth"),
     impact: variantImpactEnum("impact").default("UNKNOWN").notNull(),
     clinvarSignificance: text("clinvarSignificance"),

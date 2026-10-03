@@ -239,6 +239,7 @@ export const variantsRouter = router({
           populationAf: variants.populationAf,
           vaf: variants.vaf,
           readDepth: variants.readDepth,
+          referenceDepth: variants.referenceDepth,
           alternateDepth: variants.alternateDepth,
           impact: variants.impact,
           clinvarSignificance: variants.clinvarSignificance,

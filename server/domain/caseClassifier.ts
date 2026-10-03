@@ -2,6 +2,11 @@ import { and, desc, eq, isNull } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { cases, curationBatches, curationRuns, variants } from "../../drizzle/schema";
 import { ACTIVE_CURATION_STATUSES, buildCurationInputForVariant, enqueueCurationRun } from "./curationQueue";
+import {
+  findStoredClassification,
+  recordReusedClassification,
+  reuseQueuedClassifications,
+} from "./curationReuse";
 import { ensureCurationWorker } from "./curationWorker";
 import { requireDb } from "./tenant";
 
@@ -13,6 +18,7 @@ export type CaseClassifierSkip = { variantId: number; reason: string };
 
 export type CaseClassifierQueue = {
   queued: number;
+  reused: number;
   skipped: CaseClassifierSkip[];
   worker: "started" | "already_running" | "unavailable" | "not_needed";
   workerError: string | null;
@@ -86,6 +92,9 @@ export async function ensureCaseCurationBatch(args: {
 }
 
 export function classifierQueueMessage(result: CaseClassifierQueue): string {
+  const reused = result.reused
+    ? ` Reused ${result.reused} stored classification(s) without calling the engine.`
+    : "";
   if (result.queued === 0) {
     const classified = result.skipped.filter(item => item.reason === "Already classified").length;
     if (classified > 0 && classified === result.skipped.length) {
@@ -94,7 +103,7 @@ export function classifierQueueMessage(result: CaseClassifierQueue): string {
     const skipped = result.skipped.length
       ? ` ${result.skipped.length} variant(s) were skipped.`
       : "";
-    return `Variant classifier was not queued.${skipped}`;
+    return `Variant classifier was not queued.${reused}${skipped}`;
   }
   const skipped = result.skipped.length ? ` ${result.skipped.length} variant(s) were skipped.` : "";
   const worker =
@@ -105,7 +114,7 @@ export function classifierQueueMessage(result: CaseClassifierQueue): string {
         : result.workerError
           ? ` Classifier worker did not start: ${result.workerError}`
           : "";
-  return `Variant classifier queued for ${result.queued} variant(s).${skipped}${worker}`;
+  return `Variant classifier queued for ${result.queued} variant(s).${reused}${skipped}${worker}`;
 }
 
 /**
@@ -121,6 +130,7 @@ export async function enqueueFilteredCaseVariants(args: {
   requestedBy: number | null;
 }): Promise<CaseClassifierQueue> {
   const db = await requireDb();
+  const reusedQueued = await reuseQueuedClassifications(args.organizationId, args.caseId);
   const rows = await db
     .select({ id: variants.id, gene: variants.gene, hgvsC: variants.hgvsC })
     .from(variants)
@@ -176,11 +186,30 @@ export async function enqueueFilteredCaseVariants(args: {
       : null;
 
   let queued = 0;
+  let reused = reusedQueued;
   for (const variantId of eligible.slice(0, CASE_CLASSIFIER_LIMIT)) {
     try {
       const built = await buildCurationInputForVariant(args.organizationId, variantId, {
         runLiterature: false,
       });
+      const stored = await findStoredClassification(
+        args.organizationId,
+        built.input.gene,
+        built.input.hgvsC
+      );
+      if (stored) {
+        await recordReusedClassification({
+          organizationId: args.organizationId,
+          caseId: built.caseId,
+          variantId,
+          batchId,
+          requestedBy: args.requestedBy,
+          input: built.input,
+          stored,
+        });
+        reused += 1;
+        continue;
+      }
       const result = await enqueueCurationRun({
         organizationId: args.organizationId,
         caseId: built.caseId,
@@ -201,13 +230,14 @@ export async function enqueueFilteredCaseVariants(args: {
   }
 
   if (queued === 0) {
-    return { queued, skipped, worker: "not_needed", workerError: null };
+    return { queued, reused, skipped, worker: "not_needed", workerError: null };
   }
 
   try {
     const worker = ensureCurationWorker();
     return {
       queued,
+      reused,
       skipped,
       worker: worker.alreadyRunning ? "already_running" : "started",
       workerError: null,
@@ -215,6 +245,7 @@ export async function enqueueFilteredCaseVariants(args: {
   } catch (error) {
     return {
       queued,
+      reused,
       skipped,
       worker: "unavailable",
       workerError: error instanceof Error ? error.message : "Could not start the classifier",

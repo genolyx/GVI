@@ -19,6 +19,8 @@ export type ParsedVariant = {
   populationAf: string | null;
   vaf: string | null;
   readDepth: number | null;
+  /** FORMAT AD reference-allele count. Null when the sample has no AD field. */
+  referenceDepth: number | null;
   alternateDepth: number | null;
   impact: "HIGH" | "MODERATE" | "LOW" | "MODIFIER" | "UNKNOWN";
   clinvarSignificance: string | null;
@@ -94,6 +96,7 @@ export function parseVcf(
     const sampleMap = Object.fromEntries(formatKeys.map((key, index) => [key, sampleValues[index]]));
     const depth = Number(sampleMap.DP || info.DP);
     const alleleDepths = sampleMap.AD?.split(",").map(Number) || [];
+    const referenceDepth = Number.isFinite(alleleDepths[0]) ? alleleDepths[0] : null;
     const infoAf = asNumber(info.gnomAD_AF ?? info.POP_AF);
     const siteQuality = quality && quality !== "." ? Number(quality) : null;
 
@@ -145,10 +148,13 @@ export function parseVcf(
         consequence: functional?.consequence || snpEff?.consequence ||
           (typeof info.CONSEQUENCE === "string" ? info.CONSEQUENCE : null),
         variantType: variantType(ref, alt),
+        // Keep the sample GT as written. A diploid 1/1 on chrX stays 1/1;
+        // a haploid 1 stays 1. Sex is not inferred from the chromosome.
         zygosity: sampleMap.GT || null,
         populationAf: populationAf === null ? null : String(populationAf),
         vaf: vaf === null || !Number.isFinite(vaf) ? null : String(vaf),
         readDepth: Number.isFinite(depth) ? depth : null,
+        referenceDepth,
         alternateDepth,
         impact,
         clinvarSignificance:

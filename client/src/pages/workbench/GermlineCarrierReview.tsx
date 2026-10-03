@@ -2,6 +2,7 @@ import { OmimFactCells, type OmimFact } from "@/components/OmimFacts";
 import { TableWidthToggle, tableFrameClass, tableWidthClass, type TableWidthMode } from "@/components/TableWidthToggle";
 import { AnalysisLogDialog } from "./AnalysisLogDialog";
 import { clinvarShortLabels } from "@/lib/clinvarLabel";
+import { alleleDepthLabel, zygosityLabel } from "@/lib/genotype";
 import { classificationTone, entryAction, entryChip, focusClassifierRun, workbenchStatusClass, workbenchStatusLabel } from "./status";
 import { SortHeader, compareSortValues, type SortDirection } from "./sort";
 import { codingHgvs, displayHgvs, displayTranscript } from "@shared/transcript";
@@ -30,6 +31,7 @@ export type CarrierVariantRow = {
   populationAf: string | null;
   vaf: string | null;
   readDepth: number | null;
+  referenceDepth: number | null;
   alternateDepth: number | null;
   clinvarSignificance: string | null;
   reviewStatus: string;
@@ -165,11 +167,7 @@ function variantSortValue(
 }
 
 function alleleDepth(row: CarrierVariantRow) {
-  const alt = row.alternateDepth;
-  const depth = row.readDepth;
-  if (depth == null && alt == null) return "—";
-  if (depth != null && alt != null && depth >= alt) return `${depth - alt}/${alt}`;
-  return `${depth ?? "—"}/${alt ?? "—"}`;
+  return alleleDepthLabel(row.readDepth, row.alternateDepth, row.referenceDepth);
 }
 
 function vafPercent(value: string | null) {
@@ -701,7 +699,7 @@ export function GermlineCarrierReview({
                       ["disease", "Disease"],
                       ["effect", "Effect"],
                       ["zygosity", "Zygosity"],
-                      ["depth", "Allele depth"],
+                      ["depth", "Ref / alt"],
                       ["af", "gnomAD AF"],
                       ["clinvar", "ClinVar"],
                       ["acmg", "ACMG"],
@@ -753,8 +751,15 @@ export function GermlineCarrierReview({
                       <td className="max-w-[10rem] truncate px-3 py-2" title={row.consequence || ""}>
                         {row.consequence || "—"}
                       </td>
-                      <td className="px-3 py-2">{row.zygosity || "—"}</td>
-                      <td className="px-3 py-2">{alleleDepth(row)}</td>
+                      <td className="px-3 py-2" title={zygosityLabel(row.zygosity, row.readDepth, row.alternateDepth).title}>
+                        {zygosityLabel(row.zygosity, row.readDepth, row.alternateDepth).label}
+                      </td>
+                      <td className="px-3 py-2 whitespace-nowrap" title={alleleDepth(row).title}>
+                        {alleleDepth(row).text}
+                        {alleleDepth(row).percent ? (
+                          <span className="ml-2 text-muted-foreground">{alleleDepth(row).percent}</span>
+                        ) : null}
+                      </td>
                       <td className="px-3 py-2">{formatAf(row.populationAf)}</td>
                       <td className="px-3 py-2" title={row.clinvarSignificance || undefined}>
                         {row.clinvarSignificance && clinvarShortLabels(row.clinvarSignificance).length ? (

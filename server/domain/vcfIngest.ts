@@ -24,6 +24,7 @@ export const variantReingestSet = {
   populationAf: sql`excluded."populationAf"`,
   vaf: sql`excluded."vaf"`,
   readDepth: sql`excluded."readDepth"`,
+  referenceDepth: sql`excluded."referenceDepth"`,
   alternateDepth: sql`excluded."alternateDepth"`,
   impact: sql`excluded."impact"`,
   clinvarSignificance: sql`excluded."clinvarSignificance"`,

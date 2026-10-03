@@ -176,6 +176,13 @@
       "when": 1790494257078,
       "tag": "0024_variant_annotation_text",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1790494257079,
+      "tag": "0025_variant_reference_depth",
+      "breakpoints": true
     }
   ]
 }

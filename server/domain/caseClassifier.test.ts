@@ -4,6 +4,7 @@ import { caseCurationBatchName, classifierQueueMessage, type CaseClassifierQueue
 function result(partial: Partial<CaseClassifierQueue>): CaseClassifierQueue {
   return {
     queued: 0,
+    reused: 0,
     skipped: [],
     worker: "not_needed",
     workerError: null,
@@ -38,6 +39,12 @@ describe("classifier queue message", () => {
         result({ skipped: [{ variantId: 1, reason: "Already classified" }] })
       )
     ).toBe("Variant classifier already finished for these variants.");
+  });
+
+  it("reports stored classifications that were reused instead of queued", () => {
+    expect(classifierQueueMessage(result({ queued: 4, reused: 12, worker: "already_running" }))).toBe(
+      "Variant classifier queued for 4 variant(s). Reused 12 stored classification(s) without calling the engine. Classifier worker is already running."
+    );
   });
 
   it("includes a worker failure without hiding the queued count", () => {
