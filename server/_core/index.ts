@@ -91,8 +91,8 @@ async function startServer() {
         const worker = ensureCurationWorker();
         console.log(
           worker.alreadyRunning
-            ? "[curation] classifier already warm"
-            : "[curation] classifier starting; reference data will mount in the background"
+            ? `[curation] ${worker.desired} classifier workers already warm`
+            : `[curation] starting ${worker.started} classifier worker(s); ${worker.desired} configured`
         );
       } catch (error) {
         console.error("[curation] classifier did not start:", error instanceof Error ? error.message : error);

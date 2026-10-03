@@ -2,6 +2,7 @@ import { OmimFactCells, type OmimFact } from "@/components/OmimFacts";
 import { TableWidthToggle, tableFrameClass, tableWidthClass, type TableWidthMode } from "@/components/TableWidthToggle";
 import { AnalysisLogDialog } from "./AnalysisLogDialog";
 import { clinvarShortLabels } from "@/lib/clinvarLabel";
+import { EffectLabel } from "@/components/EffectLabel";
 import { alleleDepthLabel, zygosityLabel } from "@/lib/genotype";
 import { classificationTone, entryAction, entryChip, focusClassifierRun, workbenchStatusClass, workbenchStatusLabel } from "./status";
 import { SortHeader, compareSortValues, type SortDirection } from "./sort";
@@ -743,13 +744,21 @@ export function GermlineCarrierReview({
                       </td>
                       <td className="px-3 py-2">{row.gene || "—"}</td>
                       <td className="px-3 py-2">{clippedHgvs(codingHgvs(row.hgvsC))}</td>
-                      <td className="px-3 py-2">{clippedHgvs(row.hgvsP)}</td>
+                      <td className="px-3 py-2 align-top">
+                        {clippedHgvs(row.hgvsP)}
+                        {row.consequence ? (
+                          <EffectLabel
+                            value={row.consequence}
+                            className="mt-1 block max-w-[16rem] text-[11px] leading-4 text-muted-foreground"
+                          />
+                        ) : null}
+                      </td>
                       <td className="px-3 py-2" title={row.transcript || undefined}>
                         {displayTranscript(row.transcript) || "—"}
                       </td>
                       <OmimFactCells items={row.omim} className="px-3 py-2" />
-                      <td className="max-w-[10rem] truncate px-3 py-2" title={row.consequence || ""}>
-                        {row.consequence || "—"}
+                      <td className="max-w-[14rem] px-3 py-2 align-top">
+                        <EffectLabel value={row.consequence} className="block text-[12px] leading-4" />
                       </td>
                       <td className="px-3 py-2" title={zygosityLabel(row.zygosity, row.readDepth, row.alternateDepth).title}>
                         {zygosityLabel(row.zygosity, row.readDepth, row.alternateDepth).label}

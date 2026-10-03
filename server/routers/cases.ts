@@ -23,6 +23,7 @@ import {
 import { protectedProcedure, router } from "../_core/trpc";
 import { writeAuditEvent } from "../domain/audit";
 import { requireDb, requireOrganizationPermission } from "../domain/tenant";
+import { frequencyTrackForOrder } from "@shared/germlineFrequency";
 import {
   germlineOrderRow,
   germlineOrderSchema,
@@ -49,6 +50,7 @@ import {
   selectVcfRecords,
   variantInsertRow,
   vcfFilterSchema,
+  withFrequencyTrack,
   type VcfFilterInput,
 } from "../domain/vcfSelection";
 import { browserUploadPath, storageCreateUploadUrl, storageGetSignedUrl, storagePut } from "../storage";
@@ -110,6 +112,25 @@ async function requireCase(organizationId: number, caseId: number) {
   if (!rows[0])
     throw new TRPCError({ code: "NOT_FOUND", message: "Case not found" });
   return rows[0];
+}
+
+async function frequencyTrackForCase(organizationId: number, caseId: number) {
+  const db = await requireDb();
+  const rows = await db
+    .select({
+      testCategory: germlineOrderDetails.testCategory,
+      packageCode: germlineOrderDetails.packageCode,
+      otherTestType: germlineOrderDetails.otherTestType,
+    })
+    .from(germlineOrderDetails)
+    .where(
+      and(
+        eq(germlineOrderDetails.organizationId, organizationId),
+        eq(germlineOrderDetails.caseId, caseId)
+      )
+    )
+    .limit(1);
+  return frequencyTrackForOrder(rows[0] ?? {});
 }
 
 async function startOriginalVcfRun(args: {
@@ -1830,6 +1851,12 @@ export const casesRouter = router({
       }
       const idempotencyKey = randomUUID();
       const pipeline = "vcf_ingest" as const;
+      const submittedFilters = input.vcfFilters
+        ? withFrequencyTrack(
+            input.vcfFilters,
+            await frequencyTrackForCase(input.organizationId, input.caseId)
+          )
+        : null;
       const manifest = {
         schemaVersion: "1.0",
         serviceCode: "gvi_vcf_ingest",
@@ -1845,7 +1872,7 @@ export const casesRouter = router({
           sha256: file.sha256,
         })),
         vcfFilters:
-          clinicalCase.inputType === "vcf" ? (input.vcfFilters ?? null) : null,
+          clinicalCase.inputType === "vcf" ? submittedFilters : null,
       };
       const jobId = await db.transaction(async tx => {
         const result = await tx
@@ -1898,7 +1925,7 @@ export const casesRouter = router({
           vcfFile,
           referenceBuild: clinicalCase.referenceBuild,
           purpose: clinicalCase.purpose,
-          vcfFilters: input.vcfFilters ?? null,
+          vcfFilters: submittedFilters,
         };
         void ingestVcfForJob(ingestArgs).catch(error => {
           console.error("[vcf_ingest] background ingest failed", {
@@ -2177,18 +2204,21 @@ export const casesRouter = router({
         : null;
       const previous = stored?.success ? stored.data : null;
       const extraGenes = input.panelId != null ? genesText : "";
-      const vcfFilters: VcfFilterInput = {
-        hpo: "",
-        genes: extraGenes,
-        maxAf: input.maxAf ?? previous?.maxAf ?? null,
-        minQual: previous?.minQual ?? null,
-        minGenotypeQuality: previous?.minGenotypeQuality ?? null,
-        minDepth: previous?.minDepth ?? null,
-        passOnly: previous?.passOnly ?? true,
-        codingOnly: previous?.codingOnly ?? true,
-        excludeClinvarBenign: previous?.excludeClinvarBenign ?? true,
-        excludeClinvarVus: previous?.excludeClinvarVus ?? true,
-      };
+      const vcfFilters = withFrequencyTrack(
+        {
+          hpo: "",
+          genes: extraGenes,
+          maxAf: input.maxAf ?? previous?.maxAf ?? null,
+          minQual: previous?.minQual ?? null,
+          minGenotypeQuality: previous?.minGenotypeQuality ?? null,
+          minDepth: previous?.minDepth ?? null,
+          passOnly: previous?.passOnly ?? true,
+          codingOnly: previous?.codingOnly ?? true,
+          excludeClinvarBenign: false,
+          excludeClinvarVus: false,
+        },
+        await frequencyTrackForCase(input.organizationId, input.caseId)
+      );
       const run = await startOriginalVcfRun({
         organizationId: input.organizationId,
         caseId: input.caseId,

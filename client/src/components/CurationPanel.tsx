@@ -31,7 +31,7 @@ export function CurationPanel({
   onMerged: () => void | Promise<unknown>;
   /** Saved germline call and criteria. The ACMG box uses these after the reviewer accepts a code. */
   classification?: string | null;
-  criteria?: { code: string; state: string }[];
+  criteria?: { code: string; state: string; strength?: string | null; note?: string | null }[];
 }) {
   const runs = trpc.curation.list.useQuery(
     { organizationId, variantId, limit: 5 },

@@ -1,5 +1,6 @@
 import { AIChatBox, type Message } from "@/components/AIChatBox";
 import { ClinicalStatus } from "@/components/ClinicalStatus";
+import { EffectLabel } from "@/components/EffectLabel";
 import { CurationPanel } from "@/components/CurationPanel";
 import { PageHeader } from "@/components/PageHeader";
 import {
@@ -28,6 +29,7 @@ import {
   SOMATIC_TIERS,
 } from "@shared/clinical-standards";
 import { isSplicePredictorSource } from "@shared/curation/document";
+import { savedStrength, type SavedReviewCriterion } from "@shared/curation/savedCriteria";
 import {
   ArrowLeft,
   BookOpen,
@@ -111,8 +113,8 @@ function GermlineWorkbenchPage() {
   const [detailTab, setDetailTab] = useState("evidence");
   const [activeCriterion, setActiveCriterion] =
     useState<(typeof ACMG_CRITERIA)[number]>("PVS1");
-  const [criterionState, setCriterionState] =
-    useState<CriterionState>("not_met");
+  const [criterionState, setCriterionState] = useState<CriterionState>("met");
+  const [criterionStrength, setCriterionStrength] = useState("very_strong");
   const [criterionNote, setCriterionNote] = useState("");
   const utils = trpc.useUtils();
 
@@ -198,6 +200,14 @@ function GermlineWorkbenchPage() {
     setConversationId(detail.data?.conversations[0]?.id);
     setLocalMessages([]);
   }, [selectedId, detail.data?.interpretations, detail.data?.conversations]);
+  const savedCriterion = detail.data?.criteria.find(item => item.code === activeCriterion);
+  useEffect(() => {
+    const undecided =
+      !savedCriterion || (savedCriterion.state === "not_met" && !savedCriterion.note?.trim());
+    setCriterionState(undecided ? "met" : (savedCriterion.state as CriterionState));
+    setCriterionNote(undecided ? "" : savedCriterion.note || "");
+    setCriterionStrength(savedStrength(savedCriterion?.strengthOverride, activeCriterion));
+  }, [selectedId, activeCriterion, savedCriterion]);
 
   const refresh = trpc.variants.refreshEvidence.useMutation({
     onSuccess: async result => {
@@ -719,6 +729,12 @@ function GermlineWorkbenchPage() {
                     <p className="mt-1 font-mono text-[11px] text-muted-foreground">
                       {detail.data.variant.hgvsP}
                     </p>
+                    {detail.data.variant.consequence ? (
+                      <EffectLabel
+                        value={detail.data.variant.consequence}
+                        className="mt-1 block max-w-md text-[11px] leading-4 text-muted-foreground"
+                      />
+                    ) : null}
                     {clinicalCase.purpose === "germline" &&
                     detail.data.acmgSuggestion ? (
                       <p className="mt-2 text-sm font-semibold">
@@ -786,10 +802,14 @@ function GermlineWorkbenchPage() {
                     canCurate={hasPermission("curation:run")}
                     canEdit={canEditInterpretation}
                     classification={detail.data.acmgSuggestion?.classification}
-                    criteria={detail.data.criteria.map(item => ({
-                      code: item.code,
-                      state: item.state,
-                    }))}
+                    criteria={detail.data.criteria.map(
+                      (item): SavedReviewCriterion => ({
+                        code: item.code,
+                        state: item.state,
+                        strength: item.strengthOverride,
+                        note: item.note,
+                      })
+                    )}
                     onMerged={() =>
                       Promise.all([detail.refetch(), list.refetch()])
                     }
@@ -978,41 +998,46 @@ function GermlineWorkbenchPage() {
                                 {ACMG_CRITERIA.map(code => (
                                   <button
                                     key={code}
-                                    onClick={() => {
-                                      setActiveCriterion(code);
-                                      const current = detail.data.criteria.find(
-                                        item => item.code === code
-                                      );
-                                      setCriterionState(
-                                        (current?.state as CriterionState) ||
-                                          "not_met"
-                                      );
-                                      setCriterionNote(current?.note || "");
-                                    }}
-                                    className={`rounded-md border px-1 py-2 font-mono text-[9px] font-semibold ${activeCriterion === code ? "border-primary bg-primary text-primary-foreground" : criteriaMap.get(code) === "met" ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-border bg-card text-muted-foreground"}`}
+                                    onClick={() => setActiveCriterion(code)}
+                                    className={`rounded-md border px-1 py-2 font-mono text-[9px] font-semibold ${activeCriterion === code ? "border-primary bg-primary text-primary-foreground" : criteriaMap.get(code) === "met" ? "border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-300/40 dark:bg-emerald-400/15 dark:text-emerald-100" : "border-border bg-card text-muted-foreground"}`}
                                   >
                                     {code}
                                   </button>
                                 ))}
                               </div>
                               <div className="mt-3 rounded-xl border border-border bg-card p-3">
-                                <div className="flex items-center justify-between">
+                                <div className="flex flex-wrap items-center justify-between gap-2">
                                   <p className="font-mono text-xs font-semibold">
                                     {activeCriterion}
                                   </p>
-                                  <select
-                                    value={criterionState}
-                                    onChange={event =>
-                                      setCriterionState(
-                                        event.target.value as CriterionState
-                                      )
-                                    }
-                                    className="h-8 rounded-md border border-input bg-background px-2 text-[10px]"
-                                  >
-                                    <option value="met">Met</option>
-                                    <option value="not_met">Not met</option>
-                                    <option value="not_applicable">N/A</option>
-                                  </select>
+                                  <div className="flex gap-1.5">
+                                    <select
+                                      value={criterionStrength}
+                                      onChange={event => setCriterionStrength(event.target.value)}
+                                      className="h-8 rounded-md border border-input bg-background px-2 text-[10px]"
+                                      aria-label={`${activeCriterion} strength`}
+                                    >
+                                      <option value="very_strong">Very strong</option>
+                                      <option value="strong">Strong</option>
+                                      <option value="moderate">Moderate</option>
+                                      <option value="supporting">Supporting</option>
+                                      <option value="stand_alone">Stand-alone</option>
+                                    </select>
+                                    <select
+                                      value={criterionState}
+                                      onChange={event =>
+                                        setCriterionState(
+                                          event.target.value as CriterionState
+                                        )
+                                      }
+                                      className="h-8 rounded-md border border-input bg-background px-2 text-[10px]"
+                                      aria-label={`${activeCriterion} assessment`}
+                                    >
+                                      <option value="met">Met</option>
+                                      <option value="not_met">Not met</option>
+                                      <option value="not_applicable">N/A</option>
+                                    </select>
+                                  </div>
                                 </div>
                                 <Textarea
                                   value={criterionNote}
@@ -1020,8 +1045,13 @@ function GermlineWorkbenchPage() {
                                     setCriterionNote(event.target.value)
                                   }
                                   className="mt-2 min-h-20 text-xs"
-                                  placeholder="Record the basis for application or reason for exclusion."
+                                  placeholder="Record the basis for applying this code, or the reason for leaving it out."
                                 />
+                                <p className="mt-2 text-[10px] leading-4 text-muted-foreground">
+                                  {criterionState === "met"
+                                    ? `Apply adds ${activeCriterion} and updates the classification. It then appears on the curation score.`
+                                    : `Saving as not applied leaves ${activeCriterion} out of the classification.`}
+                                </p>
                                 <Button
                                   size="sm"
                                   variant="outline"
@@ -1040,13 +1070,24 @@ function GermlineWorkbenchPage() {
                                         currentInterpretation.id,
                                       code: activeCriterion,
                                       state: criterionState,
+                                      strengthOverride:
+                                        criterionState === "met"
+                                          ? (criterionStrength as
+                                              | "very_strong"
+                                              | "strong"
+                                              | "moderate"
+                                              | "supporting"
+                                              | "stand_alone")
+                                          : undefined,
                                       evidenceIds: [],
                                       note: criterionNote || undefined,
                                     })
                                   }
                                 >
                                   {currentInterpretation
-                                    ? "Save criteria"
+                                    ? criterionState === "met"
+                                      ? `Apply ${activeCriterion}`
+                                      : `Save ${activeCriterion} as not applied`
                                     : "Save an interpretation draft first"}
                                 </Button>
                               </div>

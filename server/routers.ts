@@ -14,6 +14,7 @@ import { workbenchRouter } from "./routers/workbench";
 import { dashboardRouter } from "./routers/dashboard";
 import { reportsRouter } from "./routers/reports";
 import { referenceDataRouter } from "./routers/referenceData";
+import { classifierWorkersRouter } from "./routers/classifierWorkers";
 import { somaticRouter } from "./routers/somatic";
 import { somaticReportsRouter } from "./routers/somaticReports";
 import { somaticFoundationRouter } from "./routers/somaticFoundation";
@@ -43,6 +44,7 @@ export const appRouter = router({
   dashboard: dashboardRouter,
   reports: reportsRouter,
   referenceData: referenceDataRouter,
+  classifierWorkers: classifierWorkersRouter,
   somatic: somaticRouter,
   somaticReports: somaticReportsRouter,
   somaticFoundation: somaticFoundationRouter,

@@ -1,3 +1,5 @@
+import type { FrequencyTrack } from "@shared/germlineFrequency";
+import { keepsAtAnyFrequency, type FrequencyContext } from "./frequencyPolicy";
 import { variantOverlapsPanel } from "./germlinePanel";
 
 export type FilterableVariant = {
@@ -34,10 +36,16 @@ export type VcfFilters = {
   minDepth: number | null;
   passOnly: boolean;
   codingOnly: boolean;
-  /** Drop ClinVar Benign, Likely benign, and Benign/Likely benign. */
+  /**
+   * Stored for older jobs. ClinVar benign and VUS calls are no longer removed
+   * from these flags. The track decides which ClinVar calls follow the frequency limit.
+   */
   excludeClinvarBenign: boolean;
-  /** Drop ClinVar Uncertain significance (VUS). */
   excludeClinvarVus: boolean;
+  /** Missing means carrier screening. */
+  track?: FrequencyTrack;
+  /** OMIM short labels keyed by gene symbol. An empty map grants no recessive exemption. */
+  inheritance?: ReadonlyMap<string, string>;
 };
 
 export type FilterReason =
@@ -94,6 +102,13 @@ function alleleFrequency(value: string | null): number | null {
 
 const BENIGN_CLINVAR = new Set(["benign", "likely benign"]);
 const VUS_CLINVAR = new Set(["uncertain significance", "vus", "variant of uncertain significance"]);
+
+function frequencyContext(filters: VcfFilters): FrequencyContext {
+  return {
+    track: filters.track ?? "carrier",
+    inheritance: filters.inheritance ?? new Map(),
+  };
+}
 
 function clinvarTokens(value: string | null | undefined): string[] {
   if (!value) return [];
@@ -156,22 +171,19 @@ function firstFail(
   )
     return "depth";
   const af = alleleFrequency(variant.populationAf);
-  if (filters.maxAf !== null && af !== null && af > filters.maxAf) return "af";
+  const aboveLimit =
+    filters.maxAf !== null && af !== null && af > filters.maxAf;
+  if (aboveLimit && !keepsAtAnyFrequency(variant, frequencyContext(filters))) return "af";
+  if (
+    (filters.track ?? "carrier") === "carrier" &&
+    isClinvarVusCall(variant.clinvarSignificance)
+  )
+    return "vus";
   if (
     filters.codingOnly &&
     (variant.impact === "LOW" || variant.impact === "MODIFIER")
   )
     return "impact";
-  if (filters.excludeClinvarBenign && isClinvarBenignCall(variant.clinvarSignificance))
-    return "clinvar";
-  if (filters.excludeClinvarVus && isClinvarVusCall(variant.clinvarSignificance))
-    return "vus";
-  if (
-    filters.excludeClinvarBenign &&
-    filters.excludeClinvarVus &&
-    isClinvarBenignVusMix(variant.clinvarSignificance)
-  )
-    return "clinvarMix";
   const gene = (variant.gene || "").toUpperCase();
   if (filters.genes && (!gene || !filters.genes.has(gene))) return "hpo";
   const geneMatch =
@@ -225,13 +237,18 @@ export function applyVcfFilters<T extends FilterableVariant>(
 /** Second pass after a local gnomAD lookup fills frequencies the VCF left blank. */
 export function dropAboveMaxAf<T extends FilterableVariant>(
   result: FilteredVcf<T>,
-  maxAf: number
+  maxAf: number,
+  context?: FrequencyContext
 ): FilteredVcf<T> {
+  const policy: FrequencyContext = context ?? {
+    track: "carrier",
+    inheritance: new Map(),
+  };
   const dropped = { ...result.dropped };
   const kept: T[] = [];
   for (const variant of result.kept) {
     const af = alleleFrequency(variant.populationAf);
-    if (af !== null && af > maxAf) {
+    if (af !== null && af > maxAf && !keepsAtAnyFrequency(variant, policy)) {
       dropped.af += 1;
       continue;
     }

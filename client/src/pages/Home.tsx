@@ -1,5 +1,6 @@
 import { useAuth } from "@/_core/hooks/useAuth";
 import { isPlatformAdminRole } from "@shared/permissions";
+import { ClassifierWorkersPanel } from "@/components/ClassifierWorkers";
 import { CreateOrganizationForm } from "@/components/CreateOrganizationForm";
 import { ClinicalStatus } from "@/components/ClinicalStatus";
 import { MetricCard } from "@/components/MetricCard";
@@ -312,6 +313,7 @@ export default function Home() {
           </>
         }
       />
+      <ClassifierWorkersPanel organizationId={activeOrganizationId} />
       {!projects.isLoading && !projects.data?.length ? (
         <div className="clinical-card flex flex-col gap-4 border-dashed border-primary/30 bg-primary/[0.035] p-5 sm:flex-row sm:items-center sm:justify-between">
           <div>

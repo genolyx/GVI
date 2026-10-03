@@ -1,7 +1,10 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { parseGeneList } from "@shared/geneList";
+import { FREQUENCY_TRACKS, type FrequencyTrack } from "@shared/germlineFrequency";
 import { geneSetFromMatches, genesForTerms, loadHpoIndex } from "./hpoGenes";
+import { combinedInheritance } from "./frequencyPolicy";
+import { loadOmimCatalog } from "./omimCatalog";
 import { parseVcf, type ParsedVariant } from "./vcf";
 import type { GermlinePanelContent } from "./germlinePanel";
 import { gnomadSiteKey, lookupLocalGnomad, type GnomadSite } from "./gnomadLocal";
@@ -16,9 +19,22 @@ export const vcfFilterSchema = z.object({
   minDepth: z.number().int().min(0).max(100_000).nullable(),
   passOnly: z.boolean(),
   codingOnly: z.boolean(),
-  excludeClinvarBenign: z.boolean().default(true),
-  excludeClinvarVus: z.boolean().default(true),
+  excludeClinvarBenign: z.boolean().default(false),
+  excludeClinvarVus: z.boolean().default(false),
+  track: z.enum(FREQUENCY_TRACKS).optional(),
 });
+
+export function withFrequencyTrack(
+  filters: VcfFilterInput,
+  track: FrequencyTrack
+): VcfFilterInput {
+  return {
+    ...filters,
+    track,
+    excludeClinvarBenign: false,
+    excludeClinvarVus: false,
+  };
+}
 
 export type VcfFilterInput = z.infer<typeof vcfFilterSchema>;
 
@@ -69,6 +85,8 @@ export async function selectVcfRecords(
   }
   const hpoGeneCount = genes?.size ?? null;
   const hpoGenes = hpoGenesToApply(genes, parsed.length, recordsWithoutGene);
+  const inheritance = await inheritanceByGene();
+  const track = filters.track ?? "carrier";
   const filtered = applyVcfFilters(parsed, {
     genes: hpoGenes,
     panelGenes,
@@ -79,8 +97,10 @@ export async function selectVcfRecords(
     minDepth: filters.minDepth,
     passOnly: filters.passOnly,
     codingOnly: filters.codingOnly,
-    excludeClinvarBenign: filters.excludeClinvarBenign,
-    excludeClinvarVus: filters.excludeClinvarVus,
+    excludeClinvarBenign: false,
+    excludeClinvarVus: false,
+    track,
+    inheritance,
   });
   const gnomadFilled = await fillMissingPopulationAf(
     filtered.kept,
@@ -89,7 +109,7 @@ export async function selectVcfRecords(
     lookup
   );
   const selected = gnomadFilled
-    ? dropAboveMaxAf(filtered, filters.maxAf ?? 0)
+    ? dropAboveMaxAf(filtered, filters.maxAf ?? 0, { track, inheritance })
     : filtered;
   const notes: string[] = [];
   if (genes && hpoGenes === null && parsed.length > 0) {
@@ -125,6 +145,15 @@ export async function selectVcfRecords(
       panelApplied: Boolean(panelGenes?.size || panel?.regions?.length),
     }),
   };
+}
+
+async function inheritanceByGene(): Promise<Map<string, string>> {
+  const catalog = await loadOmimCatalog();
+  const inheritance = new Map<string, string>();
+  for (const [gene, rows] of catalog) {
+    inheritance.set(gene, combinedInheritance(rows.map(row => row.inheritance)));
+  }
+  return inheritance;
 }
 
 async function fillMissingPopulationAf(
@@ -218,7 +247,15 @@ export function filterTimelineSteps(input: {
       reason: "af",
       label: `gnomAD allele frequency is at most ${input.filters.maxAf}`,
       detail:
-        "Uses the VCF frequency when it is present. A missing frequency is read from the local gnomAD file. A site still missing there is kept.",
+        "A plain ClinVar pathogenic or likely pathogenic call in an autosomal-recessive or X-linked gene stays above this limit. Hereditary cancer keeps that exception for autosomal-recessive genes, plus named founder alleles. Low-penetrance and risk-allele calls follow the limit. A missing frequency is read from the local gnomAD file. A site still missing there is kept.",
+    });
+  }
+  if ((input.filters.track ?? "carrier") === "carrier") {
+    enabled.push({
+      reason: "vus",
+      label: "ClinVar VUS is removed",
+      detail:
+        "Carrier screening removes Uncertain significance. Rare disease and hereditary cancer keep a VUS that is under the frequency limit. Benign and likely benign stay when they are under the limit.",
     });
   }
   if (input.filters.codingOnly) {
@@ -226,27 +263,6 @@ export function filterTimelineSteps(input: {
       reason: "impact",
       label: "Consequence is HIGH or MODERATE",
       detail: null,
-    });
-  }
-  if (input.filters.excludeClinvarBenign) {
-    enabled.push({
-      reason: "clinvar",
-      label: "ClinVar is not Benign, Likely benign, or Benign/Likely benign",
-      detail: "These calls are removed and are not classified. Other ClinVar calls, and variants with no ClinVar entry, stay.",
-    });
-  }
-  if (input.filters.excludeClinvarVus) {
-    enabled.push({
-      reason: "vus",
-      label: "ClinVar is not Uncertain significance (VUS)",
-      detail: "Uncertain significance is removed and is not classified. Other ClinVar calls, and variants with no ClinVar entry, stay.",
-    });
-  }
-  if (input.filters.excludeClinvarBenign && input.filters.excludeClinvarVus) {
-    enabled.push({
-      reason: "clinvarMix",
-      label: "ClinVar is only VUS with Benign or Likely benign",
-      detail: "A call such as Uncertain significance/Likely benign is removed and is not classified. A call that also includes pathogenic stays.",
     });
   }
   if (input.hpoApplied) {
@@ -279,7 +295,7 @@ function dropReason(reason: FilterReason, filters: VcfFilterInput): string {
   if (reason === "af") return `allele frequency was above ${filters.maxAf}`;
   if (reason === "impact") return "the consequence was low-impact or modifier";
   if (reason === "clinvar") return "ClinVar was Benign, Likely benign, or Benign/Likely benign";
-  if (reason === "vus") return "ClinVar was Uncertain significance (VUS)";
+  if (reason === "vus") return "ClinVar was Uncertain significance on a carrier screen";
   if (reason === "clinvarMix") return "ClinVar was only VUS with Benign or Likely benign";
   if (reason === "hpo") return "the gene was missing or outside the HPO list";
   return "the variant was outside the gene list or panel";

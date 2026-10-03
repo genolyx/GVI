@@ -4,6 +4,12 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { trpc } from "@/lib/trpc";
+import {
+  DEFAULT_MAX_ALLELE_FREQUENCY,
+  FREQUENCY_TRACK_LABEL,
+  frequencyTrackSummary,
+  type FrequencyTrack,
+} from "@shared/germlineFrequency";
 import { parseGeneList } from "@shared/geneList";
 import { Loader2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -23,15 +29,24 @@ export type CaseVcfFilterValues = {
 
 export const defaultVcfFilters: CaseVcfFilterValues = {
   genes: "",
-  maxAf: "",
+  maxAf: String(DEFAULT_MAX_ALLELE_FREQUENCY),
   minQual: "",
   minGq: "",
   minDepth: "",
   passOnly: true,
   codingOnly: true,
-  excludeClinvarBenign: true,
-  excludeClinvarVus: true,
+  excludeClinvarBenign: false,
+  excludeClinvarVus: false,
 };
+
+export function FrequencyRules({ track }: { track: FrequencyTrack }) {
+  return (
+    <div className="space-y-1 text-xs leading-5 text-muted-foreground">
+      <p className="font-medium text-foreground">{FREQUENCY_TRACK_LABEL[track]}</p>
+      <p>{frequencyTrackSummary(track)}</p>
+    </div>
+  );
+}
 
 function optionalNumber(value: string): number | null {
   const trimmed = value.trim();
@@ -40,7 +55,11 @@ function optionalNumber(value: string): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-export function vcfFiltersPayload(values: CaseVcfFilterValues, hpo: string) {
+export function vcfFiltersPayload(
+  values: CaseVcfFilterValues,
+  hpo: string,
+  track: FrequencyTrack
+) {
   return {
     hpo,
     genes: values.genes,
@@ -50,8 +69,9 @@ export function vcfFiltersPayload(values: CaseVcfFilterValues, hpo: string) {
     minDepth: optionalNumber(values.minDepth),
     passOnly: values.passOnly,
     codingOnly: values.codingOnly,
-    excludeClinvarBenign: values.excludeClinvarBenign,
-    excludeClinvarVus: values.excludeClinvarVus,
+    excludeClinvarBenign: false,
+    excludeClinvarVus: false,
+    track,
   };
 }
 
@@ -73,7 +93,7 @@ const DROP_LABELS: Record<string, string> = {
   filter: "FILTER not PASS",
   impact: "low-impact or modifier",
   clinvar: "ClinVar benign or likely benign",
-  vus: "ClinVar VUS",
+  vus: "ClinVar VUS on carrier screening",
   clinvarMix: "ClinVar VUS with benign",
 };
 
@@ -290,6 +310,7 @@ export function CaseVcfFilters({
   values,
   onChange,
   panelScope,
+  track,
 }: {
   organizationId: number;
   referenceBuild: "GRCh37" | "GRCh38";
@@ -298,6 +319,7 @@ export function CaseVcfFilters({
   values: CaseVcfFilterValues;
   onChange: (values: CaseVcfFilterValues) => void;
   panelScope?: { panelId?: number; bedText?: string } | null;
+  track: FrequencyTrack;
 }) {
   const preview = trpc.cases.previewVcf.useMutation({
     onError: error => toast.error(error.message),
@@ -317,8 +339,8 @@ export function CaseVcfFilters({
       <div className="grid gap-x-6 gap-y-5 sm:grid-cols-2 xl:grid-cols-4">
         <div className="space-y-2">
           <Label htmlFor="case-af">Maximum allele frequency</Label>
-          <Input id="case-af" value={values.maxAf} onChange={event => set({ maxAf: event.target.value })} inputMode="decimal" placeholder="e.g. 0.05" className="font-mono" />
-          <p className="text-xs leading-5 text-muted-foreground">Leave blank to skip. Uses the VCF gnomAD or population frequency. A missing frequency is read from the local gnomAD file. Sample INFO AF is not used.</p>
+          <Input id="case-af" value={values.maxAf} onChange={event => set({ maxAf: event.target.value })} inputMode="decimal" placeholder="0.001" className="font-mono" />
+          <p className="text-xs leading-5 text-muted-foreground">0.001 is 0.1%. Clear the field to skip the limit. 0.05 is 5%. Uses the VCF gnomAD or population frequency. A missing frequency is read from the local gnomAD file. Sample INFO AF is not used.</p>
         </div>
         <div className="space-y-2">
           <Label htmlFor="case-qual">Minimum QUAL</Label>
@@ -342,24 +364,8 @@ export function CaseVcfFilters({
           <Checkbox checked={values.codingOnly} onCheckedChange={checked => set({ codingOnly: checked === true })} />
           Coding changes only
         </label>
-        <label className="flex items-center gap-2.5 text-sm">
-          <Checkbox
-            checked={values.excludeClinvarBenign}
-            onCheckedChange={checked => set({ excludeClinvarBenign: checked === true })}
-          />
-          Exclude ClinVar Benign, Likely benign, and Benign/Likely benign
-        </label>
-        <label className="flex items-center gap-2.5 text-sm">
-          <Checkbox
-            checked={values.excludeClinvarVus}
-            onCheckedChange={checked => set({ excludeClinvarVus: checked === true })}
-          />
-          Exclude ClinVar VUS
-        </label>
       </div>
-      <p className="text-xs leading-5 text-muted-foreground">
-        Checked ClinVar calls are removed before classification. With both ClinVar boxes checked, a call that is only VUS together with Benign or Likely benign is removed too. Other ClinVar calls, and variants with no ClinVar entry, stay.
-      </p>
+      <FrequencyRules track={track} />
       <Button
         type="button"
         variant="outline"
@@ -376,7 +382,7 @@ export function CaseVcfFilters({
               organizationId,
               referenceBuild,
               vcfText,
-              ...vcfFiltersPayload(values, hpo),
+              ...vcfFiltersPayload(values, hpo, track),
               germlinePanel: panelScope?.panelId
                 ? { panelId: panelScope.panelId }
                 : panelScope?.bedText

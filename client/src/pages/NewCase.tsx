@@ -30,9 +30,11 @@ import {
 } from "./CaseVcfFilters";
 import { HpoTermField } from "./HpoTermField";
 import { GermlineOrderFields } from "./GermlineOrderFields";
+import { frequencyTrackForOrder } from "@shared/germlineFrequency";
 import {
   defaultGermlineOrder,
   germlineOrderMissing,
+  normalizeGermlineOrder,
   type GermlineOrderInput,
 } from "@shared/germlineOrder";
 import { detectReferenceBuild } from "@shared/vcfAssembly";
@@ -280,7 +282,11 @@ export default function NewCasePage() {
         caseId: created.id,
         vcfFilters:
           form.inputType === "vcf" && form.purpose === "germline"
-            ? vcfFiltersPayload(filters, form.phenotypeText)
+            ? vcfFiltersPayload(
+                filters,
+                form.phenotypeText,
+                frequencyTrackForOrder(normalizeGermlineOrder(order))
+              )
             : undefined,
       });
       setProgress(100);
@@ -923,6 +929,7 @@ export default function NewCasePage() {
                     ? { bedText }
                     : null
               }
+              track={frequencyTrackForOrder(normalizeGermlineOrder(order))}
             />
           ) : null}
         </CardContent>

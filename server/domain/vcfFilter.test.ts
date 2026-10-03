@@ -101,7 +101,7 @@ describe("VCF workbench filters", () => {
     expect(result.kept.map(row => row.gene).sort()).toEqual(["BRCA1", "TP53"]);
   });
 
-  it("drops ClinVar Benign, Likely benign, and Benign/Likely benign before classification", () => {
+  it("keeps ClinVar benign calls under the limit and removes a carrier VUS", () => {
     expect(isClinvarBenignCall("Benign")).toBe(true);
     expect(isClinvarBenignCall("Likely_benign")).toBe(true);
     expect(isClinvarBenignCall("Benign/Likely benign")).toBe(true);
@@ -149,14 +149,20 @@ describe("VCF workbench filters", () => {
         excludeClinvarVus: true,
       }
     );
-    expect(result.kept.map(row => row.gene)).toEqual(["SCN1A", "KCNQ2", "ABCA4"]);
-    expect(result.classifiable.map(row => row.gene)).toEqual(["SCN1A", "KCNQ2", "ABCA4"]);
-    expect(result.dropped.clinvar).toBe(2);
+    expect(result.kept.map(row => row.gene)).toEqual([
+      "TP53",
+      "BRCA1",
+      "SCN1A",
+      "KCNQ2",
+      "RP1",
+      "ABCA4",
+    ]);
+    expect(result.dropped.clinvar).toBe(0);
     expect(result.dropped.vus).toBe(1);
-    expect(result.dropped.clinvarMix).toBe(1);
+    expect(result.dropped.clinvarMix).toBe(0);
 
-    const benignOnly = applyVcfFilters(
-      [{ ...parsed[0], clinvarSignificance: "Uncertain significance/Likely benign" }],
+    const rareDisease = applyVcfFilters(
+      [{ ...parsed[0], clinvarSignificance: "Uncertain significance" }],
       {
         genes: null,
         maxAf: null,
@@ -166,11 +172,59 @@ describe("VCF workbench filters", () => {
         passOnly: false,
         codingOnly: false,
         excludeClinvarBenign: true,
-        excludeClinvarVus: false,
+        excludeClinvarVus: true,
+        track: "rare_disease",
       }
     );
-    expect(benignOnly.kept).toHaveLength(1);
-    expect(benignOnly.dropped.clinvarMix).toBe(0);
+    expect(rareDisease.kept).toHaveLength(1);
+  });
+
+  it("keeps a common recessive pathogenic allele and drops the same frequency when it is low penetrance", () => {
+    const inheritance = new Map([["HBB", "AR"], ["HFE", "AR"]]);
+    const filters = {
+      genes: null,
+      maxAf: 0.001,
+      minQual: null,
+      minGenotypeQuality: null,
+      minDepth: null,
+      passOnly: false,
+      codingOnly: false,
+      excludeClinvarBenign: false,
+      excludeClinvarVus: false,
+      track: "carrier" as const,
+      inheritance,
+    };
+    const result = applyVcfFilters(
+      [
+        {
+          ...parsed[0],
+          gene: "HBB",
+          hgvsC: "c.20A>T",
+          hgvsP: "p.Glu7Val",
+          populationAf: "0.05",
+          clinvarSignificance: "Pathogenic",
+        },
+        {
+          ...parsed[0],
+          gene: "HFE",
+          hgvsC: "c.845G>A",
+          hgvsP: "p.Cys282Tyr",
+          populationAf: "0.06",
+          clinvarSignificance: "Pathogenic/Pathogenic, low penetrance",
+        },
+        {
+          ...parsed[0],
+          gene: "HFE",
+          hgvsC: "c.187C>G",
+          hgvsP: "p.His63Asp",
+          populationAf: "0.0002",
+          clinvarSignificance: "Pathogenic",
+        },
+      ],
+      filters
+    );
+    expect(result.kept.map(row => row.hgvsC)).toEqual(["c.20A>T", "c.187C>G"]);
+    expect(result.dropped.af).toBe(1);
   });
 
   it("reads a panel file and a comma-separated list as gene symbols", () => {

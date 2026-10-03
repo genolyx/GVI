@@ -8,7 +8,8 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { EngineMarkup } from "@/lib/engineMarkup";
 import { trpc } from "@/lib/trpc";
 import type { CurationDocument } from "@shared/curation/document";
-import { criteriaWithSpliceReview } from "@shared/curation/spliceAcmg";
+import { criteriaWithSavedReview } from "@shared/curation/savedCriteria";
+import { criteriaWithSpliceReview, spliceReviewCriterion } from "@shared/curation/spliceAcmg";
 import {
   junctionAlignSchema,
   literatureSchema,
@@ -218,15 +219,16 @@ function AcmgPanel({
   });
 
   const classification = document.acmg.classification;
-  const criteria = useMemo(
-    () => criteriaWithSpliceReview(document.acmg.criteria, document.engine.parsedData),
-    [document]
+  const criteria = useMemo(() => {
+    const withSplice = criteriaWithSpliceReview(document.acmg.criteria, document.engine.parsedData);
+    return criteriaWithSavedReview(withSplice, accept?.criteria);
+  }, [document, accept?.criteria]);
+  const splice = spliceReviewCriterion(document.engine.parsedData);
+  const splicePending = Boolean(
+    splice &&
+      !document.acmg.criteria.some(item => item.baseCode === splice.code || item.code === splice.engineCode) &&
+      accept?.criteria?.find(item => item.code === splice.code)?.state !== "met"
   );
-  const splicePending = criteria.some(criterion => {
-    const fromSplice = !document.acmg.criteria.some(item => item.code === criterion.code);
-    const met = accept?.criteria?.find(item => item.code === criterion.baseCode)?.state === "met";
-    return fromSplice && !met;
-  });
   const shownLabel = acceptedCall || accept?.classification || classification?.label || "No classification produced";
   const callUpdated = Boolean(
     (acceptedCall || accept?.classification) &&
@@ -286,7 +288,12 @@ function AcmgPanel({
           criteria.map(criterion => {
             const saved = accept?.criteria?.find(item => item.code === criterion.baseCode);
             const savedMet = saved?.state === "met";
-            const fromSpliceReview = !document.acmg.criteria.some(item => item.code === criterion.code);
+            const inEngine = document.acmg.criteria.some(
+              item => item.baseCode === criterion.baseCode || item.code === criterion.code
+            );
+            const fromSpliceReview =
+              !inEngine && splice?.code === criterion.baseCode && splice.engineCode === criterion.code;
+            const fromClassification = !inEngine && !fromSpliceReview;
             return (
             <Card key={criterion.code} className="shadow-none">
               <CardContent className="p-3">
@@ -347,6 +354,11 @@ function AcmgPanel({
                 {fromSpliceReview && !savedMet ? (
                   <p className="mt-1.5 text-[10px] text-indigo-800/80 dark:text-indigo-100/75">
                     From the splice calculation review. Accepting it updates the classification above.
+                  </p>
+                ) : null}
+                {fromClassification ? (
+                  <p className="mt-1.5 text-[10px] text-indigo-800/80 dark:text-indigo-100/75">
+                    Added on the classification review.
                   </p>
                 ) : null}
               </CardContent>
@@ -562,7 +574,7 @@ export type CurationAcceptTarget = {
   onAccepted: () => void | Promise<unknown>;
   /** Saved germline call. Shown in place of the frozen engine label after a criterion is accepted. */
   classification?: string | null;
-  criteria?: { code: string; state: string }[];
+  criteria?: { code: string; state: string; strength?: string | null; note?: string | null }[];
 };
 
 export function CurationDocumentView({

@@ -32,12 +32,14 @@ import { GermlineOrderFields } from "./GermlineOrderFields";
 import { HpoTermField } from "./HpoTermField";
 import {
   CaseVcfFilters,
+  FrequencyRules,
   GeneListField,
   GeneSymbolList,
   defaultVcfFilters,
   vcfFiltersPayload,
   type CaseVcfFilterValues,
 } from "./CaseVcfFilters";
+import { frequencyTrackForOrder, FREQUENCY_TRACK_LABEL } from "@shared/germlineFrequency";
 import {
   defaultGermlineOrder,
   GERMLINE_SERVICE_LABEL,
@@ -410,7 +412,11 @@ export default function CaseDetailPage() {
       await submitCase.mutateAsync({
         organizationId: activeOrganizationId,
         caseId: item.id,
-        vcfFilters: vcfFiltersPayload(draftFilters, item.phenotypeText ?? ""),
+        vcfFilters: vcfFiltersPayload(
+          draftFilters,
+          item.phenotypeText ?? "",
+          frequencyTrackForOrder(item.germlineOrder ?? {})
+        ),
       });
       toast.success("Analysis request submitted.");
       setDraftVcf(null);
@@ -551,6 +557,7 @@ export default function CaseDetailPage() {
                     ? { panelId: item.germlinePanel.panelId }
                     : null
                 }
+                track={frequencyTrackForOrder(item.germlineOrder ?? {})}
               />
             ) : null}
             {submittingDraft ? (
@@ -957,18 +964,23 @@ function appliedFilterRows(jobs: Array<{ manifest: unknown }>): Array<[string, s
     ["Minimum genotype quality", numberOrBlank(filters.minGenotypeQuality, "No minimum")],
     ["Minimum read depth", numberOrBlank(filters.minDepth, "No minimum")],
   ];
-  if (typeof filters.excludeClinvarBenign === "boolean") {
-    rows.splice(3, 0, [
-      "ClinVar benign calls excluded",
-      filters.excludeClinvarBenign ? "Yes" : "No",
-    ]);
-  }
-  if (typeof filters.excludeClinvarVus === "boolean") {
-    const benignShown = typeof filters.excludeClinvarBenign === "boolean";
-    rows.splice(benignShown ? 4 : 3, 0, [
-      "ClinVar VUS excluded",
-      filters.excludeClinvarVus ? "Yes" : "No",
-    ]);
+  const track = filters.track;
+  if (track === "carrier" || track === "rare_disease" || track === "hereditary_cancer") {
+    rows.unshift(["Frequency track", FREQUENCY_TRACK_LABEL[track]]);
+  } else {
+    if (typeof filters.excludeClinvarBenign === "boolean") {
+      rows.splice(3, 0, [
+        "ClinVar benign calls excluded",
+        filters.excludeClinvarBenign ? "Yes" : "No",
+      ]);
+    }
+    if (typeof filters.excludeClinvarVus === "boolean") {
+      const benignShown = typeof filters.excludeClinvarBenign === "boolean";
+      rows.splice(benignShown ? 4 : 3, 0, [
+        "ClinVar VUS excluded",
+        filters.excludeClinvarVus ? "Yes" : "No",
+      ]);
+    }
   }
   if (typeof filters.genes === "string" && filters.genes.trim()) {
     rows.push(["Gene list", filters.genes.trim()]);
@@ -1212,8 +1224,10 @@ function GermlineOrderSection({
   applyingScope: boolean;
   onApplyScope: (scope: { panelId?: number; genesText?: string; maxAf?: number }) => void;
 }) {
-  const [scopeFilters, setScopeFilters] =
-    useState<CaseVcfFilterValues>(defaultVcfFilters);
+  const [scopeFilters, setScopeFilters] = useState<CaseVcfFilterValues>({
+    ...defaultVcfFilters,
+    maxAf: "",
+  });
   const [scopePanelId, setScopePanelId] = useState("");
   const canRun = caseStatus === "review_ready" || caseStatus === "failed";
   const frequencyText = scopeFilters.maxAf.trim();
@@ -1296,12 +1310,19 @@ function GermlineOrderSection({
                     setScopeFilters(current => ({ ...current, maxAf: event.target.value }))
                   }
                   inputMode="decimal"
-                  placeholder="e.g. 0.05"
+                  placeholder="0.001"
                   className="max-w-xs font-mono"
                 />
                 <p className="text-xs leading-5 text-muted-foreground">
-                  Leave blank to keep the current setting. 0.05 removes variants whose gnomAD frequency is above 5%.
+                  Leave blank to keep the last run. 0.001 is 0.1%. 0.05 removes variants whose gnomAD frequency is above 5%.
                 </p>
+                <FrequencyRules
+                  track={frequencyTrackForOrder({
+                    testCategory: draft.testCategory,
+                    packageCode: draft.packageCode,
+                    otherTestType: draft.otherTestType,
+                  })}
+                />
               </div>
               <Button
                 type="button"
@@ -1355,6 +1376,14 @@ function GermlineOrderSection({
           <GermlineOrderFields value={draft} onChange={onChange} />
         </div>
       ) : (
+        <div className="space-y-5">
+          <FrequencyRules
+            track={frequencyTrackForOrder({
+              testCategory: current.testCategory,
+              packageCode: current.packageCode,
+              otherTestType: current.otherTestType,
+            })}
+          />
         <div className="grid gap-5 lg:grid-cols-2">
           <OrderCard
             title="Case request"
@@ -1436,6 +1465,7 @@ function GermlineOrderSection({
               ["Sample barcode", current.sampleBarcode],
             ]}
           />
+        </div>
         </div>
       )}
     </section>

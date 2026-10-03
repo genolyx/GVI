@@ -135,11 +135,9 @@ describe("VCF frequency and HPO applicability", () => {
     ).toEqual([
       "FILTER is PASS | 90",
       "gnomAD allele frequency is at most 0.01 | 60",
+      "ClinVar VUS is removed | 60",
       "Consequence is HIGH or MODERATE | 40",
-      "ClinVar is not Benign, Likely benign, or Benign/Likely benign | 35",
-      "ClinVar is not Uncertain significance (VUS) | 35",
-      "ClinVar is only VUS with Benign or Likely benign | 35",
-      "Gene is in the HPO list (458 genes) | 10",
+      "Gene is in the HPO list (458 genes) | 15",
     ]);
   });
 

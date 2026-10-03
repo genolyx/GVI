@@ -1,3 +1,4 @@
+import { ClassifierWorkersPanel } from "@/components/ClassifierWorkers";
 import { PageHeader } from "@/components/PageHeader";
 import { StatePanel } from "@/components/StatePanel";
 import { Badge } from "@/components/ui/badge";
@@ -99,6 +100,7 @@ export default function SettingsPage() {
         description="Databases the curation engine can use on this server, and PubMed articles already saved to disk."
         badge={`${ready}/${data.sources.length} available`}
       />
+      <ClassifierWorkersPanel editable />
       <Card className="clinical-card shadow-none">
         <CardHeader>
           <CardTitle className="font-display text-base">Reference databases</CardTitle>
