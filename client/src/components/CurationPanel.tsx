@@ -26,6 +26,9 @@ export function CurationPanel({
   onSaveCall,
   callPending,
   callDivergence,
+  institutionalLabel,
+  onSaveInstitutional,
+  institutionalPending,
   onSaveCriterion,
   criterionPending,
 }: {
@@ -42,6 +45,9 @@ export function CurationPanel({
   onSaveCall?: (classification: string) => void;
   callPending?: boolean;
   callDivergence?: string | null;
+  institutionalLabel?: string | null;
+  onSaveInstitutional?: (label: string) => void;
+  institutionalPending?: boolean;
   onSaveCriterion?: (input: {
     code: string;
     state: "met" | "not_met" | "not_applicable";
@@ -127,7 +133,7 @@ export function CurationPanel({
     return (
       <div>
         {header}
-        <Skeleton className="h-[440px]" />
+        <Skeleton className="h-[820px]" />
       </div>
     );
   }
@@ -188,7 +194,7 @@ export function CurationPanel({
           }}
         />
       ) : documentQuery.isLoading || !documentQuery.data ? (
-        <Skeleton className="h-[440px]" />
+        <Skeleton className="h-[820px]" />
       ) : (
         <CurationDocumentView
           document={documentQuery.data.document}
@@ -205,6 +211,9 @@ export function CurationPanel({
                   onSaveCall,
                   callPending,
                   callDivergence,
+                  institutionalLabel,
+                  onSaveInstitutional,
+                  institutionalPending,
                   onSaveCriterion,
                   criterionPending,
                 }

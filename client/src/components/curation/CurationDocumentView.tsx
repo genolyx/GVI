@@ -12,6 +12,7 @@ import type { CurationDocument, CurationCriterion } from "@shared/curation/docum
 import { hgmdPs4Check } from "@shared/curation/hgmdPs4";
 import { criteriaWithSavedReview, savedStrength } from "@shared/curation/savedCriteria";
 import { GERMLINE_CLASSIFICATIONS } from "@shared/clinical-standards";
+import { INSTITUTIONAL_CLASSIFICATIONS } from "@shared/curation/institutional";
 import { criteriaWithSpliceReview, spliceReviewCriterion } from "@shared/curation/spliceAcmg";
 import {
   junctionAlignSchema,
@@ -276,15 +277,19 @@ type CriterionDraft = {
 function CriterionDraftForm({
   draft,
   pending,
+  existing,
   onChange,
   onSave,
   onRemove,
+  onCancel,
 }: {
   draft: CriterionDraft;
   pending: boolean;
+  existing: boolean;
   onChange: (next: CriterionDraft) => void;
   onSave: () => void;
   onRemove?: () => void;
+  onCancel: () => void;
 }) {
   const needsNote = draft.state === "met" && draft.note.trim().length < 2;
   return (
@@ -324,13 +329,16 @@ function CriterionDraftForm({
       />
       <div className="flex gap-1.5">
         <Button size="sm" variant="outline" className="h-6 flex-1 text-[9px]" disabled={pending || needsNote} onClick={onSave}>
-          {pending ? <Loader2 className="size-3 animate-spin" /> : draft.state === "met" ? `Apply ${draft.code}` : `Save ${draft.code}`}
+          {pending ? <Loader2 className="size-3 animate-spin" /> : existing ? `Save ${draft.code}` : `Apply ${draft.code}`}
         </Button>
         {onRemove ? (
           <Button size="sm" variant="outline" className="h-6 shrink-0 text-[9px]" disabled={pending} onClick={onRemove}>
-            Remove
+            Delete
           </Button>
         ) : null}
+        <Button size="sm" variant="outline" className="h-6 shrink-0 text-[9px]" disabled={pending} onClick={onCancel}>
+          Cancel
+        </Button>
       </div>
     </div>
   );
@@ -399,7 +407,7 @@ function FoundCriterion({
               >
                 {pending ? <Loader2 className="size-3 animate-spin" /> : savedMet ? "Edit" : "Accept"}
               </Button>
-              {onRemove ? (
+              {onRemove && (savedMet || inEngine || fromClassification) ? (
                 <Button
                   size="sm"
                   variant="outline"
@@ -407,7 +415,7 @@ function FoundCriterion({
                   disabled={pending}
                   onClick={onRemove}
                 >
-                  Remove
+                  Delete
                 </Button>
               ) : null}
             </div>
@@ -443,6 +451,8 @@ function AcmgPanel({
 }) {
   const [acceptedCall, setAcceptedCall] = useState<string | null>(null);
   const [draft, setDraft] = useState<CriterionDraft | null>(null);
+  const [callDraft, setCallDraft] = useState("");
+  const [institutionalDraft, setInstitutionalDraft] = useState("");
   useEffect(() => {
     setAcceptedCall(null);
     setDraft(null);
@@ -476,21 +486,28 @@ function AcmgPanel({
       !document.acmg.criteria.some(item => item.baseCode === splice.code || item.code === splice.engineCode) &&
       accept?.criteria?.find(item => item.code === splice.code)?.state !== "met"
   );
-  const shownLabel = acceptedCall || accept?.classification || classification?.label || "No classification produced";
-  const callUpdated = Boolean(
-    (acceptedCall || accept?.classification) &&
-      classification?.label &&
-      shownLabel !== classification.label
-  );
+  const engineCall = acceptedCall || accept?.classification || classification?.label || "";
+  const storedCall = accept?.savedCall ?? "";
+  const storedInstitutional = accept?.institutionalLabel ?? "";
+  useEffect(() => {
+    setCallDraft(storedCall || engineCall);
+  }, [storedCall, engineCall]);
+  useEffect(() => {
+    setInstitutionalDraft(storedInstitutional);
+  }, [storedInstitutional]);
+  const callDirty = Boolean(callDraft) && callDraft !== storedCall;
+  const institutionalDirty = institutionalDraft !== storedInstitutional;
+  const shownLabel = engineCall || "No classification produced";
+  const callUpdated = Boolean(engineCall && classification?.label && engineCall !== classification.label);
   const pending = accept?.criterionPending || saveCriterion.isPending;
 
-  function openDraft(code: string, presetNote?: string, intent: "apply" | "edit" = "apply") {
+  function openDraft(code: string, preset?: { note?: string; strength?: string }) {
     const saved = accept?.criteria?.find(item => item.code === code);
     const kept = saved?.note?.trim();
-    const note = kept && kept !== "Removed during review." ? kept : presetNote || "";
+    const note = kept && kept !== "Removed during review." ? kept : preset?.note || "";
     setDraft({
       code,
-      strength: savedStrength(saved?.strength ?? (intent === "edit" ? undefined : undefined), code),
+      strength: savedStrength(saved?.strength || preset?.strength, code),
       state: "met",
       note,
     });
@@ -539,70 +556,115 @@ function AcmgPanel({
     });
   }
 
-  function editorFor(code: string, removable: boolean) {
+  function editorFor(code: string, existing: boolean) {
     if (!draft || draft.code !== code) return null;
     return (
       <CriterionDraftForm
         draft={draft}
         pending={pending}
+        existing={existing}
         onChange={setDraft}
         onSave={saveDraft}
-        onRemove={removable ? () => removeCriterion(code) : undefined}
+        onRemove={existing ? () => removeCriterion(code) : undefined}
+        onCancel={() => setDraft(null)}
       />
     );
   }
 
   return (
     <div className="space-y-3">
-      <div className="rounded-xl border border-indigo-200 bg-indigo-50/60 p-4 dark:border-indigo-300/25 dark:bg-indigo-400/10">
-        <div className="flex items-start justify-between gap-3">
-          <div>
-            <p className="text-[10px] font-semibold uppercase tracking-wider text-indigo-700 dark:text-indigo-200">
-              Engine suggestion
-            </p>
-            <p className="mt-1.5 text-sm font-semibold text-indigo-950 dark:text-indigo-50">
-              {shownLabel}
-            </p>
-            <p className="mt-1 text-[10px] text-indigo-800/80 dark:text-indigo-100/75">
-              {criteria.length} criteria · engine {document.meta.engineVersion}
-              {callUpdated ? " · updated from saved criteria" : ""}
-            </p>
-            {splicePending ? (
-              <p className="mt-1 text-[10px] leading-4 text-indigo-800/80 dark:text-indigo-100/75">
-                The splice calculation meets PVS1. This call stays {classification?.label || "as saved"} until you accept it.
-              </p>
-            ) : null}
-            {accept?.onSaveCall ? (
-              <div className="mt-3 max-w-xs">
-                <label htmlFor="acmg-classification" className="text-[10px] font-semibold uppercase tracking-wider text-indigo-800/80 dark:text-indigo-100/75">
+      <div className="rounded-lg border border-border bg-card px-3 py-2 text-card-foreground">
+        <div className="flex flex-wrap items-end gap-x-2 gap-y-2">
+          {accept?.onSaveCall ? (
+            <>
+              <label className="w-44">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                   Classification
-                </label>
+                </span>
                 <select
-                  id="acmg-classification"
-                  aria-label="Classification"
-                  value={accept.savedCall ?? ""}
+                  aria-label="Germline classification"
+                  value={callDraft}
                   disabled={accept.callPending}
-                  onChange={event => {
-                    const value = event.target.value;
-                    if (value) accept.onSaveCall?.(value);
-                  }}
-                  className="mt-1 h-9 w-full rounded-lg border border-input bg-background px-2 text-sm"
+                  onChange={event => setCallDraft(event.target.value)}
+                  className="mt-1 h-8 w-full rounded-md border border-input bg-background px-2 text-xs"
                 >
                   <option value="">Select classification</option>
                   {GERMLINE_CLASSIFICATIONS.map(value => (
                     <option key={value}>{value}</option>
                   ))}
                 </select>
-                {accept.callDivergence ? (
-                  <p className="mt-1.5 text-[10px] leading-4 text-amber-900 dark:text-amber-100">{accept.callDivergence}</p>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
-          <Badge variant="outline" className="border-indigo-300 bg-white/70 text-[9px] text-indigo-700 dark:border-indigo-300/40 dark:bg-indigo-400/15 dark:text-indigo-100">
+              </label>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-8 text-[10px]"
+                disabled={!callDirty || accept.callPending}
+                aria-label="Save classification"
+                onClick={() => accept.onSaveCall?.(callDraft)}
+              >
+                {accept.callPending ? <Loader2 className="size-3 animate-spin" /> : "Save"}
+              </Button>
+            </>
+          ) : (
+            <div>
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Engine suggestion</p>
+              <p className="text-sm font-semibold text-foreground">{shownLabel}</p>
+            </div>
+          )}
+          {accept?.onSaveInstitutional ? (
+            <>
+              <label className="w-36">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  Institutional
+                </span>
+                <select
+                  aria-label="Institutional classification"
+                  value={institutionalDraft}
+                  disabled={accept.institutionalPending}
+                  onChange={event => setInstitutionalDraft(event.target.value)}
+                  className="mt-1 h-8 w-full rounded-md border border-input bg-background px-2 text-xs"
+                >
+                  <option value="">Not set</option>
+                  {INSTITUTIONAL_CLASSIFICATIONS.map(option => (
+                    <option key={option.label} value={option.label}>
+                      {option.short}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-8 text-[10px]"
+                disabled={!institutionalDirty || accept.institutionalPending}
+                aria-label="Save institutional classification"
+                onClick={() => accept.onSaveInstitutional?.(institutionalDraft)}
+              >
+                {accept.institutionalPending ? <Loader2 className="size-3 animate-spin" /> : "Save"}
+              </Button>
+            </>
+          ) : null}
+          <Badge variant="outline" className="mb-0.5 ml-auto h-6 text-[9px]">
             Advisory only
           </Badge>
         </div>
+        <p className="mt-1.5 text-[10px] leading-4 text-muted-foreground">
+          {engineCall && callDraft && engineCall !== callDraft
+            ? `Engine suggested ${engineCall}. `
+            : engineCall
+              ? "Same call as the engine suggestion. "
+              : ""}
+          {criteria.length} criteria · engine {document.meta.engineVersion}
+          {callUpdated ? " · updated from saved criteria" : ""}
+        </p>
+        {splicePending ? (
+          <p className="mt-1 text-[10px] leading-4 text-muted-foreground">
+            The splice calculation meets PVS1. This call stays {classification?.label || "as saved"} until you accept it.
+          </p>
+        ) : null}
+        {accept?.callDivergence ? (
+          <p className="mt-1 text-[10px] leading-4 text-muted-foreground">{accept.callDivergence}</p>
+        ) : null}
       </div>
 
       {document.meta.sourcesDisabled.length ? (
@@ -626,7 +688,7 @@ function AcmgPanel({
       ) : null}
 
       <div className="grid grid-cols-3 items-start gap-3">
-        <AcmgColumn title="Found on this variant" hint="Evidence on this allele. Edit changes it. Remove takes it off the call.">
+        <AcmgColumn title="Found on this variant" hint="Evidence on this allele. Edit changes the note or strength. Delete takes it off the call.">
           {board.found.length ? (
             board.found.map(criterion => (
               <FoundCriterion
@@ -645,7 +707,11 @@ function AcmgPanel({
                     note: criterion.rationale || `Accepted engine suggestion ${criterion.code}`,
                   })
                 }
-                onEdit={accept ? () => openDraft(criterion.baseCode, criterion.rationale, "edit") : undefined}
+                onEdit={
+                  accept
+                    ? () => openDraft(criterion.baseCode, { note: criterion.rationale, strength: criterion.strength })
+                    : undefined
+                }
                 onRemove={accept ? () => removeCriterion(criterion.baseCode) : undefined}
                 editor={editorFor(criterion.baseCode, true)}
               />
@@ -691,7 +757,7 @@ function AcmgPanel({
                     ? {
                         label: draft?.code === item.code ? "Editing" : "Apply",
                         disabled: pending,
-                        onClick: () => openDraft(item.code, suggestive ? ps4Check?.note : undefined),
+                        onClick: () => openDraft(item.code, suggestive ? { note: ps4Check?.note } : undefined),
                       }
                     : undefined
                 }
@@ -910,6 +976,9 @@ export type CurationAcceptTarget = {
   onSaveCall?: (classification: string) => void;
   callPending?: boolean;
   callDivergence?: string | null;
+  institutionalLabel?: string | null;
+  onSaveInstitutional?: (label: string) => void;
+  institutionalPending?: boolean;
   onSaveCriterion?: (input: {
     code: string;
     state: "met" | "not_met" | "not_applicable";
@@ -925,7 +994,7 @@ export function CurationDocumentView({
   documentHash,
   /** Omitted on the ad-hoc page, where there is no interpretation to write into. */
   accept,
-  height = 440,
+  height = 820,
 }: {
   document: CurationDocument;
   organizationId: number;
