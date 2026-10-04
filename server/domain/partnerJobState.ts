@@ -1,6 +1,10 @@
 import { createHash } from "node:crypto";
+import { sql } from "drizzle-orm";
+import { cases } from "../../drizzle/schema";
 import type { VcfFilterInput } from "./vcfSelection";
 import { DEFAULT_MAX_ALLELE_FREQUENCY } from "@shared/germlineFrequency";
+import { hasGeneScopeChoice } from "@shared/geneScope";
+import type { PartnerDarkGenes } from "@shared/darkGenes";
 import {
   GERMLINE_FILTER_CONTRACT_VERSION,
   PARTNER_CLASSIFICATION_RULESET,
@@ -25,6 +29,7 @@ export type PartnerJobManifest = {
     track: PartnerClinicalTrack;
     canonicalService: PartnerInterpretationJob["canonicalService"];
     darkGeneResult: PartnerInterpretationJob["darkGeneResult"];
+    darkGenes?: PartnerDarkGenes;
     filterContractVersion: typeof GERMLINE_FILTER_CONTRACT_VERSION;
     rulesetVersion: typeof PARTNER_CLASSIFICATION_RULESET;
     referenceBuild: "GRCh37" | "GRCh38";
@@ -34,6 +39,12 @@ export type PartnerJobManifest = {
     genes: string;
     hpo: string;
     maxAf: number | null;
+    includePgx?: boolean;
+    includeApoePgx?: boolean;
+    panelCode?: string;
+    panelName?: string;
+    /** Set after the case classifier has been asked to queue this order. */
+    classificationQueued?: boolean;
   };
   vcfFilters: VcfFilterInput;
 };
@@ -58,15 +69,19 @@ export function partnerVcfFilters(input: {
   hpo: string;
   maxAf: number | null;
   track: PartnerClinicalTrack;
+  minQual?: number | null;
+  minGenotypeQuality?: number | null;
+  minDepth?: number | null;
+  passOnly?: boolean | null;
 }): VcfFilterInput {
   return {
     hpo: input.hpo,
     genes: input.genes,
     maxAf: input.maxAf ?? DEFAULT_MAX_ALLELE_FREQUENCY,
-    minQual: null,
-    minGenotypeQuality: null,
-    minDepth: null,
-    passOnly: true,
+    minQual: input.minQual ?? null,
+    minGenotypeQuality: input.minGenotypeQuality ?? null,
+    minDepth: input.minDepth ?? null,
+    passOnly: input.passOnly !== false,
     codingOnly: false,
     excludeClinvarBenign: false,
     excludeClinvarVus: false,
@@ -102,14 +117,30 @@ export function partnerJobManifest(
       genes: request.genes,
       hpo: request.hpo,
       maxAf: request.maxAf,
+      includePgx: request.includePgx,
+      includeApoePgx: request.includeApoePgx,
+      ...(request.panelCode ? { panelCode: request.panelCode, panelName: request.panelName } : {}),
     },
     vcfFilters: partnerVcfFilters({
       genes: request.genes,
       hpo: request.hpo,
       maxAf: request.maxAf,
       track: decision.track,
+      minQual: request.minQual,
+      minGenotypeQuality: request.minGenotypeQuality,
+      minDepth: request.minDepth,
+      passOnly: request.passOnly,
     }),
   };
+}
+
+/** Whole-exome VCF-only jobs are accepted with an empty gene list. Ingest must not ask for a panel. */
+export function partnerSkipsGeneScope(manifest: PartnerJobManifest | null): boolean {
+  if (!manifest) return false;
+  return !hasGeneScopeChoice({
+    genes: manifest.partner.genes,
+    hpo: manifest.partner.hpo,
+  });
 }
 
 export function readPartnerManifest(value: unknown): PartnerJobManifest | null {
@@ -135,6 +166,37 @@ export function partnerStatusFromParts(input: {
   if (input.succeededRuns > 0) return "succeeded";
   if (input.failedRuns > 0) return "failed";
   return "succeeded";
+}
+
+/**
+ * A later Portal submission for the same order reuses that case.
+ * A signed case stays as it is. An identical request only reopens a failure.
+ */
+export function samePartnerOrderAction(input: {
+  storedIdempotencyKey: string;
+  incomingIdempotencyKey: string;
+  jobStatus: string;
+  caseStatus: string;
+}): "return" | "reopen" | "replace" | "keep" {
+  if (input.caseStatus === "in_review" || input.caseStatus === "reported") return "keep";
+  if (input.storedIdempotencyKey === input.incomingIdempotencyKey) {
+    return input.jobStatus === "failed" ? "reopen" : "return";
+  }
+  return "replace";
+}
+
+/** Portal case numbers are hashes. One order keeps the latest case on screen. */
+export function currentPartnerOrderCondition(organizationId: number) {
+  return sql`(
+    ${cases.caseNumber} !~ '^[a-f0-9]{64}$'
+    OR ${cases.id} IN (
+      SELECT DISTINCT ON (current_case."patientAlias") current_case.id
+      FROM cases current_case
+      WHERE current_case."organizationId" = ${organizationId}
+        AND current_case."caseNumber" ~ '^[a-f0-9]{64}$'
+      ORDER BY current_case."patientAlias", current_case."updatedAt" DESC, current_case.id DESC
+    )
+  )`;
 }
 
 export function vcfFileName(uri: string): string {

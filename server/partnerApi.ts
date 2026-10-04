@@ -6,13 +6,20 @@ import {
   PARTNER_INTERPRETATION_JOBS_PATH,
 } from "@shared/partnerInterpretation";
 import {
+  applyPartnerPanel,
+  cancelPartnerClassification,
   createPartnerInterpretationJob,
+  getPartnerDarkGenes,
   getPartnerInterpretationJob,
+  getPartnerJobByExternalOrder,
+  listPartnerJobProgress,
   getPartnerVariantDocument,
   listPartnerVariants,
   partnerErrorStatus,
+  submitPartnerDarkGenes,
   uploadPartnerVcf,
 } from "./domain/partnerJobs";
+import { resolvePartnerToken } from "./domain/partnerToken";
 
 function tokensMatch(received: string, expected: string): boolean {
   const receivedBuffer = Buffer.from(received);
@@ -23,25 +30,29 @@ function tokensMatch(received: string, expected: string): boolean {
   );
 }
 
-export function requirePartnerAuth(
+export async function requirePartnerAuth(
   req: Request,
   res: Response,
   next: NextFunction
 ) {
-  const configuredToken = process.env.PARTNER_API_TOKEN;
-  const authorization = req.header("authorization") || "";
-  const receivedToken = authorization.startsWith("Bearer ")
-    ? authorization.slice("Bearer ".length)
-    : "";
-  if (!configuredToken || configuredToken.length < 32) {
-    res.status(503).json({ error: "partner_not_configured" });
-    return;
+  try {
+    const configuredToken = await resolvePartnerToken();
+    const authorization = req.header("authorization") || "";
+    const receivedToken = authorization.startsWith("Bearer ")
+      ? authorization.slice("Bearer ".length)
+      : "";
+    if (!configuredToken) {
+      res.status(503).json({ error: "partner_not_configured" });
+      return;
+    }
+    if (!receivedToken || !tokensMatch(receivedToken, configuredToken)) {
+      res.status(401).json({ error: "invalid_partner_credential" });
+      return;
+    }
+    next();
+  } catch (error) {
+    next(error);
   }
-  if (!receivedToken || !tokensMatch(receivedToken, configuredToken)) {
-    res.status(401).json({ error: "invalid_partner_credential" });
-    return;
-  }
-  next();
 }
 
 function sendFailure(res: Response, error: unknown) {
@@ -62,7 +73,12 @@ export function registerPartnerRoutes(app: Express) {
     PARTNER_INTERPRETATION_JOBS_PATH,
     requirePartnerAuth,
     async (req, res) => {
-      const decision = interpretPartnerJob(req.body);
+      const prepared = await applyPartnerPanel(req.body);
+      if (!prepared.ok) {
+        res.status(422).json({ accepted: false, reason: "invalid_request", message: prepared.message });
+        return;
+      }
+      const decision = interpretPartnerJob(prepared.body);
       if (!decision.accepted) {
         res.status(422).json({
           accepted: false,
@@ -110,6 +126,32 @@ export function registerPartnerRoutes(app: Express) {
   );
 
   app.put(
+    `${PARTNER_INTERPRETATION_JOBS_PATH}/:id/dark-genes`,
+    requirePartnerAuth,
+    async (req, res) => {
+      try {
+        const darkGenes = await submitPartnerDarkGenes(req.params.id, req.body);
+        res.status(200).json(darkGenes);
+      } catch (error) {
+        sendFailure(res, error);
+      }
+    }
+  );
+
+  app.get(
+    `${PARTNER_INTERPRETATION_JOBS_PATH}/:id/dark-genes`,
+    requirePartnerAuth,
+    async (req, res) => {
+      try {
+        const darkGenes = await getPartnerDarkGenes(req.params.id);
+        res.json(darkGenes);
+      } catch (error) {
+        sendFailure(res, error);
+      }
+    }
+  );
+
+  app.put(
     `${PARTNER_INTERPRETATION_JOBS_PATH}/:id/vcf`,
     requirePartnerAuth,
     express.raw({ type: () => true, limit: "200mb" }),
@@ -118,6 +160,52 @@ export function registerPartnerRoutes(app: Express) {
       try {
         const job = await uploadPartnerVcf(req.params.id, body);
         res.status(202).json(job);
+      } catch (error) {
+        sendFailure(res, error);
+      }
+    }
+  );
+
+  app.post(
+    `${PARTNER_INTERPRETATION_JOBS_PATH}/progress`,
+    requirePartnerAuth,
+    async (req, res) => {
+      const ids = Array.isArray(req.body?.externalOrderIds)
+        ? req.body.externalOrderIds.filter((id: unknown) => typeof id === "string")
+        : [];
+      try {
+        const jobs = await listPartnerJobProgress(ids);
+        res.json({ jobs });
+      } catch (error) {
+        sendFailure(res, error);
+      }
+    }
+  );
+
+  app.post(
+    `${PARTNER_INTERPRETATION_JOBS_PATH}/:id/cancel`,
+    requirePartnerAuth,
+    async (req, res) => {
+      try {
+        const result = await cancelPartnerClassification(req.params.id);
+        res.json(result);
+      } catch (error) {
+        sendFailure(res, error);
+      }
+    }
+  );
+
+  app.get(
+    `${PARTNER_INTERPRETATION_JOBS_PATH}/by-order/:externalOrderId`,
+    requirePartnerAuth,
+    async (req, res) => {
+      try {
+        const job = await getPartnerJobByExternalOrder(req.params.externalOrderId);
+        if (!job) {
+          res.status(404).json({ error: "job_not_found" });
+          return;
+        }
+        res.json(job);
       } catch (error) {
         sendFailure(res, error);
       }

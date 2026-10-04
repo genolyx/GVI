@@ -4,8 +4,11 @@ import { partnerInterpretationIdempotencyKey } from "@shared/partnerInterpretati
 import {
   partnerJobLookupId,
   partnerJobStorageKey,
+  partnerSkipsGeneScope,
   partnerStatusFromParts,
   partnerVcfFilters,
+  samePartnerOrderAction,
+  type PartnerJobManifest,
 } from "./partnerJobState";
 
 describe("partner job state", () => {
@@ -19,6 +22,33 @@ describe("partner job state", () => {
     expect(id.length).toBeLessThanOrEqual(80);
     expect(partnerJobLookupId(id)).toBe(id);
     expect(partnerJobLookupId(key)).toBe(id);
+  });
+
+  it("reuses one case when the same order arrives with a new panel", () => {
+    expect(
+      samePartnerOrderAction({
+        storedIdempotencyKey: "order:sha:1:1.0",
+        incomingIdempotencyKey: "order:sha:1:1.0:carrier-2000:carrier",
+        jobStatus: "review_ready",
+        caseStatus: "review_ready",
+      })
+    ).toBe("replace");
+    expect(
+      samePartnerOrderAction({
+        storedIdempotencyKey: "order:sha:1:1.0:carrier-2000:carrier",
+        incomingIdempotencyKey: "order:sha:1:1.0:carrier-2000:carrier",
+        jobStatus: "failed",
+        caseStatus: "failed",
+      })
+    ).toBe("reopen");
+    expect(
+      samePartnerOrderAction({
+        storedIdempotencyKey: "order:sha:1:1.0",
+        incomingIdempotencyKey: "order:sha:1:1.0:carrier-2000",
+        jobStatus: "review_ready",
+        caseStatus: "reported",
+      })
+    ).toBe("keep");
   });
 
   it("uses the carrier frequency limit when the request omits maxAf", () => {
@@ -35,6 +65,34 @@ describe("partner job state", () => {
       track: "carrier",
       genes: "CFTR",
     });
+  });
+
+  it("applies the quality limits from the portal order", () => {
+    expect(
+      partnerVcfFilters({
+        genes: "CFTR",
+        hpo: "",
+        maxAf: 0.001,
+        track: "carrier",
+        minQual: 30,
+        minGenotypeQuality: 20,
+        minDepth: 20,
+        passOnly: false,
+      })
+    ).toMatchObject({
+      minQual: 30,
+      minGenotypeQuality: 20,
+      minDepth: 20,
+      passOnly: false,
+    });
+  });
+
+  it("lets a whole-exome VCF with no gene list through ingest", () => {
+    const empty = { partner: { genes: "", hpo: "" } } as PartnerJobManifest;
+    const panel = { partner: { genes: "CFTR", hpo: "" } } as PartnerJobManifest;
+    expect(partnerSkipsGeneScope(null)).toBe(false);
+    expect(partnerSkipsGeneScope(empty)).toBe(true);
+    expect(partnerSkipsGeneScope(panel)).toBe(false);
   });
 
   it("stays queued until the VCF arrives and running while classification is in flight", () => {

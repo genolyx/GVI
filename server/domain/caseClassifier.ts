@@ -7,10 +7,11 @@ import {
   recordReusedClassification,
   reuseQueuedClassifications,
 } from "./curationReuse";
+import { resolveClassifierCaseLimit } from "./classifierLimit";
 import { ensureCurationWorker } from "./curationWorker";
 import { requireDb } from "./tenant";
 
-/** Automatic classification after filtering. The engine runs one variant at a time. */
+/** Default when Settings and CLASSIFIER_CASE_LIMIT are unset. The engine runs one variant at a time. */
 export const CASE_CLASSIFIER_LIMIT = 200;
 const BULK_PRIORITY = 10;
 
@@ -129,6 +130,7 @@ export async function enqueueFilteredCaseVariants(args: {
   caseId: number;
   requestedBy: number | null;
 }): Promise<CaseClassifierQueue> {
+  const limit = await resolveClassifierCaseLimit();
   const db = await requireDb();
   const reusedQueued = await reuseQueuedClassifications(args.organizationId, args.caseId);
   const rows = await db
@@ -177,9 +179,9 @@ export async function enqueueFilteredCaseVariants(args: {
     }
     eligible.push(row.id);
   }
-  const overflow = eligible.slice(CASE_CLASSIFIER_LIMIT);
+  const overflow = eligible.slice(limit);
   for (const variantId of overflow) {
-    skipped.push({ variantId, reason: `Classifier queue holds ${CASE_CLASSIFIER_LIMIT} variants per case` });
+    skipped.push({ variantId, reason: `Classifier queue holds ${limit} variants per case` });
   }
 
   const batchId =
@@ -193,7 +195,7 @@ export async function enqueueFilteredCaseVariants(args: {
 
   let queued = 0;
   let reused = reusedQueued;
-  for (const variantId of eligible.slice(0, CASE_CLASSIFIER_LIMIT)) {
+  for (const variantId of eligible.slice(0, limit)) {
     try {
       const built = await buildCurationInputForVariant(args.organizationId, variantId, {
         runLiterature: false,

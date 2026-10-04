@@ -22,6 +22,7 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useOrganization } from "@/contexts/OrganizationContext";
 import { trpc } from "@/lib/trpc";
+import { caseDisplayName } from "@/lib/caseLabel";
 import { formatDate } from "@/lib/datetime";
 import {
   entryChip,
@@ -602,11 +603,13 @@ export default function Home() {
                   >
                     <div>
                       <p className="font-mono text-xs font-medium">
-                        {item.caseNumber}
+                        {caseDisplayName(item.caseNumber, item.patientAlias)}
                       </p>
-                      <p className="mt-1 text-[11px] text-muted-foreground">
-                        {item.patientAlias}
-                      </p>
+                      {caseDisplayName(item.caseNumber, item.patientAlias) === item.patientAlias ? null : (
+                        <p className="mt-1 text-[11px] text-muted-foreground">
+                          {item.patientAlias}
+                        </p>
+                      )}
                     </div>
                     <p className="hidden text-xs text-muted-foreground sm:block">
                       {item.projectName}

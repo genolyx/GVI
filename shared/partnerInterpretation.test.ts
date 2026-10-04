@@ -79,26 +79,30 @@ describe("portal service to GVC track", () => {
     });
   });
 
-  it("does not open a job for health screening, proactive, sgNIPT, or PGx", () => {
+  it("maps health screening onto the carrier frequency rules without dark genes", () => {
     expect(resolvePartnerTrack({ serviceCode: "health_screening" })).toEqual({
-      accepted: false,
-      reason: "health_screening_track_unset",
+      accepted: true,
+      track: "carrier",
+      canonicalService: "health_screening",
+      darkGeneResult: "not_requested",
     });
-    expect(resolvePartnerTrack({ serviceCode: "health_snp" }).reason).toBe(
-      "health_screening_track_unset"
-    );
+    expect(resolvePartnerTrack({ serviceCode: "health_snp" })).toMatchObject({
+      track: "carrier",
+      canonicalService: "health_screening",
+      darkGeneResult: "not_requested",
+    });
     expect(
       resolvePartnerTrack({
         serviceCode: "whole_exome",
         panelCategory: "proactive_health",
-      }).reason
-    ).toBe("health_screening_track_unset");
+      })
+    ).toMatchObject({ canonicalService: "health_screening", darkGeneResult: "not_requested" });
     expect(
       resolvePartnerTrack({
         serviceCode: "carrier_screening",
         packageCode: "HealthScreening",
-      }).reason
-    ).toBe("health_screening_track_unset");
+      })
+    ).toMatchObject({ canonicalService: "health_screening" });
     expect(resolvePartnerTrack({ serviceCode: "sgnipt" }).reason).toBe(
       "sgnipt_out_of_scope"
     );
@@ -133,6 +137,75 @@ describe("partner interpretation job", () => {
       idempotencyKey: `CSGX26070001:${sha}:${GERMLINE_FILTER_CONTRACT_VERSION}:${PARTNER_CLASSIFICATION_RULESET}`,
     });
     if (result.accepted) expect(result.request.vcf.sha256).toBe(sha);
+  });
+
+  it("keeps a panel code in the idempotency key", () => {
+    const result = interpretPartnerJob(
+      request({
+        serviceCode: "whole_exome",
+        wesPanelId: "full_wes",
+        panelCode: "carrier-2000",
+        genes: "CFTR,PAH",
+      })
+    );
+    expect(result.accepted).toBe(true);
+    if (result.accepted) {
+      expect(result.idempotencyKey.endsWith(":carrier-2000")).toBe(true);
+      expect(result.request.panelCode).toBe("carrier-2000");
+    }
+  });
+
+  it("uses a portal frequency track instead of the service mapping", () => {
+    const result = interpretPartnerJob(
+      request({
+        serviceCode: "whole_exome",
+        wesPanelId: "full_wes",
+        panelCode: "carrier-2000",
+        genes: "",
+        hpo: "",
+        frequencyTrack: "carrier",
+      })
+    );
+    expect(result.accepted).toBe(true);
+    if (result.accepted) {
+      expect(result.track).toBe("carrier");
+      expect(result.canonicalService).toBe("whole_exome");
+      expect(result.idempotencyKey.endsWith(":carrier-2000:carrier")).toBe(true);
+    }
+  });
+
+  it("keeps a read-depth limit in the idempotency key", () => {
+    const result = interpretPartnerJob(
+      request({
+        minQual: 30,
+        minGenotypeQuality: 20,
+        minDepth: 20,
+        passOnly: false,
+      })
+    );
+    expect(result.accepted).toBe(true);
+    if (result.accepted) {
+      expect(result.request.minDepth).toBe(20);
+      expect(result.idempotencyKey.endsWith(":qual=30:gq=20:dp=20:pass=any")).toBe(true);
+    }
+  });
+
+  it("accepts a whole-exome vcf-only order without a gene list", () => {
+    expect(
+      interpretPartnerJob(
+        request({
+          serviceCode: "whole_exome",
+          wesPanelId: "full_wes",
+          genes: "",
+          hpo: "",
+        })
+      )
+    ).toMatchObject({
+      accepted: true,
+      track: "rare_disease",
+      canonicalService: "whole_exome",
+      darkGeneResult: "not_requested",
+    });
   });
 
   it("requires a gene list or HPO terms before accepting", () => {

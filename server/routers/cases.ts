@@ -29,6 +29,11 @@ import {
   germlineOrderSchema,
 } from "@shared/germlineOrder";
 import { classifierQueueMessage, enqueueFilteredCaseVariants } from "../domain/caseClassifier";
+import {
+  currentPartnerOrderCondition,
+  partnerSkipsGeneScope,
+  readPartnerManifest,
+} from "../domain/partnerJobState";
 import { notifyCase, notifyGvc } from "../telegramNotify";
 import { runTriagePass } from "../domain/triagePass";
 import {
@@ -305,12 +310,21 @@ export async function ingestVcfForJob(params: {
   } = params;
   const db = await requireDb();
   try {
-    const vcfFilters = await germlineFiltersForRun(
-      organizationId,
-      caseId,
-      purpose,
-      params.vcfFilters ?? null
-    );
+    const [storedJob] = await db
+      .select({ manifest: analysisJobs.manifest })
+      .from(analysisJobs)
+      .where(
+        and(eq(analysisJobs.id, jobId), eq(analysisJobs.organizationId, organizationId))
+      )
+      .limit(1);
+    const vcfFilters = partnerSkipsGeneScope(readPartnerManifest(storedJob?.manifest))
+      ? (params.vcfFilters ?? null)
+      : await germlineFiltersForRun(
+          organizationId,
+          caseId,
+          purpose,
+          params.vcfFilters ?? null
+        );
     const signedUrl = await storageGetSignedUrl(vcfFile.storageKey);
     const response = await fetch(signedUrl);
     if (!response.ok)
@@ -609,6 +623,23 @@ export async function ingestVcfForJob(params: {
           error
         );
       }
+      const partnerJob = await db
+        .select({ manifest: analysisJobs.manifest })
+        .from(analysisJobs)
+        .where(and(eq(analysisJobs.id, jobId), eq(analysisJobs.organizationId, organizationId)))
+        .limit(1);
+      const partnerManifest = readPartnerManifest(partnerJob[0]?.manifest);
+      if (partnerManifest && !partnerManifest.partner.classificationQueued) {
+        await db
+          .update(analysisJobs)
+          .set({
+            manifest: {
+              ...partnerManifest,
+              partner: { ...partnerManifest.partner, classificationQueued: true },
+            },
+          })
+          .where(and(eq(analysisJobs.id, jobId), eq(analysisJobs.organizationId, organizationId)));
+      }
     }
   } catch (error) {
     if (stoppedJobIds.has(jobId)) return;
@@ -727,7 +758,10 @@ export const casesRouter = router({
         "case:read"
       );
       const db = await requireDb();
-      const conditions = [eq(cases.organizationId, input.organizationId)];
+      const conditions = [
+        eq(cases.organizationId, input.organizationId),
+        currentPartnerOrderCondition(input.organizationId),
+      ];
       if (input.projectId)
         conditions.push(eq(cases.projectId, input.projectId));
       if (input.status) conditions.push(eq(cases.status, input.status));

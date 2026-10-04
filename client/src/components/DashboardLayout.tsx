@@ -34,7 +34,9 @@ import {
   Activity,
   Building2,
   ChevronDown,
+  BookOpen,
   ClipboardList,
+  Dna,
   FileSignature,
   FlaskConical,
   LayoutDashboard,
@@ -145,6 +147,8 @@ const menuItems: Array<{
   { icon: Activity, label: "Audit Log", path: "/audit", permission: "audit:view" },
   { icon: ShieldCheck, label: "Security", path: "/security", permission: "security:view" },
   { icon: Users, label: "Organization", path: "/organization", permission: "member:manage" },
+  { icon: BookOpen, label: "Literature", path: "/literature", platformAdmin: true },
+  { icon: Dna, label: "Classifications", path: "/classifications", platformAdmin: true },
   { icon: Settings, label: "Settings", path: "/settings", platformAdmin: true },
 ];
 

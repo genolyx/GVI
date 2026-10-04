@@ -7,6 +7,8 @@ const createPartnerInterpretationJob = vi.fn();
 const getPartnerInterpretationJob = vi.fn();
 const getPartnerVariantDocument = vi.fn();
 const listPartnerVariants = vi.fn();
+const submitPartnerDarkGenes = vi.fn();
+const getPartnerDarkGenes = vi.fn();
 const uploadPartnerVcf = vi.fn();
 
 vi.mock("./domain/partnerJobs", () => ({
@@ -17,6 +19,8 @@ vi.mock("./domain/partnerJobs", () => ({
   getPartnerVariantDocument: (...args: unknown[]) =>
     getPartnerVariantDocument(...args),
   listPartnerVariants: (...args: unknown[]) => listPartnerVariants(...args),
+  submitPartnerDarkGenes: (...args: unknown[]) => submitPartnerDarkGenes(...args),
+  getPartnerDarkGenes: (...args: unknown[]) => getPartnerDarkGenes(...args),
   uploadPartnerVcf: (...args: unknown[]) => uploadPartnerVcf(...args),
   partnerErrorStatus: (error: unknown) => {
     if (error instanceof Error && "status" in error && "code" in error) {
@@ -55,11 +59,14 @@ async function boot() {
 }
 
 beforeEach(() => {
+  process.env.PARTNER_TOKEN_FILE = "off";
   process.env.PARTNER_API_TOKEN = token;
   createPartnerInterpretationJob.mockReset();
   getPartnerInterpretationJob.mockReset();
   getPartnerVariantDocument.mockReset();
   listPartnerVariants.mockReset();
+  submitPartnerDarkGenes.mockReset();
+  getPartnerDarkGenes.mockReset();
   uploadPartnerVcf.mockReset();
 });
 
@@ -147,6 +154,30 @@ describe("partner interpretation API", () => {
     const decision = createPartnerInterpretationJob.mock.calls[0]?.[0];
     expect(decision.accepted).toBe(true);
     expect(decision.track).toBe("carrier");
+  });
+
+  it("stores a carrier dark-gene report", async () => {
+    submitPartnerDarkGenes.mockResolvedValue({
+      status: "ready",
+      detailed_sections: [{ title: "SMAca CHECK", body: "SMN1_CN=1", kind: "warning" }],
+      cftr_ivs9_eh: null,
+    });
+    const baseUrl = await boot();
+    const response = await fetch(
+      `${baseUrl}${PARTNER_INTERPRETATION_JOBS_PATH}/${"d".repeat(64)}/dark-genes`,
+      {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ detailedText: "SMAca CHECK:\n  SMN1_CN=1\n" }),
+      }
+    );
+    expect(response.status).toBe(200);
+    expect(submitPartnerDarkGenes).toHaveBeenCalledWith("d".repeat(64), {
+      detailedText: "SMAca CHECK:\n  SMN1_CN=1\n",
+    });
   });
 
   it("reads a curation document for one variant", async () => {

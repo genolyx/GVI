@@ -7,10 +7,12 @@ import { hasGeneScopeChoice } from "./geneScope";
  * Portal interpretation jobs. Standalone GVC orders keep using
  * `frequencyTrackForOrder` and are not accepted or rejected here.
  *
- * Health screening and proactive panels have no frequency track yet, so they
- * do not become jobs. sgNIPT and PGx-only panels are outside this contract.
- * Dark-gene sections are not in this payload; carrier jobs record that the
- * block is deferred to a later contract.
+ * Health screening uses the carrier frequency rules and does not request dark
+ * genes. Include PGx and Include APOE PGx travel with the job so GVC can decide
+ * whether those results belong on the order. sgNIPT and PGx-only panels are
+ * outside this contract. Carrier jobs start with dark genes deferred. The portal
+ * then sends the pipeline report and reads the interpreted sections from the
+ * dark-genes route.
  */
 
 export const PARTNER_INTERPRETATION_CONTRACT_VERSION = "1" as const;
@@ -48,6 +50,7 @@ export type PartnerDeclineReason = (typeof PARTNER_DECLINE_REASONS)[number];
 export const PARTNER_CANONICAL_SERVICES = [
   "carrier_screening",
   "whole_exome",
+  "health_screening",
 ] as const;
 
 export type PartnerCanonicalService =
@@ -80,6 +83,9 @@ export const partnerInterpretationJobRequestSchema = z
     packageCode: z.string().trim().max(80).optional(),
     otherTestType: z.string().trim().max(160).optional(),
     wesPanelId: z.string().trim().max(80).optional(),
+    /** Saved GVC interpretation panel, such as carrier-2000 for Carrier 2000+. */
+    panelCode: z.string().trim().max(80).optional(),
+    panelName: z.string().trim().max(200).optional(),
     referenceBuild: z.enum(["GRCh37", "GRCh38"]),
     vcf: z
       .object({
@@ -90,6 +96,16 @@ export const partnerInterpretationJobRequestSchema = z
     genes: z.string().max(200_000).default(""),
     hpo: z.string().max(4000).default(""),
     maxAf: z.number().min(0).max(1).nullable().default(null),
+    /** Blank on the GVC case form. Omitted means the filter is skipped. */
+    minQual: z.number().min(0).max(1_000_000).nullable().optional(),
+    minGenotypeQuality: z.number().int().min(0).max(100).nullable().optional(),
+    minDepth: z.number().int().min(0).max(100_000).nullable().optional(),
+    /** Defaults to true, matching the GVC case form. */
+    passOnly: z.boolean().optional(),
+    includePgx: z.boolean().default(false),
+    includeApoePgx: z.boolean().default(false),
+    /** Portal override. When set, this track is used instead of the service mapping. */
+    frequencyTrack: z.enum(["carrier", "rare_disease", "hereditary_cancer"]).optional(),
     expectedTrack: z.enum(FREQUENCY_TRACKS).optional(),
     callbackUrl: z.string().trim().url().max(2000).optional(),
   })
@@ -129,7 +145,11 @@ export const partnerInterpretationJobSchema = z
     status: z.enum(PARTNER_JOB_STATUSES),
     track: z.enum(["carrier", "rare_disease", "hereditary_cancer"]),
     canonicalService: z.enum(PARTNER_CANONICAL_SERVICES),
-    darkGeneResult: z.enum(["deferred", "not_requested"]),
+    darkGeneResult: z.enum(["deferred", "not_requested", "ready", "absent"]),
+    includePgx: z.boolean(),
+    includeApoePgx: z.boolean(),
+    panelCode: z.string().optional(),
+    panelName: z.string().optional(),
     referenceBuild: z.enum(["GRCh37", "GRCh38"]),
     vcfSha256: sha256Schema,
     databaseVersions: z.record(z.string(), z.string()),
@@ -137,6 +157,15 @@ export const partnerInterpretationJobSchema = z
       .object({
         kept: z.number().int().nonnegative(),
         held: z.number().int().nonnegative(),
+      })
+      .strict()
+      .optional(),
+    classification: z
+      .object({
+        queued: z.number().int().nonnegative(),
+        running: z.number().int().nonnegative(),
+        succeeded: z.number().int().nonnegative(),
+        failed: z.number().int().nonnegative(),
       })
       .strict()
       .optional(),
@@ -215,7 +244,7 @@ export function resolvePartnerTrack(input: {
   if (panel === "pgx")
     return { accepted: false, reason: "pgx_only_out_of_scope" };
   if (panel === "proactive_health" || panel === "health_screening") {
-    return { accepted: false, reason: "health_screening_track_unset" };
+    return acceptHealth();
   }
   if (panel === "carrier_screening")
     return accept("carrier", "carrier_screening");
@@ -244,7 +273,7 @@ export function resolvePartnerTrack(input: {
     packageCode === "Proactive" ||
     program === "Proactive"
   ) {
-    return { accepted: false, reason: "health_screening_track_unset" };
+    return acceptHealth();
   }
   if (
     service === "carrier_screening" ||
@@ -255,6 +284,15 @@ export function resolvePartnerTrack(input: {
     return accept("carrier", "carrier_screening");
   }
   return { accepted: false, reason: "unknown_service" };
+}
+
+function acceptHealth(): PartnerTrackDecision {
+  return {
+    accepted: true,
+    track: "carrier",
+    canonicalService: "health_screening",
+    darkGeneResult: "not_requested",
+  };
 }
 
 function accept(
@@ -274,13 +312,28 @@ export function partnerInterpretationIdempotencyKey(input: {
   vcfSha256: string;
   filterContractVersion?: string;
   rulesetVersion?: string;
+  panelCode?: string | null;
+  frequencyTrack?: string | null;
+  minQual?: number | null;
+  minGenotypeQuality?: number | null;
+  minDepth?: number | null;
+  passOnly?: boolean | null;
 }): string {
-  return [
+  const parts = [
     input.externalOrderId.trim(),
     input.vcfSha256.trim().toLowerCase(),
     input.filterContractVersion ?? GERMLINE_FILTER_CONTRACT_VERSION,
     input.rulesetVersion ?? PARTNER_CLASSIFICATION_RULESET,
-  ].join(":");
+  ];
+  const panel = (input.panelCode ?? "").trim().toLowerCase();
+  if (panel) parts.push(panel);
+  const track = (input.frequencyTrack ?? "").trim().toLowerCase();
+  if (track) parts.push(track);
+  if (input.minQual != null) parts.push(`qual=${input.minQual}`);
+  if (input.minGenotypeQuality != null) parts.push(`gq=${input.minGenotypeQuality}`);
+  if (input.minDepth != null) parts.push(`dp=${input.minDepth}`);
+  if (input.passOnly === false) parts.push("pass=any");
+  return parts.join(":");
 }
 
 export function interpretPartnerJob(
@@ -300,16 +353,18 @@ export function interpretPartnerJob(
   };
   const track = resolvePartnerTrack(request);
   if (!track.accepted) return track;
-  if (!hasGeneScopeChoice({ genes: request.genes, hpo: request.hpo })) {
+  const fullWes = request.wesPanelId === "full_wes";
+  if (!fullWes && !hasGeneScopeChoice({ genes: request.genes, hpo: request.hpo })) {
     return { accepted: false, reason: "gene_scope_required" };
   }
   if (request.expectedTrack && request.expectedTrack !== track.track) {
     return { accepted: false, reason: "track_mismatch" };
   }
+  const chosenTrack = request.frequencyTrack ?? track.track;
   return {
     accepted: true,
     request,
-    track: track.track,
+    track: chosenTrack,
     canonicalService: track.canonicalService,
     darkGeneResult: track.darkGeneResult,
     filterContractVersion: GERMLINE_FILTER_CONTRACT_VERSION,
@@ -317,6 +372,12 @@ export function interpretPartnerJob(
     idempotencyKey: partnerInterpretationIdempotencyKey({
       externalOrderId: request.externalOrderId,
       vcfSha256: request.vcf.sha256,
+      panelCode: request.panelCode,
+      frequencyTrack: request.frequencyTrack,
+      minQual: request.minQual,
+      minGenotypeQuality: request.minGenotypeQuality,
+      minDepth: request.minDepth,
+      passOnly: request.passOnly,
     }),
   };
 }

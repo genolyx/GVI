@@ -1,10 +1,12 @@
 import { createHash } from "node:crypto";
 import { TRPCError } from "@trpc/server";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import {
   analysisJobs,
   caseFiles,
   cases,
+  curationRunEvents,
+  germlinePanels,
   curationRuns,
   organizationMembers,
   organizations,
@@ -13,6 +15,12 @@ import {
   users,
   variants,
 } from "../../drizzle/schema";
+import {
+  interpretDarkGenes,
+  partnerDarkGeneInputSchema,
+  partnerDarkGenesSchema,
+  type PartnerDarkGenes,
+} from "@shared/darkGenes";
 import { curationDocumentSchema } from "@shared/curation/document";
 import {
   partnerInterpretationJobSchema,
@@ -30,6 +38,7 @@ import {
   partnerJobManifest,
   partnerJobStorageKey,
   partnerStatusFromParts,
+  samePartnerOrderAction,
   partnerVcfUploadPath,
   readPartnerManifest,
   vcfFileName,
@@ -155,6 +164,31 @@ async function ensurePartnerTenant() {
   return { organizationId, projectId, userId };
 }
 
+async function findLatestJobByOrder(externalOrderId: string) {
+  const orderId = externalOrderId.trim();
+  if (!orderId) return null;
+  const db = await requireDb();
+  const rows = await db
+    .select({ job: analysisJobs, caseStatus: cases.status })
+    .from(analysisJobs)
+    .innerJoin(
+      cases,
+      and(
+        eq(cases.id, analysisJobs.caseId),
+        eq(cases.organizationId, analysisJobs.organizationId)
+      )
+    )
+    .where(eq(analysisJobs.externalJobId, orderId))
+    .orderBy(desc(analysisJobs.updatedAt), desc(analysisJobs.id));
+  for (const row of rows) {
+    const manifest = readPartnerManifest(row.job.manifest);
+    if (manifest?.partner.externalOrderId === orderId) {
+      return { job: row.job, manifest, caseStatus: row.caseStatus };
+    }
+  }
+  return null;
+}
+
 async function findJob(idOrKey: string) {
   const db = await requireDb();
   const id = partnerJobLookupId(idOrKey);
@@ -168,6 +202,34 @@ async function findJob(idOrKey: string) {
   const manifest = readPartnerManifest(job.manifest);
   if (!manifest) return null;
   return { job, manifest };
+}
+
+async function syncPartnerPgxFlags(
+  found: NonNullable<Awaited<ReturnType<typeof findJob>>>,
+  request: { includePgx: boolean; includeApoePgx: boolean }
+) {
+  const currentPgx = found.manifest.partner.includePgx ?? false;
+  const currentApoe = found.manifest.partner.includeApoePgx ?? false;
+  if (currentPgx === request.includePgx && currentApoe === request.includeApoePgx) return found;
+  const manifest: PartnerJobManifest = {
+    ...found.manifest,
+    partner: {
+      ...found.manifest.partner,
+      includePgx: request.includePgx,
+      includeApoePgx: request.includeApoePgx,
+    },
+  };
+  const db = await requireDb();
+  await db
+    .update(analysisJobs)
+    .set({ manifest })
+    .where(
+      and(
+        eq(analysisJobs.id, found.job.id),
+        eq(analysisJobs.organizationId, found.job.organizationId)
+      )
+    );
+  return { job: found.job, manifest };
 }
 
 async function toView(
@@ -185,9 +247,13 @@ async function toView(
       )
     );
   let activeRuns = 0;
+  let queuedRuns = 0;
+  let runningRuns = 0;
   let failedRuns = 0;
   let succeededRuns = 0;
   for (const run of runRows) {
+    if (run.status === "queued") queuedRuns += 1;
+    if (run.status === "loading" || run.status === "running") runningRuns += 1;
     if ((ACTIVE_CURATION_STATUSES as readonly string[]).includes(run.status))
       activeRuns += 1;
     else if (run.status === "failed") failedRuns += 1;
@@ -205,13 +271,24 @@ async function toView(
           )
         );
   const held = variantRows.filter(row => row.heldReason).length;
-  const status = partnerStatusFromParts({
+  let status = partnerStatusFromParts({
     analysisStatus: job.status,
     awaitingVcf: manifest.partner.awaitingVcf,
     activeRuns,
     failedRuns,
     succeededRuns,
   });
+  // Ingest marks the case ready before the classifier queue is filled. Until that
+  // queue exists, the job is still running so the portal does not read an empty result.
+  if (
+    status === "succeeded" &&
+    manifest.partner.classificationQueued !== true &&
+    activeRuns === 0 &&
+    succeededRuns === 0 &&
+    failedRuns === 0
+  ) {
+    status = "running";
+  }
   const parsed = partnerInterpretationJobSchema.safeParse({
     contractVersion: manifest.partner.contractVersion,
     filterContractVersion: manifest.partner.filterContractVersion,
@@ -223,12 +300,24 @@ async function toView(
     track: manifest.partner.track,
     canonicalService: manifest.partner.canonicalService,
     darkGeneResult: manifest.partner.darkGeneResult,
+    includePgx: manifest.partner.includePgx ?? false,
+    includeApoePgx: manifest.partner.includeApoePgx ?? false,
+    ...(manifest.partner.panelCode ? { panelCode: manifest.partner.panelCode } : {}),
+    ...(manifest.partner.panelName ? { panelName: manifest.partner.panelName } : {}),
     referenceBuild: manifest.partner.referenceBuild,
     vcfSha256: manifest.partner.vcfSha256,
     databaseVersions: {},
     counts: manifest.partner.awaitingVcf
       ? undefined
       : { kept: variantRows.length - held, held },
+    classification: manifest.partner.awaitingVcf
+      ? undefined
+      : {
+          queued: queuedRuns,
+          running: runningRuns,
+          succeeded: succeededRuns,
+          failed: failedRuns,
+        },
     ...(job.errorMessage ? { error: job.errorMessage } : {}),
     ...(manifest.partner.awaitingVcf
       ? {
@@ -249,12 +338,230 @@ async function toView(
   return parsed.data;
 }
 
+async function reopenFailedPartnerJob(found: {
+  job: StoredJob;
+  manifest: PartnerJobManifest;
+}): Promise<PartnerInterpretationJob> {
+  const db = await requireDb();
+  const manifest: PartnerJobManifest = {
+    ...found.manifest,
+    partner: { ...found.manifest.partner, classificationQueued: false },
+  };
+  await db
+    .update(analysisJobs)
+    .set({
+      status: "queued",
+      errorMessage: null,
+      completedAt: null,
+      progressPercent: 0,
+      startedAt: null,
+      manifest,
+    })
+    .where(
+      and(
+        eq(analysisJobs.id, found.job.id),
+        eq(analysisJobs.organizationId, found.job.organizationId)
+      )
+    );
+  await db
+    .update(cases)
+    .set({ status: "queued" })
+    .where(
+      and(
+        eq(cases.id, found.job.caseId),
+        eq(cases.organizationId, found.job.organizationId)
+      )
+    );
+  await db
+    .delete(variants)
+    .where(
+      and(
+        eq(variants.organizationId, found.job.organizationId),
+        eq(variants.caseId, found.job.caseId)
+      )
+    );
+  if (!manifest.partner.awaitingVcf) {
+    const [file] = await db
+      .select()
+      .from(caseFiles)
+      .where(
+        and(
+          eq(caseFiles.organizationId, found.job.organizationId),
+          eq(caseFiles.caseId, found.job.caseId),
+          eq(caseFiles.kind, "vcf")
+        )
+      )
+      .limit(1);
+    if (file) {
+      void ingestVcfForJob({
+        organizationId: found.job.organizationId,
+        caseId: found.job.caseId,
+        jobId: found.job.id,
+        vcfFile: file,
+        referenceBuild: manifest.partner.referenceBuild,
+        purpose: "germline",
+        vcfFilters: manifest.vcfFilters,
+      }).catch(error => {
+        console.error("[partner] vcf ingest retry failed", {
+          jobId: found.job.id,
+          error,
+        });
+      });
+    }
+  }
+  return toView(
+    { ...found.job, status: "queued", errorMessage: null },
+    manifest
+  );
+}
+
+/** A changed panel or track for an order already on file replaces that case. */
+async function replacePartnerOrder(
+  found: {
+    job: StoredJob;
+    manifest: PartnerJobManifest;
+  },
+  decision: Extract<PartnerInterpretationResult, { accepted: true }>,
+  id: string
+): Promise<PartnerInterpretationJob> {
+  const manifest = partnerJobManifest(decision.request, decision);
+  const db = await requireDb();
+  const [file] = await db
+    .select()
+    .from(caseFiles)
+    .where(
+      and(
+        eq(caseFiles.organizationId, found.job.organizationId),
+        eq(caseFiles.caseId, found.job.caseId),
+        eq(caseFiles.kind, "vcf")
+      )
+    )
+    .limit(1);
+  const sameVcf = file?.sha256 === decision.request.vcf.sha256;
+  if (sameVcf) manifest.partner.awaitingVcf = false;
+  await db.transaction(async tx => {
+    await tx
+      .update(cases)
+      .set({
+        caseNumber: id,
+        status: "queued",
+        referenceBuild: decision.request.referenceBuild,
+        panelName:
+          decision.request.panelName ||
+          `${decision.canonicalService} / ${decision.track}`,
+        phenotypeText: decision.request.hpo || null,
+      })
+      .where(
+        and(
+          eq(cases.id, found.job.caseId),
+          eq(cases.organizationId, found.job.organizationId)
+        )
+      );
+    await tx
+      .update(analysisJobs)
+      .set({
+        status: "queued",
+        errorMessage: null,
+        completedAt: null,
+        progressPercent: 0,
+        startedAt: null,
+        idempotencyKey: id,
+        manifest,
+      })
+      .where(
+        and(
+          eq(analysisJobs.id, found.job.id),
+          eq(analysisJobs.organizationId, found.job.organizationId)
+        )
+      );
+    await tx
+      .delete(variants)
+      .where(
+        and(
+          eq(variants.organizationId, found.job.organizationId),
+          eq(variants.caseId, found.job.caseId)
+        )
+      );
+  });
+  if (sameVcf && file) {
+    void ingestVcfForJob({
+      organizationId: found.job.organizationId,
+      caseId: found.job.caseId,
+      jobId: found.job.id,
+      vcfFile: file,
+      referenceBuild: manifest.partner.referenceBuild,
+      purpose: "germline",
+      vcfFilters: manifest.vcfFilters,
+    }).catch(error => {
+      console.error("[partner] vcf ingest replace failed", {
+        jobId: found.job.id,
+        error,
+      });
+    });
+  }
+  return toView(
+    { ...found.job, status: "queued", errorMessage: null, idempotencyKey: id },
+    manifest
+  );
+}
+
+/** A saved panel code replaces the request gene list before the job is accepted. */
+export async function applyPartnerPanel(
+  input: unknown
+): Promise<{ ok: true; body: unknown } | { ok: false; message: string }> {
+  if (!input || typeof input !== "object") return { ok: true, body: input };
+  const record = input as Record<string, unknown>;
+  const code = typeof record.panelCode === "string" ? record.panelCode.trim() : "";
+  if (!code) return { ok: true, body: input };
+  const db = await requireDb();
+  const rows = await db
+    .select({ name: germlinePanels.name, genes: germlinePanels.genes })
+    .from(germlinePanels)
+    .where(sql`lower(${germlinePanels.code}) = ${code.toLowerCase()}`);
+  if (rows.length !== 1) {
+    return {
+      ok: false,
+      message:
+        rows.length === 0
+          ? `Panel ${code} was not found`
+          : `Panel ${code} matches more than one saved list`,
+    };
+  }
+  const genes = (rows[0]?.genes ?? []).map(gene => gene.trim()).filter(Boolean);
+  if (!genes.length) return { ok: false, message: `Panel ${code} has no genes` };
+  return {
+    ok: true,
+    body: { ...record, panelCode: code, panelName: rows[0]?.name, genes: genes.join(",") },
+  };
+}
+
 export async function createPartnerInterpretationJob(
   decision: Extract<PartnerInterpretationResult, { accepted: true }>
 ): Promise<PartnerInterpretationJob> {
   const id = partnerJobStorageKey(decision.idempotencyKey);
   const existing = await findJob(id);
-  if (existing) return toView(existing.job, existing.manifest);
+  if (existing) {
+    const synced = await syncPartnerPgxFlags(existing, decision.request);
+    if (synced.job.status === "failed") return reopenFailedPartnerJob(synced);
+    return toView(synced.job, synced.manifest);
+  }
+
+  const prior = await findLatestJobByOrder(decision.request.externalOrderId);
+  if (prior) {
+    const action = samePartnerOrderAction({
+      storedIdempotencyKey: prior.manifest.partner.idempotencyKey,
+      incomingIdempotencyKey: decision.idempotencyKey,
+      jobStatus: prior.job.status,
+      caseStatus: prior.caseStatus,
+    });
+    if (action === "keep") return toView(prior.job, prior.manifest);
+    if (action === "return" || action === "reopen") {
+      const synced = await syncPartnerPgxFlags(prior, decision.request);
+      if (action === "reopen") return reopenFailedPartnerJob(synced);
+      return toView(synced.job, synced.manifest);
+    }
+    return replacePartnerOrder(prior, decision, id);
+  }
 
   const tenant = await ensurePartnerTenant();
   const manifest = partnerJobManifest(decision.request, decision);
@@ -272,7 +579,7 @@ export async function createPartnerInterpretationJob(
           inputType: "vcf",
           status: "queued",
           referenceBuild: decision.request.referenceBuild,
-          panelName: `${decision.canonicalService} / ${decision.track}`,
+          panelName: decision.request.panelName || `${decision.canonicalService} / ${decision.track}`,
           phenotypeText: decision.request.hpo || null,
           consentClinicalAnalysis: true,
           consentSecondaryFindings: false,
@@ -320,6 +627,83 @@ export async function createPartnerInterpretationJob(
   return toView(created.job, created.manifest);
 }
 
+export async function submitPartnerDarkGenes(
+  idOrKey: string,
+  input: unknown
+): Promise<PartnerDarkGenes> {
+  const parsed = partnerDarkGeneInputSchema.safeParse(input);
+  if (!parsed.success) {
+    throw new PartnerJobError(
+      400,
+      "invalid_dark_genes",
+      "Dark gene report text is missing or too large"
+    );
+  }
+  const found = await findJob(idOrKey);
+  if (!found)
+    throw new PartnerJobError(404, "job_not_found", "Partner job not found");
+  if (found.manifest.partner.darkGeneResult === "not_requested") {
+    throw new PartnerJobError(
+      422,
+      "dark_genes_not_requested",
+      "This track does not include a dark gene result"
+    );
+  }
+  const interpreted = interpretDarkGenes(parsed.data);
+  const stored = partnerDarkGenesSchema.parse({
+    ...interpreted,
+    status: interpreted.status === "deferred" ? "absent" : interpreted.status,
+  });
+  const db = await requireDb();
+  await db
+    .update(analysisJobs)
+    .set({
+      manifest: {
+        ...found.manifest,
+        partner: {
+          ...found.manifest.partner,
+          darkGeneResult: stored.status,
+          darkGenes: stored,
+        },
+      },
+    })
+    .where(
+      and(
+        eq(analysisJobs.id, found.job.id),
+        eq(analysisJobs.organizationId, found.job.organizationId)
+      )
+    );
+  return stored;
+}
+
+export async function getPartnerDarkGenes(
+  idOrKey: string
+): Promise<PartnerDarkGenes> {
+  const found = await findJob(idOrKey);
+  if (!found)
+    throw new PartnerJobError(404, "job_not_found", "Partner job not found");
+  if (found.manifest.partner.darkGeneResult === "not_requested") {
+    throw new PartnerJobError(
+      422,
+      "dark_genes_not_requested",
+      "This track does not include a dark gene result"
+    );
+  }
+  const stored = found.manifest.partner.darkGenes;
+  if (!stored) {
+    return { status: "deferred", detailed_sections: [], cftr_ivs9_eh: null };
+  }
+  const parsed = partnerDarkGenesSchema.safeParse(stored);
+  if (!parsed.success) {
+    throw new PartnerJobError(
+      500,
+      "dark_genes_invalid",
+      "Stored dark gene result does not match the contract"
+    );
+  }
+  return parsed.data;
+}
+
 export async function getPartnerInterpretationJob(
   idOrKey: string
 ): Promise<PartnerInterpretationJob> {
@@ -327,6 +711,79 @@ export async function getPartnerInterpretationJob(
   if (!found)
     throw new PartnerJobError(404, "job_not_found", "Partner job not found");
   return toView(found.job, found.manifest);
+}
+
+/** Waiting variants are cancelled. A variant a worker already started is left to finish. */
+export async function cancelPartnerClassification(
+  idOrKey: string
+): Promise<{ job: PartnerInterpretationJob; cancelled: number }> {
+  const found = await findJob(idOrKey);
+  if (!found) throw new PartnerJobError(404, "job_not_found", "Partner job not found");
+  const db = await requireDb();
+  const cancelled = await db
+    .update(curationRuns)
+    .set({ status: "cancelled", completedAt: new Date() })
+    .where(
+      and(
+        eq(curationRuns.organizationId, found.job.organizationId),
+        eq(curationRuns.caseId, found.job.caseId),
+        eq(curationRuns.status, "queued")
+      )
+    )
+    .returning({ id: curationRuns.id });
+  if (cancelled.length) {
+    await db.insert(curationRunEvents).values(
+      cancelled.map(row => ({
+        organizationId: found.job.organizationId,
+        runId: row.id,
+        status: "cancelled" as const,
+        message: "Cancelled before a worker claimed it.",
+        progressPercent: 0,
+      }))
+    );
+  }
+  return { job: await toView(found.job, found.manifest), cancelled: cancelled.length };
+}
+
+export async function listPartnerJobProgress(
+  externalOrderIds: string[]
+): Promise<PartnerInterpretationJob[]> {
+  const ids = [...new Set(externalOrderIds.map(id => id.trim()).filter(Boolean))].slice(0, 100);
+  if (!ids.length) return [];
+  const db = await requireDb();
+  const rows = await db
+    .select()
+    .from(analysisJobs)
+    .where(inArray(analysisJobs.externalJobId, ids))
+    .orderBy(desc(analysisJobs.updatedAt));
+  const seen = new Set<string>();
+  const jobs: PartnerInterpretationJob[] = [];
+  for (const job of rows) {
+    const manifest = readPartnerManifest(job.manifest);
+    const orderId = manifest?.partner.externalOrderId;
+    if (!manifest || !orderId || seen.has(orderId) || !ids.includes(orderId)) continue;
+    seen.add(orderId);
+    jobs.push(await toView(job, manifest));
+  }
+  return jobs;
+}
+
+export async function getPartnerJobByExternalOrder(
+  externalOrderId: string
+): Promise<PartnerInterpretationJob | null> {
+  const orderId = externalOrderId.trim();
+  if (!orderId) return null;
+  const db = await requireDb();
+  const rows = await db
+    .select()
+    .from(analysisJobs)
+    .where(eq(analysisJobs.externalJobId, orderId))
+    .orderBy(desc(analysisJobs.updatedAt));
+  for (const job of rows) {
+    const manifest = readPartnerManifest(job.manifest);
+    if (manifest?.partner.externalOrderId === orderId) return toView(job, manifest);
+  }
+  return null;
 }
 
 export async function uploadPartnerVcf(
