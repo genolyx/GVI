@@ -28,10 +28,7 @@ import {
   SOMATIC_TIERS,
 } from "@shared/clinical-standards";
 import { isSplicePredictorSource } from "@shared/curation/document";
-import {
-  INSTITUTIONAL_CLASSIFICATIONS,
-  institutionalLabelForAcmg,
-} from "@shared/curation/institutional";
+import { institutionalLabelForAcmg } from "@shared/curation/institutional";
 import { clinvarRecordUrl } from "@/lib/clinvarLabel";
 import { type SavedReviewCriterion } from "@shared/curation/savedCriteria";
 import {
@@ -687,11 +684,11 @@ function GermlineWorkbenchPage() {
             </div>
           ) : detail.data ? (
             <div>
-              <div className="border-b border-border/70 bg-card p-5">
+              <div className="px-4 pt-4">
                 <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <h2 className="font-display text-lg font-semibold">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h2 className="text-lg font-semibold">
                         {detail.data.variant.gene || "Intergenic"}
                       </h2>
                       {reviewRun?.batchId ? (
@@ -699,7 +696,7 @@ function GermlineWorkbenchPage() {
                           type="button"
                           size="sm"
                           variant="outline"
-                          className="h-6 px-2 text-[10px]"
+                          className="h-6 rounded-full px-2.5 text-[10px] font-medium"
                           onClick={() =>
                             navigate(
                               `/workbench/batches/${reviewRun.batchId}/review/${reviewRun.id}`
@@ -737,29 +734,25 @@ function GermlineWorkbenchPage() {
                         </a>
                       ))}
                     </div>
-                    <p className="mt-2 font-mono text-xs text-muted-foreground">
+                    <p className="mt-1 font-mono text-xs text-muted-foreground">
                       {detail.data.variant.hgvsC ||
                         detail.data.variant.normalizedId}
-                    </p>
-                    <p className="mt-1 font-mono text-[11px] text-muted-foreground">
-                      {detail.data.variant.hgvsP}
+                      {detail.data.variant.hgvsP
+                        ? `  ${detail.data.variant.hgvsP}`
+                        : ""}
                     </p>
                     {detail.data.variant.consequence ? (
                       <EffectLabel
                         value={detail.data.variant.consequence}
-                        className="mt-1 block max-w-md text-[11px] leading-4 text-muted-foreground"
+                        className="mt-1 block text-xs leading-4 text-muted-foreground"
                       />
                     ) : null}
-                    {clinicalCase.purpose === "germline" &&
-                    detail.data.acmgSuggestion ? (
-                      <p className="mt-2 text-sm font-semibold">
-                        {detail.data.acmgSuggestion.classification}
-                      </p>
-                    ) : null}
                   </div>
-                  <div className="flex flex-col items-end gap-2">
-                    <ClinicalStatus status={detail.data.variant.reviewStatus} />
-                    {canEditInterpretation ? (
+                  {canEditInterpretation ? (
+                    <label className="w-32 shrink-0">
+                      <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                        Review
+                      </span>
                       <select
                         aria-label="Review status"
                         value={detail.data.variant.reviewStatus}
@@ -775,18 +768,20 @@ function GermlineWorkbenchPage() {
                               | "flagged",
                           })
                         }
-                        className="h-8 rounded-md border border-input bg-background px-2 text-[10px]"
+                        className="mt-1 h-8 w-full rounded-md border border-input bg-background px-2 text-xs"
                       >
                         <option value="unreviewed">Unreviewed</option>
                         <option value="reviewing">Reviewing</option>
                         <option value="reviewed">Reviewed</option>
                         <option value="flagged">Flagged</option>
                       </select>
-                    ) : null}
-                  </div>
+                    </label>
+                  ) : (
+                    <ClinicalStatus status={detail.data.variant.reviewStatus} />
+                  )}
                 </div>
               </div>
-              <Tabs value={detailTab} onValueChange={setDetailTab} className="p-4">
+              <Tabs value={detailTab} onValueChange={setDetailTab} className="px-4 pb-4 pt-3">
                 <TabsList
                   className={`grid w-full ${canEditInterpretation ? "grid-cols-3" : "grid-cols-2"}`}
                 >
@@ -827,6 +822,17 @@ function GermlineWorkbenchPage() {
                     savedCall={currentInterpretation?.germlineClassification}
                     callPending={saveInterpretation.isPending}
                     callDivergence={detail.data.classificationDivergence?.message}
+                    institutionalLabel={institutionalLabel}
+                    institutionalPending={saveInstitutional.isPending}
+                    onSaveInstitutional={value => {
+                      setInstitutionalLabel(value);
+                      if (!classifiedRun || !value) return;
+                      saveInstitutional.mutate({
+                        organizationId: activeOrganizationId!,
+                        runId: classifiedRun.id,
+                        label: value,
+                      });
+                    }}
                     onSaveCall={value => {
                       if (!selectedId) return;
                       const text =
@@ -871,27 +877,47 @@ function GermlineWorkbenchPage() {
                       <div className="space-y-5">
                         {clinicalCase.purpose === "germline" ? (
                           <>
-                            <div className="rounded-xl border border-primary/30 bg-primary/10 p-4">
-                              <p className="text-[10px] font-semibold uppercase tracking-wider text-primary">
-                                Rule-based suggestion
-                              </p>
-                              <p className="mt-2 text-sm font-semibold text-foreground">
-                                {detail.data.acmgSuggestion?.classification}
-                              </p>
+                            <div className="rounded-xl border border-border bg-card p-4 text-card-foreground">
+                              <div className="flex flex-wrap gap-8">
+                                <div>
+                                  <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                                    Classification
+                                  </p>
+                                  <p className="mt-2 text-sm font-semibold text-foreground">
+                                    {classification ||
+                                      detail.data.acmgSuggestion?.classification ||
+                                      "—"}
+                                  </p>
+                                </div>
+                                {storedInstitutional ? (
+                                  <div>
+                                    <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                                      Institutional
+                                    </p>
+                                    <p className="mt-2 text-sm font-semibold text-foreground">
+                                      {storedInstitutional}
+                                    </p>
+                                  </div>
+                                ) : null}
+                              </div>
                               <p className="mt-1 text-[11px] leading-5 text-muted-foreground">
-                                {detail.data.acmgSuggestion?.rationale}
+                                {detail.data.acmgSuggestion?.classification &&
+                                classification &&
+                                detail.data.acmgSuggestion.classification !== classification
+                                  ? `Engine suggested ${detail.data.acmgSuggestion.classification}.`
+                                  : detail.data.acmgSuggestion?.rationale}
                               </p>
                             </div>
                             {detail.data.classificationDivergence?.message ? (
                               <div
-                                className={`flex items-start gap-2 rounded-xl border px-3 py-2.5 ${detail.data.classificationDivergence.diverges ? "border-rose-200 bg-rose-50/70" : "border-amber-200 bg-amber-50/70"}`}
+                                className={`flex items-start gap-2 rounded-xl border px-3 py-2.5 ${detail.data.classificationDivergence.diverges ? "border-rose-200 bg-rose-50/70 dark:border-rose-300/25 dark:bg-rose-300/10" : "border-amber-200 bg-amber-50/70 dark:border-amber-300/25 dark:bg-amber-300/10"}`}
                               >
                                 <ShieldAlert
-                                  className={`mt-0.5 size-3.5 shrink-0 ${detail.data.classificationDivergence.diverges ? "text-rose-700" : "text-amber-700"}`}
+                                  className={`mt-0.5 size-3.5 shrink-0 ${detail.data.classificationDivergence.diverges ? "text-rose-700 dark:text-rose-200" : "text-amber-700 dark:text-amber-200"}`}
                                 />
                                 <div>
                                   <p
-                                    className={`text-[10px] font-semibold uppercase tracking-wider ${detail.data.classificationDivergence.diverges ? "text-rose-700" : "text-amber-700"}`}
+                                    className={`text-[10px] font-semibold uppercase tracking-wider ${detail.data.classificationDivergence.diverges ? "text-rose-700 dark:text-rose-200" : "text-amber-700 dark:text-amber-200"}`}
                                   >
                                     {detail.data.classificationDivergence
                                       .diverges
@@ -899,7 +925,7 @@ function GermlineWorkbenchPage() {
                                       : "Review outstanding"}
                                   </p>
                                   <p
-                                    className={`mt-1 text-[11px] leading-5 ${detail.data.classificationDivergence.diverges ? "text-rose-900" : "text-amber-900"}`}
+                                    className={`mt-1 text-[11px] leading-5 ${detail.data.classificationDivergence.diverges ? "text-rose-900 dark:text-rose-100" : "text-amber-900 dark:text-amber-100"}`}
                                   >
                                     {
                                       detail.data.classificationDivergence
@@ -909,9 +935,6 @@ function GermlineWorkbenchPage() {
                                 </div>
                               </div>
                             ) : null}
-                            <p className="text-[10px] leading-4 text-muted-foreground">
-                              Criteria and the classification are saved on the ACMG section.
-                            </p>
                           </>
                         ) : (
                           <>
@@ -960,13 +983,13 @@ function GermlineWorkbenchPage() {
                             </div>
                             {detail.data.classificationDivergence?.message ? (
                               <div
-                                className={`flex items-start gap-2 rounded-xl border px-3 py-2.5 ${detail.data.classificationDivergence.diverges ? "border-rose-200 bg-rose-50/70" : "border-amber-200 bg-amber-50/70"}`}
+                                className={`flex items-start gap-2 rounded-xl border px-3 py-2.5 ${detail.data.classificationDivergence.diverges ? "border-rose-200 bg-rose-50/70 dark:border-rose-300/25 dark:bg-rose-300/10" : "border-amber-200 bg-amber-50/70 dark:border-amber-300/25 dark:bg-amber-300/10"}`}
                               >
                                 <ShieldAlert
-                                  className={`mt-0.5 size-3.5 shrink-0 ${detail.data.classificationDivergence.diverges ? "text-rose-700" : "text-amber-700"}`}
+                                  className={`mt-0.5 size-3.5 shrink-0 ${detail.data.classificationDivergence.diverges ? "text-rose-700 dark:text-rose-200" : "text-amber-700 dark:text-amber-200"}`}
                                 />
                                 <p
-                                  className={`text-[11px] leading-5 ${detail.data.classificationDivergence.diverges ? "text-rose-900" : "text-amber-900"}`}
+                                  className={`text-[11px] leading-5 ${detail.data.classificationDivergence.diverges ? "text-rose-900 dark:text-rose-100" : "text-amber-900 dark:text-amber-100"}`}
                                 >
                                   {detail.data.classificationDivergence.message}
                                 </p>
@@ -1044,24 +1067,6 @@ function GermlineWorkbenchPage() {
                             placeholder="Describe evidence application, conflicting information, disease context, and limitations."
                           />
                         </div>
-                        {clinicalCase.purpose === "germline" ? (
-                          <div className="space-y-2">
-                            <Label>Institutional classification</Label>
-                            <select
-                              aria-label="Institutional classification"
-                              value={institutionalLabel}
-                              onChange={event => setInstitutionalLabel(event.target.value)}
-                              className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm"
-                            >
-                              <option value="">Not set</option>
-                              {INSTITUTIONAL_CLASSIFICATIONS.map(option => (
-                                <option key={option.label} value={option.label}>
-                                  {option.short}
-                                </option>
-                              ))}
-                            </select>
-                          </div>
-                        ) : null}
                         <div className="grid gap-2 sm:grid-cols-2">
                           <Button
                             variant="outline"
@@ -1074,26 +1079,7 @@ function GermlineWorkbenchPage() {
                             <Save className="mr-2 size-4" />
                             Save draft
                           </Button>
-                          {clinicalCase.purpose === "germline" ? (
-                            <Button
-                              disabled={
-                                saveInstitutional.isPending ||
-                                !classifiedRun ||
-                                !institutionalLabel
-                              }
-                              onClick={() =>
-                                classifiedRun &&
-                                saveInstitutional.mutate({
-                                  organizationId: activeOrganizationId!,
-                                  runId: classifiedRun.id,
-                                  label: institutionalLabel,
-                                })
-                              }
-                            >
-                              <Save className="mr-2 size-4" />
-                              Save institutional classification
-                            </Button>
-                          ) : (
+                          {clinicalCase.purpose === "germline" ? null : (
                             <Button
                               disabled={
                                 saveInterpretation.isPending ||
