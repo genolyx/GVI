@@ -7,9 +7,11 @@ import { Card, CardContent } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { EngineMarkup } from "@/lib/engineMarkup";
 import { trpc } from "@/lib/trpc";
-import type { CurationDocument } from "@shared/curation/document";
+import { acmgEvidenceBoard, withoutRemovedCriteria } from "@shared/curation/acmgBoard";
+import type { CurationDocument, CurationCriterion } from "@shared/curation/document";
 import { hgmdPs4Check } from "@shared/curation/hgmdPs4";
-import { criteriaWithSavedReview } from "@shared/curation/savedCriteria";
+import { criteriaWithSavedReview, savedStrength } from "@shared/curation/savedCriteria";
+import { GERMLINE_CLASSIFICATIONS } from "@shared/clinical-standards";
 import { criteriaWithSpliceReview, spliceReviewCriterion } from "@shared/curation/spliceAcmg";
 import {
   junctionAlignSchema,
@@ -18,7 +20,7 @@ import {
   spliceVizSchema,
 } from "@shared/curation/viz";
 import { AlertTriangle, Loader2 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 
 /**
@@ -197,6 +199,239 @@ function ScoresTable({ document }: { document: CurationDocument }) {
   );
 }
 
+function AcmgColumn({ title, hint, children }: { title: string; hint: string; children: ReactNode }) {
+  return (
+    <section className="min-w-0 space-y-2">
+      <div>
+        <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">{title}</p>
+        <p className="mt-0.5 text-[9px] leading-4 text-muted-foreground/80">{hint}</p>
+      </div>
+      <div className="space-y-2">{children}</div>
+    </section>
+  );
+}
+
+function CatalogRow({
+  code,
+  detail,
+  suggestive = false,
+  action,
+  selected = false,
+  editor,
+  footnote,
+}: {
+  code: string;
+  detail: string;
+  suggestive?: boolean;
+  action?: { label: string; onClick: () => void; disabled?: boolean };
+  selected?: boolean;
+  editor?: ReactNode;
+  footnote?: string;
+}) {
+  return (
+    <div
+      className={`rounded-lg border px-2.5 py-2 ${
+        suggestive
+          ? "border-dashed border-sky-400 bg-sky-400/10"
+          : selected
+            ? "border-primary bg-card"
+            : "border-border bg-card"
+      }`}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Badge variant="outline" className={`font-mono text-[10px] ${suggestive ? "border-sky-400 text-sky-800 dark:text-sky-200" : ""}`}>
+            {code}
+          </Badge>
+          {suggestive ? <Badge variant="secondary" className="text-[9px]">Check</Badge> : null}
+        </div>
+        {action ? (
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-6 shrink-0 text-[9px]"
+            disabled={action.disabled}
+            onClick={action.onClick}
+          >
+            {action.label}
+          </Button>
+        ) : null}
+      </div>
+      <p className={`mt-1.5 text-[10px] leading-4 ${suggestive ? "text-sky-900 dark:text-sky-100" : "text-muted-foreground"}`}>
+        {detail}
+      </p>
+      {footnote ? <p className="mt-1 text-[10px] leading-4 text-amber-800 dark:text-amber-200">{footnote}</p> : null}
+      {editor}
+    </div>
+  );
+}
+
+type CriterionDraft = {
+  code: string;
+  strength: string;
+  state: "met" | "not_met" | "not_applicable";
+  note: string;
+};
+
+function CriterionDraftForm({
+  draft,
+  pending,
+  onChange,
+  onSave,
+  onRemove,
+}: {
+  draft: CriterionDraft;
+  pending: boolean;
+  onChange: (next: CriterionDraft) => void;
+  onSave: () => void;
+  onRemove?: () => void;
+}) {
+  const needsNote = draft.state === "met" && draft.note.trim().length < 2;
+  return (
+    <div className="mt-2 space-y-2 border-t border-border/70 pt-2">
+      <div className="flex gap-1.5">
+        <select
+          aria-label={`${draft.code} strength`}
+          value={draft.strength}
+          onChange={event => onChange({ ...draft, strength: event.target.value })}
+          className="h-7 min-w-0 flex-1 rounded-md border border-input bg-background px-1.5 text-[10px]"
+        >
+          <option value="very_strong">Very strong</option>
+          <option value="strong">Strong</option>
+          <option value="moderate">Moderate</option>
+          <option value="supporting">Supporting</option>
+          <option value="stand_alone">Stand-alone</option>
+        </select>
+        <select
+          aria-label={`${draft.code} assessment`}
+          value={draft.state}
+          onChange={event =>
+            onChange({ ...draft, state: event.target.value as CriterionDraft["state"] })
+          }
+          className="h-7 min-w-0 flex-1 rounded-md border border-input bg-background px-1.5 text-[10px]"
+        >
+          <option value="met">Met</option>
+          <option value="not_met">Not met</option>
+          <option value="not_applicable">N/A</option>
+        </select>
+      </div>
+      <textarea
+        aria-label={`${draft.code} note`}
+        value={draft.note}
+        onChange={event => onChange({ ...draft, note: event.target.value })}
+        className="min-h-16 w-full rounded-md border border-input bg-background px-2 py-1.5 text-[10px] leading-4"
+        placeholder="Record the basis for applying this code, or the reason for leaving it out."
+      />
+      <div className="flex gap-1.5">
+        <Button size="sm" variant="outline" className="h-6 flex-1 text-[9px]" disabled={pending || needsNote} onClick={onSave}>
+          {pending ? <Loader2 className="size-3 animate-spin" /> : draft.state === "met" ? `Apply ${draft.code}` : `Save ${draft.code}`}
+        </Button>
+        {onRemove ? (
+          <Button size="sm" variant="outline" className="h-6 shrink-0 text-[9px]" disabled={pending} onClick={onRemove}>
+            Remove
+          </Button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function FoundCriterion({
+  criterion,
+  document,
+  accept,
+  spliceCode,
+  spliceEngineCode,
+  pending,
+  onAccept,
+  onEdit,
+  onRemove,
+  editor,
+}: {
+  criterion: CurationCriterion;
+  document: CurationDocument;
+  accept?: CurationAcceptTarget;
+  spliceCode?: string;
+  spliceEngineCode?: string;
+  pending: boolean;
+  onAccept: () => void;
+  onEdit?: () => void;
+  onRemove?: () => void;
+  editor?: ReactNode;
+}) {
+  const saved = accept?.criteria?.find(item => item.code === criterion.baseCode);
+  const savedMet = saved?.state === "met";
+  const inEngine = document.acmg.criteria.some(
+    item => item.baseCode === criterion.baseCode || item.code === criterion.code
+  );
+  const fromSpliceReview = !inEngine && spliceCode === criterion.baseCode && spliceEngineCode === criterion.code;
+  const fromClassification = !inEngine && !fromSpliceReview;
+  return (
+    <Card className="shadow-none">
+      <CardContent className="p-3">
+        <div className="flex items-start justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Badge
+              variant="outline"
+              className={`font-mono text-[10px] ${
+                criterion.direction === "pathogenic"
+                  ? "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-300/30 dark:bg-rose-400/15 dark:text-rose-200"
+                  : "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-300/30 dark:bg-emerald-400/15 dark:text-emerald-200"
+              }`}
+            >
+              {criterion.baseCode}
+            </Badge>
+            <Badge variant="secondary" className="text-[9px]">
+              {STRENGTH_LABELS[criterion.strength] || criterion.strength}
+            </Badge>
+            {criterion.code !== criterion.baseCode ? (
+              <span className="font-mono text-[9px] text-muted-foreground">engine: {criterion.code}</span>
+            ) : null}
+          </div>
+          {accept ? (
+            <div className="flex shrink-0 gap-1">
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-6 text-[9px]"
+                disabled={pending}
+                onClick={savedMet ? onEdit : onAccept}
+              >
+                {pending ? <Loader2 className="size-3 animate-spin" /> : savedMet ? "Edit" : "Accept"}
+              </Button>
+              {onRemove ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-6 text-[9px]"
+                  disabled={pending}
+                  onClick={onRemove}
+                >
+                  Remove
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+        {criterion.rationale ? (
+          <p className="mt-2 text-[11px] leading-5 text-muted-foreground">{criterion.rationale}</p>
+        ) : null}
+        {fromSpliceReview && !savedMet ? (
+          <p className="mt-1.5 text-[10px] text-indigo-800/80 dark:text-indigo-100/75">
+            From the splice calculation review. Accepting it updates the classification above.
+          </p>
+        ) : null}
+        {fromClassification ? (
+          <p className="mt-1.5 text-[10px] text-indigo-800/80 dark:text-indigo-100/75">
+            Added on the classification review.
+          </p>
+        ) : null}
+        {editor}
+      </CardContent>
+    </Card>
+  );
+}
+
 function AcmgPanel({
   document,
   organizationId,
@@ -207,8 +442,10 @@ function AcmgPanel({
   accept?: CurationAcceptTarget;
 }) {
   const [acceptedCall, setAcceptedCall] = useState<string | null>(null);
+  const [draft, setDraft] = useState<CriterionDraft | null>(null);
   useEffect(() => {
     setAcceptedCall(null);
+    setDraft(null);
   }, [document]);
   const saveCriterion = trpc.variants.saveCriterion.useMutation({
     onSuccess: async result => {
@@ -222,16 +459,18 @@ function AcmgPanel({
   const classification = document.acmg.classification;
   const criteria = useMemo(() => {
     const withSplice = criteriaWithSpliceReview(document.acmg.criteria, document.engine.parsedData);
-    return criteriaWithSavedReview(withSplice, accept?.criteria);
+    const withSaved = criteriaWithSavedReview(withSplice, accept?.criteria);
+    return withoutRemovedCriteria(withSaved, accept?.criteria);
   }, [document, accept?.criteria]);
   const splice = spliceReviewCriterion(document.engine.parsedData);
   const ps4Check = hgmdPs4Check(
     document.engine.parsedData.hgmd_local,
     document.engine.parsedData.hgmd_excel_pmids
   );
-  const ps4Met =
-    criteria.some(item => item.baseCode === "PS4") ||
-    accept?.criteria?.some(item => item.code === "PS4" && item.state === "met");
+  const board = useMemo(
+    () => acmgEvidenceBoard(criteria, ps4Check),
+    [criteria, ps4Check]
+  );
   const splicePending = Boolean(
     splice &&
       !document.acmg.criteria.some(item => item.baseCode === splice.code || item.code === splice.engineCode) &&
@@ -243,6 +482,75 @@ function AcmgPanel({
       classification?.label &&
       shownLabel !== classification.label
   );
+  const pending = accept?.criterionPending || saveCriterion.isPending;
+
+  function openDraft(code: string, presetNote?: string, intent: "apply" | "edit" = "apply") {
+    const saved = accept?.criteria?.find(item => item.code === code);
+    const kept = saved?.note?.trim();
+    const note = kept && kept !== "Removed during review." ? kept : presetNote || "";
+    setDraft({
+      code,
+      strength: savedStrength(saved?.strength ?? (intent === "edit" ? undefined : undefined), code),
+      state: "met",
+      note,
+    });
+  }
+
+  function persistCriterion(payload: {
+    code: string;
+    state: "met" | "not_met" | "not_applicable";
+    strength?: string;
+    note?: string;
+  }) {
+    if (!accept) return;
+    if (accept.onSaveCriterion) {
+      accept.onSaveCriterion(payload);
+      setDraft(null);
+      return;
+    }
+    saveCriterion.mutate({
+      organizationId,
+      interpretationId: accept.interpretationId,
+      code: payload.code as never,
+      state: payload.state,
+      strengthOverride: payload.strength as never,
+      evidenceIds: [],
+      note: payload.note,
+    });
+    setDraft(null);
+  }
+
+  function saveDraft() {
+    if (!draft) return;
+    persistCriterion({
+      code: draft.code,
+      state: draft.state,
+      strength: draft.state === "met" ? draft.strength : undefined,
+      note: draft.note.trim() || (draft.state === "met" ? undefined : "Removed during review."),
+    });
+  }
+
+  function removeCriterion(code: string) {
+    const saved = accept?.criteria?.find(item => item.code === code);
+    persistCriterion({
+      code,
+      state: "not_met",
+      note: saved?.note?.trim() || "Removed during review.",
+    });
+  }
+
+  function editorFor(code: string, removable: boolean) {
+    if (!draft || draft.code !== code) return null;
+    return (
+      <CriterionDraftForm
+        draft={draft}
+        pending={pending}
+        onChange={setDraft}
+        onSave={saveDraft}
+        onRemove={removable ? () => removeCriterion(code) : undefined}
+      />
+    );
+  }
 
   return (
     <div className="space-y-3">
@@ -263,6 +571,32 @@ function AcmgPanel({
               <p className="mt-1 text-[10px] leading-4 text-indigo-800/80 dark:text-indigo-100/75">
                 The splice calculation meets PVS1. This call stays {classification?.label || "as saved"} until you accept it.
               </p>
+            ) : null}
+            {accept?.onSaveCall ? (
+              <div className="mt-3 max-w-xs">
+                <label htmlFor="acmg-classification" className="text-[10px] font-semibold uppercase tracking-wider text-indigo-800/80 dark:text-indigo-100/75">
+                  Classification
+                </label>
+                <select
+                  id="acmg-classification"
+                  aria-label="Classification"
+                  value={accept.savedCall ?? ""}
+                  disabled={accept.callPending}
+                  onChange={event => {
+                    const value = event.target.value;
+                    if (value) accept.onSaveCall?.(value);
+                  }}
+                  className="mt-1 h-9 w-full rounded-lg border border-input bg-background px-2 text-sm"
+                >
+                  <option value="">Select classification</option>
+                  {GERMLINE_CLASSIFICATIONS.map(value => (
+                    <option key={value}>{value}</option>
+                  ))}
+                </select>
+                {accept.callDivergence ? (
+                  <p className="mt-1.5 text-[10px] leading-4 text-amber-900 dark:text-amber-100">{accept.callDivergence}</p>
+                ) : null}
+              </div>
             ) : null}
           </div>
           <Badge variant="outline" className="border-indigo-300 bg-white/70 text-[9px] text-indigo-700 dark:border-indigo-300/40 dark:bg-indigo-400/15 dark:text-indigo-100">
@@ -291,108 +625,81 @@ function AcmgPanel({
         </div>
       ) : null}
 
-      <div className="space-y-2">
-        {criteria.length ? (
-          criteria.map(criterion => {
-            const saved = accept?.criteria?.find(item => item.code === criterion.baseCode);
-            const savedMet = saved?.state === "met";
-            const inEngine = document.acmg.criteria.some(
-              item => item.baseCode === criterion.baseCode || item.code === criterion.code
-            );
-            const fromSpliceReview =
-              !inEngine && splice?.code === criterion.baseCode && splice.engineCode === criterion.code;
-            const fromClassification = !inEngine && !fromSpliceReview;
+      <div className="grid grid-cols-3 items-start gap-3">
+        <AcmgColumn title="Found on this variant" hint="Evidence on this allele. Edit changes it. Remove takes it off the call.">
+          {board.found.length ? (
+            board.found.map(criterion => (
+              <FoundCriterion
+                key={criterion.code}
+                criterion={criterion}
+                document={document}
+                accept={accept}
+                spliceCode={splice?.code}
+                spliceEngineCode={splice?.engineCode}
+                pending={pending}
+                onAccept={() =>
+                  persistCriterion({
+                    code: criterion.baseCode,
+                    state: "met",
+                    strength: criterion.strength,
+                    note: criterion.rationale || `Accepted engine suggestion ${criterion.code}`,
+                  })
+                }
+                onEdit={accept ? () => openDraft(criterion.baseCode, criterion.rationale, "edit") : undefined}
+                onRemove={accept ? () => removeCriterion(criterion.baseCode) : undefined}
+                editor={editorFor(criterion.baseCode, true)}
+              />
+            ))
+          ) : (
+            <p className="rounded-lg border border-dashed px-2 py-4 text-center text-[10px] text-muted-foreground">
+              No ACMG evidence is applied to this variant.
+            </p>
+          )}
+        </AcmgColumn>
+        <AcmgColumn title="Wired, not applied" hint="The classifier can score these. Apply one when you have a reason it belongs.">
+          {board.wired.map(item => (
+            <CatalogRow
+              key={item.code}
+              code={item.code}
+              detail={item.detail}
+              selected={draft?.code === item.code}
+              action={
+                accept
+                  ? {
+                      label: draft?.code === item.code ? "Editing" : "Apply",
+                      disabled: pending,
+                      onClick: () => openDraft(item.code),
+                    }
+                  : undefined
+              }
+              editor={editorFor(item.code, false)}
+            />
+          ))}
+        </AcmgColumn>
+        <AcmgColumn title="Look up to add points" hint="These need a person. Apply one after you check the evidence.">
+          {board.manual.map(item => {
+            const suggestive = item.code === "PS4" && Boolean(ps4Check);
             return (
-            <Card key={criterion.code} className="shadow-none">
-              <CardContent className="p-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <Badge
-                      variant="outline"
-                      className={`font-mono text-[10px] ${
-                        criterion.direction === "pathogenic"
-                          ? "border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-300/30 dark:bg-rose-400/15 dark:text-rose-200"
-                          : "border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-300/30 dark:bg-emerald-400/15 dark:text-emerald-200"
-                      }`}
-                    >
-                      {criterion.baseCode}
-                    </Badge>
-                    <Badge variant="secondary" className="text-[9px]">
-                      {STRENGTH_LABELS[criterion.strength] || criterion.strength}
-                    </Badge>
-                    {criterion.code !== criterion.baseCode ? (
-                      <span className="font-mono text-[9px] text-muted-foreground">
-                        engine: {criterion.code}
-                      </span>
-                    ) : null}
-                  </div>
-                  {accept ? (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      className="h-6 shrink-0 text-[9px]"
-                      disabled={saveCriterion.isPending || savedMet}
-                      onClick={() =>
-                        saveCriterion.mutate({
-                          organizationId,
-                          interpretationId: accept.interpretationId,
-                          code: criterion.baseCode as never,
-                          state: "met",
-                          strengthOverride: criterion.strength,
-                          evidenceIds: [],
-                          note: criterion.rationale || `Accepted engine suggestion ${criterion.code}`,
-                        })
+              <CatalogRow
+                key={item.code}
+                code={item.code}
+                detail={item.detail}
+                suggestive={suggestive}
+                selected={draft?.code === item.code}
+                action={
+                  accept
+                    ? {
+                        label: draft?.code === item.code ? "Editing" : "Apply",
+                        disabled: pending,
+                        onClick: () => openDraft(item.code, suggestive ? ps4Check?.note : undefined),
                       }
-                    >
-                      {saveCriterion.isPending ? (
-                        <Loader2 className="size-3 animate-spin" />
-                      ) : savedMet ? (
-                        "Saved"
-                      ) : (
-                        "Accept"
-                      )}
-                    </Button>
-                  ) : null}
-                </div>
-                {criterion.rationale ? (
-                  <p className="mt-2 text-[11px] leading-5 text-muted-foreground">
-                    {criterion.rationale}
-                  </p>
-                ) : null}
-                {fromSpliceReview && !savedMet ? (
-                  <p className="mt-1.5 text-[10px] text-indigo-800/80 dark:text-indigo-100/75">
-                    From the splice calculation review. Accepting it updates the classification above.
-                  </p>
-                ) : null}
-                {fromClassification ? (
-                  <p className="mt-1.5 text-[10px] text-indigo-800/80 dark:text-indigo-100/75">
-                    Added on the classification review.
-                  </p>
-                ) : null}
-              </CardContent>
-            </Card>
-          );
-          })
-        ) : (
-          <p className="rounded-lg border border-dashed py-6 text-center text-[10px] text-muted-foreground">
-            The engine applied no ACMG criteria to this variant.
-          </p>
-        )}
-        {ps4Check && !ps4Met ? (
-          <Card className="border-dashed border-sky-400 bg-sky-400/10 shadow-none">
-            <CardContent className="p-3">
-              <div className="flex flex-wrap items-center gap-1.5">
-                <Badge variant="outline" className="border-sky-400 font-mono text-[10px] text-sky-800 dark:text-sky-200">
-                  PS4
-                </Badge>
-                <Badge variant="secondary" className="text-[9px]">Check</Badge>
-              </div>
-              <p className="mt-2 text-[11px] leading-5 text-sky-900 dark:text-sky-100">
-                Suggestive. {ps4Check.note} It is not in the classification until you apply it.
-              </p>
-            </CardContent>
-          </Card>
-        ) : null}
+                    : undefined
+                }
+                editor={editorFor(item.code, false)}
+              />
+            );
+          })}
+        </AcmgColumn>
       </div>
     </div>
   );
@@ -598,6 +905,18 @@ export type CurationAcceptTarget = {
   /** Saved germline call. Shown in place of the frozen engine label after a criterion is accepted. */
   classification?: string | null;
   criteria?: { code: string; state: string; strength?: string | null; note?: string | null }[];
+  /** Stored interpretation call. The classification select writes this. */
+  savedCall?: string | null;
+  onSaveCall?: (classification: string) => void;
+  callPending?: boolean;
+  callDivergence?: string | null;
+  onSaveCriterion?: (input: {
+    code: string;
+    state: "met" | "not_met" | "not_applicable";
+    strength?: string;
+    note?: string;
+  }) => void;
+  criterionPending?: boolean;
 };
 
 export function CurationDocumentView({

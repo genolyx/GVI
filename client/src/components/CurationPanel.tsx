@@ -22,6 +22,12 @@ export function CurationPanel({
   onMerged,
   classification,
   criteria,
+  savedCall,
+  onSaveCall,
+  callPending,
+  callDivergence,
+  onSaveCriterion,
+  criterionPending,
 }: {
   organizationId: number;
   variantId: number;
@@ -32,6 +38,17 @@ export function CurationPanel({
   /** Saved germline call and criteria. The ACMG box uses these after the reviewer accepts a code. */
   classification?: string | null;
   criteria?: { code: string; state: string; strength?: string | null; note?: string | null }[];
+  savedCall?: string | null;
+  onSaveCall?: (classification: string) => void;
+  callPending?: boolean;
+  callDivergence?: string | null;
+  onSaveCriterion?: (input: {
+    code: string;
+    state: "met" | "not_met" | "not_applicable";
+    strength?: string;
+    note?: string;
+  }) => void;
+  criterionPending?: boolean;
 }) {
   const runs = trpc.curation.list.useQuery(
     { organizationId, variantId, limit: 5 },
@@ -179,7 +196,18 @@ export function CurationPanel({
           documentHash={documentQuery.data.documentHash}
           accept={
             canEdit && interpretationId
-              ? { interpretationId, onAccepted: onMerged, classification, criteria }
+              ? {
+                  interpretationId,
+                  onAccepted: onMerged,
+                  classification,
+                  criteria,
+                  savedCall,
+                  onSaveCall,
+                  callPending,
+                  callDivergence,
+                  onSaveCriterion,
+                  criterionPending,
+                }
               : undefined
           }
         />

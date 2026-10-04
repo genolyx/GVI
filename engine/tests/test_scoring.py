@@ -184,6 +184,53 @@ def test_apply_acmg_no_bp4_from_spliceai_on_nonsense():
     assert "BP4" not in {c["code"] for c in out["criteria"]}
 
 
+def test_apply_acmg_synonymous_quiet_splice_and_low_cadd_is_bp7():
+    out = apply_acmg({
+        "consequence": "synonymous_variant",
+        "cadd_phred": 0.188,
+        "spliceai_ds_ag": 0.065,
+        "gnomad_af": 0,
+    })
+    codes = {c["code"] for c in out["criteria"]}
+    assert "BP7" in codes
+    assert "PP3" not in codes
+    assert out["classification"]["label"] == "VUS"
+
+
+def test_apply_acmg_synonymous_splice_effect_is_pp3_not_bp7():
+    out = apply_acmg({
+        "consequence": "synonymous_variant",
+        "cadd_phred": 0.2,
+        "spliceai_ds_dg": 0.8,
+    })
+    codes = {c["code"] for c in out["criteria"]}
+    assert "PP3" in codes
+    assert "BP7" not in codes
+
+
+def test_apply_acmg_synonymous_without_cadd_is_not_bp7():
+    out = apply_acmg({
+        "consequence": "synonymous_variant",
+        "cadd_phred": 0,
+        "spliceai_ds_ag": 0.05,
+    })
+    assert "BP7" not in {c["code"] for c in out["criteria"]}
+
+
+def test_apply_acmg_inframe_deletion_is_pm4():
+    out = apply_acmg({"consequence": "inframe_deletion", "gnomad_af": 0})
+    codes = [c["code"] for c in out["criteria"]]
+    assert codes.count("PM4") == 1
+    assert "PVS1" not in codes
+
+
+def test_apply_acmg_stop_loss_is_pm4():
+    out = apply_acmg({"consequence": "stop_lost", "disease_mechanism": "LOF"})
+    codes = {c["code"] for c in out["criteria"]}
+    assert "PM4" in codes
+    assert "PVS1" not in codes
+
+
 def test_apply_acmg_inframe_deletion_low_spliceai_is_not_bp4():
     out = apply_acmg({
         "consequence": "inframe_deletion",

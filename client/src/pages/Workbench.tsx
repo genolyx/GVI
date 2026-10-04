@@ -33,8 +33,7 @@ import {
   institutionalLabelForAcmg,
 } from "@shared/curation/institutional";
 import { clinvarRecordUrl } from "@/lib/clinvarLabel";
-import { hgmdPs4Check } from "@shared/curation/hgmdPs4";
-import { savedStrength, type SavedReviewCriterion } from "@shared/curation/savedCriteria";
+import { type SavedReviewCriterion } from "@shared/curation/savedCriteria";
 import {
   ArrowLeft,
   Bot,
@@ -54,8 +53,6 @@ import { useLocation, useParams } from "wouter";
 import SomaticWorkbenchPage from "./SomaticWorkbench";
 
 type Impact = "HIGH" | "MODERATE" | "LOW" | "MODIFIER" | "UNKNOWN";
-type CriterionState = "met" | "not_met" | "not_applicable";
-
 export default function WorkbenchPage() {
   const params = useParams<{ caseId: string }>();
   const caseId = Number(params.caseId);
@@ -113,11 +110,6 @@ function GermlineWorkbenchPage() {
   const [rationale, setRationale] = useState("");
   const [diseaseContext, setDiseaseContext] = useState("");
   const [detailTab, setDetailTab] = useState("curation");
-  const [activeCriterion, setActiveCriterion] =
-    useState<(typeof ACMG_CRITERIA)[number]>("PVS1");
-  const [criterionState, setCriterionState] = useState<CriterionState>("met");
-  const [criterionStrength, setCriterionStrength] = useState("very_strong");
-  const [criterionNote, setCriterionNote] = useState("");
   const utils = trpc.useUtils();
 
   const canReadVariants = hasPermission("variant:read");
@@ -173,10 +165,6 @@ function GermlineWorkbenchPage() {
   const ledgerEvidence = (detail.data?.evidence ?? []).filter(
     item => !isSplicePredictorSource(item.source)
   );
-  const classifiedDocument = trpc.curation.document.useQuery(
-    { organizationId: activeOrganizationId || 0, runId: classifiedRun?.id || 0 },
-    { enabled: Boolean(activeOrganizationId && classifiedRun?.id && canReadVariants) }
-  );
   const evidenceLinks = useMemo(
     () =>
       ledgerEvidence.filter(item => {
@@ -190,12 +178,6 @@ function GermlineWorkbenchPage() {
       }),
     [ledgerEvidence]
   );
-  const ps4Check = useMemo(() => {
-    const parsed = classifiedDocument.data?.document.engine.parsedData;
-    if (parsed) return hgmdPs4Check(parsed.hgmd_local, parsed.hgmd_excel_pmids);
-    const hgmd = ledgerEvidence.find(item => item.source === "HGMD");
-    return hgmdPs4Check(hgmd?.excerpt);
-  }, [classifiedDocument.data?.document.engine.parsedData, ledgerEvidence]);
   const models = trpc.copilot.models.useQuery(undefined, {
     staleTime: 60_000,
     enabled: canReadVariants,
@@ -242,21 +224,6 @@ function GermlineWorkbenchPage() {
     const suggestion = detail.data?.acmgSuggestion?.classification;
     setInstitutionalLabel(suggestion ? institutionalLabelForAcmg(suggestion) : "");
   }, [selectedId, storedInstitutional, detail.data?.acmgSuggestion?.classification]);
-  const savedCriterion = detail.data?.criteria.find(item => item.code === activeCriterion);
-  useEffect(() => {
-    const undecided =
-      !savedCriterion || (savedCriterion.state === "not_met" && !savedCriterion.note?.trim());
-    setCriterionState(undecided ? "met" : (savedCriterion.state as CriterionState));
-    setCriterionNote(
-      undecided
-        ? activeCriterion === "PS4" && ps4Check
-          ? ps4Check.note
-          : ""
-        : savedCriterion.note || ""
-    );
-    setCriterionStrength(savedStrength(savedCriterion?.strengthOverride, activeCriterion));
-  }, [selectedId, activeCriterion, savedCriterion, ps4Check]);
-
   const setReviewStatus = trpc.variants.setReviewStatus.useMutation({
     onSuccess: async () => {
       await Promise.all([detail.refetch(), list.refetch()]);
@@ -311,20 +278,6 @@ function GermlineWorkbenchPage() {
     },
   });
   const currentInterpretation = detail.data?.interpretations[0];
-  const criteriaMap = useMemo(
-    () =>
-      new Map(detail.data?.criteria.map(item => [item.code, item.state]) || []),
-    [detail.data?.criteria]
-  );
-  const engineCriteria = useMemo(() => {
-    const codes = classifiedRun?.summary?.criteriaCodes ?? [];
-    const bases: string[] = [];
-    for (const code of codes) {
-      const bare = code.split("_")[0];
-      if (bare && !bases.includes(bare)) bases.push(bare);
-    }
-    return bases;
-  }, [classifiedRun?.summary?.criteriaCodes]);
   const handleSave = (submitForReview: boolean) => {
     if (!selectedId || !caseQuery.data) return;
     saveInterpretation.mutate({
@@ -871,6 +824,45 @@ function GermlineWorkbenchPage() {
                     onMerged={() =>
                       Promise.all([detail.refetch(), list.refetch()])
                     }
+                    savedCall={currentInterpretation?.germlineClassification}
+                    callPending={saveInterpretation.isPending}
+                    callDivergence={detail.data.classificationDivergence?.message}
+                    onSaveCall={value => {
+                      if (!selectedId) return;
+                      const text =
+                        rationale.trim().length >= 20
+                          ? rationale.trim()
+                          : `Classification set to ${value} during ACMG review.`;
+                      setClassification(value);
+                      saveInterpretation.mutate({
+                        organizationId: activeOrganizationId!,
+                        variantId: selectedId,
+                        germlineClassification: value as (typeof GERMLINE_CLASSIFICATIONS)[number],
+                        rationale: text,
+                        submitForReview: false,
+                      });
+                    }}
+                    criterionPending={saveCriterion.isPending}
+                    onSaveCriterion={input => {
+                      if (!currentInterpretation) return;
+                      saveCriterion.mutate({
+                        organizationId: activeOrganizationId!,
+                        interpretationId: currentInterpretation.id,
+                        code: input.code as (typeof ACMG_CRITERIA)[number],
+                        state: input.state,
+                        strengthOverride:
+                          input.state === "met" && input.strength
+                            ? (input.strength as
+                                | "very_strong"
+                                | "strong"
+                                | "moderate"
+                                | "supporting"
+                                | "stand_alone")
+                            : undefined,
+                        evidenceIds: [],
+                        note: input.note,
+                      });
+                    }}
                   />
                 </TabsContent>
                 {hasPermission("interpretation:edit") ? (
@@ -917,190 +909,9 @@ function GermlineWorkbenchPage() {
                                 </div>
                               </div>
                             ) : null}
-                            <div className="space-y-2">
-                              <Label>Final germline classification</Label>
-                              <select
-                                value={classification}
-                                onChange={event =>
-                                  setClassification(event.target.value)
-                                }
-                                className="h-10 w-full rounded-lg border border-input bg-background px-3 text-sm"
-                              >
-                                <option value="">Select classification</option>
-                                {GERMLINE_CLASSIFICATIONS.map(value => (
-                                  <option key={value}>{value}</option>
-                                ))}
-                              </select>
-                            </div>
-                            <div>
-                              <div className="mb-2 flex items-center justify-between">
-                                <Label>ACMG 2015 criteria</Label>
-                                <span className="text-[9px] text-muted-foreground">
-                                  Click a code to apply it. Click it again to remove it. A yellow border is an engine code you removed.
-                                </span>
-                              </div>
-                              {engineCriteria.length ? (
-                                <p className="mb-2 text-[10px] text-muted-foreground">
-                                  Engine applied {engineCriteria.join(", ")}.
-                                </p>
-                              ) : null}
-                              {ps4Check && criteriaMap.get("PS4") !== "met" ? (
-                                <p className="mb-2 text-[10px] leading-4 text-sky-800 dark:text-sky-200">
-                                  PS4 is suggestive. HGMD {ps4Check.tag}
-                                  {ps4Check.pmids.length ? ` · PMIDs ${ps4Check.pmids.join(", ")}` : ""}. Check the papers, then apply it. It is not in the classification yet.
-                                </p>
-                              ) : null}
-                              <div className="grid grid-cols-6 gap-1.5">
-                                {ACMG_CRITERIA.map(code => {
-                                  const met = criteriaMap.get(code) === "met";
-                                  const fromEngine = engineCriteria.includes(code);
-                                  const suggestive = code === "PS4" && Boolean(ps4Check) && !met && !fromEngine;
-                                  const saved = detail.data?.criteria.find(item => item.code === code);
-                                  return (
-                                    <button
-                                      key={code}
-                                      type="button"
-                                      title={
-                                        met
-                                          ? `Remove ${code}`
-                                          : fromEngine
-                                            ? `Engine applied ${code}. Click to add it back.`
-                                            : suggestive
-                                              ? `HGMD ${ps4Check?.tag}. Check the papers, then apply PS4.`
-                                              : `Apply ${code}`
-                                      }
-                                      disabled={saveCriterion.isPending}
-                                      onClick={() => {
-                                        setActiveCriterion(code);
-                                        if (suggestive || !currentInterpretation) return;
-                                        if (met) {
-                                          saveCriterion.mutate({
-                                            organizationId: activeOrganizationId!,
-                                            interpretationId: currentInterpretation.id,
-                                            code,
-                                            state: "not_met",
-                                            strengthOverride: savedStrength(saved?.strengthOverride, code),
-                                            note: saved?.note?.trim() || "Removed during review.",
-                                          });
-                                          return;
-                                        }
-                                        const kept = saved?.note?.trim();
-                                        saveCriterion.mutate({
-                                          organizationId: activeOrganizationId!,
-                                          interpretationId: currentInterpretation.id,
-                                          code,
-                                          state: "met",
-                                          strengthOverride: savedStrength(saved?.strengthOverride, code),
-                                          note:
-                                            kept && kept !== "Removed during review."
-                                              ? kept
-                                              : fromEngine
-                                                ? "Restored during review."
-                                                : "Applied during review.",
-                                        });
-                                      }}
-                                      className={`rounded-md border px-1 py-2 font-mono text-[9px] font-semibold ${
-                                        met
-                                          ? "border-emerald-300 bg-emerald-50 text-emerald-800 dark:border-emerald-300/40 dark:bg-emerald-400/15 dark:text-emerald-100"
-                                          : fromEngine
-                                            ? "border-dashed border-amber-400 bg-amber-400/10 text-amber-800 dark:text-amber-200"
-                                            : suggestive
-                                              ? "border-dashed border-sky-400 bg-sky-400/10 text-sky-800 dark:text-sky-200"
-                                              : "border-border bg-card text-muted-foreground"
-                                      }`}
-                                    >
-                                      {code}
-                                    </button>
-                                  );
-                                })}
-                              </div>
-                              <div className="mt-3 rounded-xl border border-border bg-card p-3">
-                                <div className="flex flex-wrap items-center justify-between gap-2">
-                                  <p className="font-mono text-xs font-semibold">
-                                    {activeCriterion}
-                                  </p>
-                                  <div className="flex gap-1.5">
-                                    <select
-                                      value={criterionStrength}
-                                      onChange={event => setCriterionStrength(event.target.value)}
-                                      className="h-8 rounded-md border border-input bg-background px-2 text-[10px]"
-                                      aria-label={`${activeCriterion} strength`}
-                                    >
-                                      <option value="very_strong">Very strong</option>
-                                      <option value="strong">Strong</option>
-                                      <option value="moderate">Moderate</option>
-                                      <option value="supporting">Supporting</option>
-                                      <option value="stand_alone">Stand-alone</option>
-                                    </select>
-                                    <select
-                                      value={criterionState}
-                                      onChange={event =>
-                                        setCriterionState(
-                                          event.target.value as CriterionState
-                                        )
-                                      }
-                                      className="h-8 rounded-md border border-input bg-background px-2 text-[10px]"
-                                      aria-label={`${activeCriterion} assessment`}
-                                    >
-                                      <option value="met">Met</option>
-                                      <option value="not_met">Not met</option>
-                                      <option value="not_applicable">N/A</option>
-                                    </select>
-                                  </div>
-                                </div>
-                                <Textarea
-                                  value={criterionNote}
-                                  onChange={event =>
-                                    setCriterionNote(event.target.value)
-                                  }
-                                  className="mt-2 min-h-20 text-xs"
-                                  placeholder="Record the basis for applying this code, or the reason for leaving it out."
-                                />
-                                <p className="mt-2 text-[10px] leading-4 text-muted-foreground">
-                                  {criterionState === "met"
-                                    ? `Apply adds ${activeCriterion} and updates the classification. It then appears on the curation score.`
-                                    : `Saving as not applied leaves ${activeCriterion} out of the classification.`}
-                                </p>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  className="mt-2 w-full"
-                                  disabled={
-                                    !currentInterpretation ||
-                                    saveCriterion.isPending ||
-                                    (criterionState === "met" &&
-                                      criterionNote.trim().length < 2)
-                                  }
-                                  onClick={() =>
-                                    currentInterpretation &&
-                                    saveCriterion.mutate({
-                                      organizationId: activeOrganizationId!,
-                                      interpretationId:
-                                        currentInterpretation.id,
-                                      code: activeCriterion,
-                                      state: criterionState,
-                                      strengthOverride:
-                                        criterionState === "met"
-                                          ? (criterionStrength as
-                                              | "very_strong"
-                                              | "strong"
-                                              | "moderate"
-                                              | "supporting"
-                                              | "stand_alone")
-                                          : undefined,
-                                      evidenceIds: [],
-                                      note: criterionNote || undefined,
-                                    })
-                                  }
-                                >
-                                  {currentInterpretation
-                                    ? criterionState === "met"
-                                      ? `Apply ${activeCriterion}`
-                                      : `Save ${activeCriterion} as not applied`
-                                    : "Save an interpretation draft first"}
-                                </Button>
-                              </div>
-                            </div>
+                            <p className="text-[10px] leading-4 text-muted-foreground">
+                              Criteria and the classification are saved on the ACMG section.
+                            </p>
                           </>
                         ) : (
                           <>

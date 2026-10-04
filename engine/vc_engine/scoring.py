@@ -166,6 +166,17 @@ def _pm1_hotspot_desc(parsed_data) -> str | None:
     return None
 
 
+def _positive_float(raw) -> float | None:
+    """A real score. Zero and blank are missing, not a measured low value."""
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if value <= 0:
+        return None
+    return value
+
+
 def _max_spliceai(parsed_data) -> float:
     return max(
         float(parsed_data.get("spliceai_ds_ag") or 0.0),
@@ -563,6 +574,47 @@ def apply_acmg(parsed_data, splice_points=None, nmd_points=None):
                     "type": "benign",
                     "weight": "supporting",
                 })
+
+    # 4b. BP7 — synonymous, no splice effect, nucleotide not highly conserved.
+    # CADD is the conservation signal on this run; a missing CADD (0) is not
+    # evidence the base is unconserved. A zero SpliceAI set was not scored.
+    if "synonymous" in consequence and not any(c["code"] == "PP3" for c in criteria):
+        cadd = _positive_float(parsed_data.get("cadd_phred"))
+        if cadd is not None and cadd < 10 and has_spliceai_benign:
+            criteria.append({
+                "code": "BP7",
+                "desc": (
+                    "Synonymous change with no predicted splice effect "
+                    f"(SpliceAI {max_spliceai:.2f}) and the nucleotide is not highly conserved "
+                    f"(CADD {cadd:.2f})"
+                ),
+                "type": "benign",
+                "weight": "supporting",
+            })
+
+    # 4c. PM4 — protein-length change from an in-frame indel or a stop-loss.
+    # An in-frame splice skip already records its own PM4 above.
+    if not any(c["code"] == "PM4" for c in criteria):
+        if "inframe" in consequence:
+            if "insertion" in consequence:
+                length_change = "in-frame insertion"
+            elif "deletion" in consequence:
+                length_change = "in-frame deletion"
+            else:
+                length_change = "in-frame indel"
+            criteria.append({
+                "code": "PM4",
+                "desc": f"Protein length changes because of an {length_change}",
+                "type": "pathogenic",
+                "weight": "moderate",
+            })
+        elif "stop_lost" in consequence:
+            criteria.append({
+                "code": "PM4",
+                "desc": "Stop-loss extends the protein",
+                "type": "pathogenic",
+                "weight": "moderate",
+            })
 
     # 5. Clinical evidence (PP1, PP4)
     ai_logic = parsed_data.get("ai_logic") or {}
