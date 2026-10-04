@@ -286,7 +286,7 @@ const stoppedJobIds = new Set<number>();
  * job review_ready or failed. Runs after the submit response so VEP does not
  * block the request.
  */
-async function ingestVcfForJob(params: {
+export async function ingestVcfForJob(params: {
   organizationId: number;
   caseId: number;
   jobId: number;
