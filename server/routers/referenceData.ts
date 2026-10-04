@@ -1,10 +1,11 @@
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
 import { adminProcedure, router } from "../_core/trpc";
-import { inspectReferenceData, setClinvarSource, setGnomadSource } from "../domain/referenceData";
+import { inspectReferenceData, listSavedLiterature, setClinvarSource, setGnomadSource } from "../domain/referenceData";
 
 export const referenceDataRouter = router({
   status: adminProcedure.query(() => inspectReferenceData()),
+  literature: adminProcedure.query(() => listSavedLiterature()),
   setGnomadSource: adminProcedure
     .input(z.object({ mode: z.enum(["myvariant", "v3.1.2", "v4.1"]) }))
     .mutation(async ({ input }) => {

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { analysisJobs, cases, curationBatches, curationRuns, interpretations, projects, variants } from "../../drizzle/schema";
 import { isSingleVariantBatch } from "../../shared/curation/workbench";
 import { protectedProcedure, router } from "../_core/trpc";
+import { currentPartnerOrderCondition } from "../domain/partnerJobState";
 import { requireDb, requireOrganizationPermission } from "../domain/tenant";
 
 const ACTIVE_RUN = ["queued", "loading", "running"] as const;
@@ -36,12 +37,22 @@ export const dashboardRouter = router({
         db
           .select({ status: cases.status, count: count() })
           .from(cases)
-          .where(eq(cases.organizationId, input.organizationId))
+          .where(
+            and(
+              eq(cases.organizationId, input.organizationId),
+              currentPartnerOrderCondition(input.organizationId)
+            )
+          )
           .groupBy(cases.status),
         db
           .select({ purpose: cases.purpose, count: count() })
           .from(cases)
-          .where(eq(cases.organizationId, input.organizationId))
+          .where(
+            and(
+              eq(cases.organizationId, input.organizationId),
+              currentPartnerOrderCondition(input.organizationId)
+            )
+          )
           .groupBy(cases.purpose),
         db
           .select({ label: interpretations.germlineClassification, count: count() })
@@ -79,7 +90,12 @@ export const dashboardRouter = router({
             projects,
             and(eq(projects.id, cases.projectId), eq(projects.organizationId, cases.organizationId))
           )
-          .where(eq(cases.organizationId, input.organizationId))
+          .where(
+            and(
+              eq(cases.organizationId, input.organizationId),
+              currentPartnerOrderCondition(input.organizationId)
+            )
+          )
           .orderBy(desc(cases.updatedAt))
           .limit(8),
         db

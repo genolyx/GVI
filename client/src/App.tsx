@@ -24,6 +24,8 @@ import InviteAcceptPage from "./pages/InviteAccept";
 import AuditLogPage from "./pages/AuditLog";
 import SecurityConsolePage from "./pages/SecurityConsole";
 import SettingsPage from "./pages/Settings";
+import LiteraturePage from "./pages/Literature";
+import ClassificationsPage from "./pages/Classifications";
 import SomaticReportTemplatesPage from "./pages/SomaticReportTemplates";
 import SomaticGovernancePage from "./pages/SomaticGovernance";
 
@@ -57,6 +59,8 @@ function Router() {
       <Route path={"/audit"} component={AuditLogPage} />
       <Route path={"/security"} component={SecurityConsolePage} />
       <Route path={"/settings"} component={SettingsPage} />
+      <Route path={"/literature"} component={LiteraturePage} />
+      <Route path={"/classifications"} component={ClassificationsPage} />
       <Route path={"/404"} component={NotFound} />
       {/* Final fallback route */}
       <Route component={NotFound} />

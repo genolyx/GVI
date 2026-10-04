@@ -8,6 +8,7 @@ import { appRouter } from "../routers";
 import { createContext } from "./context";
 import { serveStatic, setupVite } from "./vite";
 import { registerGatewayAuthRoutes } from "../gatewayAuth";
+import { registerPartnerRoutes } from "../partnerApi";
 import { registerEngineApiRoutes, startCurationReaper } from "../engineApi";
 import { ensureCurationWorker } from "../domain/curationWorker";
 import { registerUploadRoute } from "../uploads";
@@ -49,11 +50,14 @@ async function startServer() {
   registerGoogleOAuthRoutes(app);
   registerDevAuthRoutes(app);
   registerGatewayAuthRoutes(app);
+  registerPartnerRoutes(app);
   registerEngineApiRoutes(app);
   if (ENV.engineWorkerToken.length >= 32) {
     startCurationReaper();
   } else {
-    console.log("[CurationReaper] disabled — ENGINE_WORKER_TOKEN is not configured");
+    console.log(
+      "[CurationReaper] disabled — ENGINE_WORKER_TOKEN is not configured"
+    );
   }
   startSomaticWorker();
   startCivicImportWorker();
@@ -95,7 +99,10 @@ async function startServer() {
             : `[curation] starting ${worker.started} classifier worker(s); ${worker.desired} configured`
         );
       } catch (error) {
-        console.error("[curation] classifier did not start:", error instanceof Error ? error.message : error);
+        console.error(
+          "[curation] classifier did not start:",
+          error instanceof Error ? error.message : error
+        );
       }
     }
   });

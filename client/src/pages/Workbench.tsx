@@ -29,6 +29,10 @@ import {
 } from "@shared/clinical-standards";
 import { isSplicePredictorSource } from "@shared/curation/document";
 import { institutionalLabelForAcmg } from "@shared/curation/institutional";
+<<<<<<< HEAD
+=======
+import { caseDisplayName } from "@/lib/caseLabel";
+>>>>>>> develop
 import { clinvarRecordUrl } from "@/lib/clinvarLabel";
 import { type SavedReviewCriterion } from "@shared/curation/savedCriteria";
 import {
@@ -430,8 +434,8 @@ function GermlineWorkbenchPage() {
     <div className="space-y-5">
       <PageHeader
         eyebrow={`${clinicalCase.purpose} interpretation`}
-        title={`${clinicalCase.caseNumber} · Variant Workbench`}
-        description={`${clinicalCase.patientAlias} · ${clinicalCase.referenceBuild} · ${clinicalCase.variantCount.toLocaleString()} variants`}
+        title={`${caseDisplayName(clinicalCase.caseNumber, clinicalCase.patientAlias)} · Variant Workbench`}
+        description={`${caseDisplayName(clinicalCase.caseNumber, clinicalCase.patientAlias) === clinicalCase.patientAlias ? "" : `${clinicalCase.patientAlias} · `}${clinicalCase.referenceBuild} · ${clinicalCase.variantCount.toLocaleString()} variants`}
         badge={clinicalCase.status}
         actions={
           <Button

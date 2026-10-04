@@ -54,6 +54,10 @@ export type ReferenceDataStatus = {
   dataRoot: string;
   pdfDir: string;
   sources: ReferenceSource[];
+};
+
+export type SavedLiterature = {
+  pdfDir: string;
   papers: StoredPaper[];
   paperCount: number;
 };
@@ -297,6 +301,17 @@ async function localFileSource(
     version,
     detail: formatBytes(info.bytes),
   };
+}
+
+export async function listSavedLiterature(): Promise<SavedLiterature> {
+  const env = await loadEnv();
+  const dataRoot = expandHome(
+    (env.VC_DATA_ROOT ?? "").trim() || path.join(os.homedir(), "gvi-data")
+  );
+  const pdfDir = expandHome(
+    (env.VC_PDF_DIR ?? "").trim() || path.join(dataRoot, "pdfs")
+  );
+  return { pdfDir, ...(await listPapers(pdfDir)) };
 }
 
 async function listPapers(
@@ -696,7 +711,7 @@ export async function inspectReferenceData(): Promise<ReferenceDataStatus> {
       version: hasValue(env, "NCBI_API_KEY")
         ? "live, API key set"
         : "live, anonymous (~3 req/s)",
-      detail: "Called at curation time. Saved papers are listed below.",
+      detail: "Called at curation time. Saved papers are listed on the Literature page.",
       location: "https://eutils.ncbi.nlm.nih.gov",
     },
     {
@@ -828,12 +843,9 @@ export async function inspectReferenceData(): Promise<ReferenceDataStatus> {
     chain,
   ];
 
-  const literature = await listPapers(pdfDir);
   return {
     dataRoot,
     pdfDir,
     sources,
-    papers: literature.papers,
-    paperCount: literature.paperCount,
   };
 }

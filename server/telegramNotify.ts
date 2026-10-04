@@ -25,6 +25,16 @@ export function variantSubject(input: { gene?: string | null; hgvsC?: string | n
   return [input.gene, input.hgvsC].filter(Boolean).join(" ") || "variant";
 }
 
+/** Partner cases store a 64-hex job key as caseNumber. The chat should show the portal order id. */
+export function telegramCaseSubject(
+  caseNumber: string,
+  patientAlias: string | null | undefined
+): string {
+  const alias = (patientAlias || "").trim();
+  if (/^[a-f0-9]{64}$/.test(caseNumber) && alias) return alias;
+  return caseNumber;
+}
+
 export function formatGvcMessage(subject: string, event: GvcEvent, reason?: string): string {
   const lines = ["[GVC]", `${subject} - ${STATUS[event]}`];
   if (event === "failed") {
@@ -70,12 +80,12 @@ export async function notifyCase(
   try {
     const db = await requireDb();
     const rows = await db
-      .select({ caseNumber: cases.caseNumber })
+      .select({ caseNumber: cases.caseNumber, patientAlias: cases.patientAlias })
       .from(cases)
       .where(and(eq(cases.id, caseId), eq(cases.organizationId, organizationId)))
       .limit(1);
-    const caseNumber = rows[0]?.caseNumber;
-    if (caseNumber) notifyGvc(caseNumber, event, reason);
+    const row = rows[0];
+    if (row?.caseNumber) notifyGvc(telegramCaseSubject(row.caseNumber, row.patientAlias), event, reason);
   } catch (error) {
     console.warn("[telegram] case notify failed", error);
   }

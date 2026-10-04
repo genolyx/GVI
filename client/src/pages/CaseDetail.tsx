@@ -27,6 +27,7 @@ import {
 import { useEffect, useRef, useState } from "react";
 import { useLocation, useParams } from "wouter";
 import { toast } from "sonner";
+import { caseDisplayName } from "@/lib/caseLabel";
 import { formatDateTime } from "@/lib/datetime";
 import { putFileWithProgress } from "@/lib/uploadFile";
 import { GENE_SCOPE_REQUIRED, hasGeneScopeChoice } from "@shared/geneScope";
@@ -331,6 +332,7 @@ export default function CaseDetailPage() {
       </div>
     );
   const item = query.data;
+  const caseName = caseDisplayName(item.caseNumber, item.patientAlias);
   const draftHasVcf = item.files.some(file => file.kind === "vcf");
   const draftHasGeneScope =
     item.purpose !== "germline" ||
@@ -370,8 +372,8 @@ export default function CaseDetailPage() {
       draftHasVcf &&
       !window.confirm(
         changingPanel
-          ? `Replace the panel on ${item.caseNumber} and run the existing VCF with these filters? Stored variants will be replaced.`
-          : `Run ${item.caseNumber} again with these filters? The current panel stays. Stored variants will be replaced.`
+          ? `Replace the panel on ${caseName} and run the existing VCF with these filters? Stored variants will be replaced.`
+          : `Run ${caseName} again with these filters? The current panel stays. Stored variants will be replaced.`
       )
     ) {
       return;
@@ -461,8 +463,8 @@ export default function CaseDetailPage() {
     <div className="space-y-7">
       <PageHeader
         eyebrow={`${item.purpose} · ${item.inputType}`}
-        title={item.caseNumber}
-        description={`${item.patientAlias} · ${item.referenceBuild} · ${item.panelName || "No panel"}${item.germlinePanel ? ` · ${item.germlinePanel.geneCount.toLocaleString()} genes${item.germlinePanel.regionCount ? `, ${item.germlinePanel.regionCount.toLocaleString()} intervals` : ""}` : ""}`}
+        title={caseName}
+        description={`${caseName === item.patientAlias ? "" : `${item.patientAlias} · `}${item.referenceBuild} · ${item.panelName || "No panel"}${item.germlinePanel ? ` · ${item.germlinePanel.geneCount.toLocaleString()} genes${item.germlinePanel.regionCount ? `, ${item.germlinePanel.regionCount.toLocaleString()} intervals` : ""}` : ""}`}
         badge={item.status}
         actions={
           <>
@@ -677,7 +679,7 @@ export default function CaseDetailPage() {
                       className="mt-2"
                       disabled={stop.isPending}
                       onClick={() => {
-                        if (!window.confirm(`Stop analysis for ${item.caseNumber}?`)) return;
+                        if (!window.confirm(`Stop analysis for ${caseName}?`)) return;
                         stop.mutate({
                           organizationId: activeOrganizationId!,
                           caseId: item.id,

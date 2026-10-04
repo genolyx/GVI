@@ -1,4 +1,6 @@
 import { ClassifierWorkersPanel } from "@/components/ClassifierWorkers";
+import { ClassifierLimitPanel } from "@/components/ClassifierLimitPanel";
+import { PartnerAccessPanel } from "@/components/PartnerAccessPanel";
 import { PageHeader } from "@/components/PageHeader";
 import { StatePanel } from "@/components/StatePanel";
 import { Badge } from "@/components/ui/badge";
@@ -25,13 +27,6 @@ function statusClass(status: string): string {
   if (status === "downloading") return "border-sky-500/30 bg-sky-500/10 text-sky-700 dark:text-sky-300";
   if (status === "license" || status === "missing") return "border-amber-500/30 bg-amber-500/10 text-amber-800 dark:text-amber-200";
   return "border-border bg-muted text-muted-foreground";
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
 }
 
 export default function SettingsPage() {
@@ -68,13 +63,15 @@ export default function SettingsPage() {
       <StatePanel
         type="forbidden"
         title="Settings is limited to platform admins"
-        description="Reference databases and saved literature are visible only to accounts with the platform admin role."
+        description="Reference databases and the partner API are visible only to accounts with the platform admin role."
       />
     );
   }
   if (query.isLoading) {
     return (
       <div className="space-y-5">
+        <PartnerAccessPanel />
+        <ClassifierLimitPanel />
         <Skeleton className="h-24" />
         <Skeleton className="h-96" />
       </div>
@@ -84,6 +81,8 @@ export default function SettingsPage() {
     return (
       <div className="space-y-7">
         <PageHeader eyebrow="Platform" title="Settings" description="Reference data mounted for curation." />
+        <PartnerAccessPanel />
+        <ClassifierLimitPanel />
         <StatePanel type="error" title="Failed to read reference data" description={query.error?.message || "No status returned."} onRetry={() => { void query.refetch(); }} />
       </div>
     );
@@ -97,9 +96,11 @@ export default function SettingsPage() {
       <PageHeader
         eyebrow="Platform"
         title="Settings"
-        description="Databases the curation engine can use on this server, and PubMed articles already saved to disk."
+        description="Databases and services the curation engine can use on this server."
         badge={`${ready}/${data.sources.length} available`}
       />
+      <PartnerAccessPanel />
+      <ClassifierLimitPanel />
       <ClassifierWorkersPanel editable />
       <Card className="clinical-card shadow-none">
         <CardHeader>
@@ -168,44 +169,6 @@ export default function SettingsPage() {
               ))}
             </TableBody>
           </Table>
-        </CardContent>
-      </Card>
-      <Card className="clinical-card shadow-none">
-        <CardHeader>
-          <CardTitle className="font-display text-base">Saved PubMed literature</CardTitle>
-          <CardDescription className="text-xs">
-            {data.paperCount} file{data.paperCount === 1 ? "" : "s"} under <span className="font-mono">{data.pdfDir}</span>.
-            Articles appear here after a curation run downloads them. PubMed itself is queried live and is not mirrored in full.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          {data.papers.length === 0 ? (
-            <p className="py-8 text-center text-sm text-muted-foreground">No literature files have been saved yet.</p>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>PMID</TableHead>
-                  <TableHead>File</TableHead>
-                  <TableHead>Size</TableHead>
-                  <TableHead>Saved</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {data.papers.map(paper => (
-                  <TableRow key={paper.relativePath}>
-                    <TableCell className="font-mono text-xs">{paper.pmid || "—"}</TableCell>
-                    <TableCell className="max-w-md truncate font-mono text-[10px]">{paper.relativePath}</TableCell>
-                    <TableCell className="text-xs">{formatBytes(paper.bytes)}</TableCell>
-                    <TableCell className="text-xs">{paper.savedAt.slice(0, 10)}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          )}
-          {data.paperCount > data.papers.length ? (
-            <p className="mt-3 text-xs text-muted-foreground">Showing the {data.papers.length} most recent files of {data.paperCount}.</p>
-          ) : null}
         </CardContent>
       </Card>
     </div>
