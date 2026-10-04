@@ -29,10 +29,7 @@ import {
 } from "@shared/clinical-standards";
 import { isSplicePredictorSource } from "@shared/curation/document";
 import { institutionalLabelForAcmg } from "@shared/curation/institutional";
-<<<<<<< HEAD
-=======
 import { caseDisplayName } from "@/lib/caseLabel";
->>>>>>> develop
 import { clinvarRecordUrl } from "@/lib/clinvarLabel";
 import { type SavedReviewCriterion } from "@shared/curation/savedCriteria";
 import {
