@@ -49,6 +49,16 @@ describe("partner token", () => {
     await expect(mod.partnerTokenStatus()).resolves.toMatchObject({ source: "env" });
   });
 
+  it("points the health check at the portal the operator typed", async () => {
+    const mod = await import("./partnerToken");
+    expect(mod.portalPartnerHealthUrl("http://localhost:8090")).toBe(
+      "http://localhost:8090/api/system/partner/health",
+    );
+    expect(mod.portalPartnerHealthUrl("http://localhost:4000")).toBe(
+      "http://localhost:4000/system/partner/health",
+    );
+  });
+
   it("rejects a short token", async () => {
     const mod = await import("./partnerToken");
     await expect(mod.savePartnerToken("too-short")).rejects.toThrow(/32/);

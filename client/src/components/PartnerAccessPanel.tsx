@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -9,12 +9,27 @@ export function PartnerAccessPanel() {
   const status = trpc.partnerAccess.status.useQuery();
   const [draft, setDraft] = useState("");
   const [fresh, setFresh] = useState<string | null>(null);
+  const [portalUrl, setPortalUrl] = useState("http://localhost:8090");
+  const [link, setLink] = useState<{ ok: boolean; message: string } | null>(null);
+  const check = trpc.partnerAccess.check.useMutation({
+    onSuccess: setLink,
+    onError: error => setLink({ ok: false, message: error.message }),
+  });
   const generate = trpc.partnerAccess.generate.useMutation({
     onSuccess: result => {
       setFresh(result.token);
       setDraft("");
       void status.refetch();
       toast.success("Token generated. Copy it into gx-portal Classification.");
+    },
+    onError: error => toast.error(error.message),
+  });
+  const saveUrl = trpc.partnerAccess.savePortalUrl.useMutation({
+    onSuccess: result => {
+      setPortalUrl(result.portalUrl);
+      void status.refetch();
+      toast.success("Portal URL saved.");
+      check.mutate({ url: portalUrl });
     },
     onError: error => toast.error(error.message),
   });
@@ -28,6 +43,16 @@ export function PartnerAccessPanel() {
     onError: error => toast.error(error.message),
   });
 
+  useEffect(() => {
+    if (status.data?.portalUrl) setPortalUrl(status.data.portalUrl);
+  }, [status.data?.portalUrl]);
+
+  useEffect(() => {
+    check.mutate({});
+    // Check once when the settings card opens.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const configured = status.data?.configured;
   const preview = status.data?.preview;
 
@@ -40,6 +65,32 @@ export function PartnerAccessPanel() {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <p className={`text-sm font-medium ${link?.ok ? "text-emerald-700 dark:text-emerald-300" : "text-destructive"}`}>
+            {check.isPending ? "Checking gx-portal…" : link?.message ?? "Connection not checked."}
+          </p>
+          <Button type="button" variant="outline" size="sm" disabled={check.isPending} onClick={() => check.mutate({ url: portalUrl })}>
+            Check connection
+          </Button>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Input
+            value={portalUrl}
+            onChange={event => setPortalUrl(event.target.value)}
+            placeholder="http://localhost:8090"
+            className="max-w-xl font-mono text-xs"
+            aria-label="gx-portal URL"
+          />
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={saveUrl.isPending}
+            onClick={() => saveUrl.mutate({ url: portalUrl })}
+          >
+            Save URL
+          </Button>
+        </div>
         <p className="text-xs text-muted-foreground">
           {configured
             ? `Current token ${preview}. Source: ${status.data?.source === "saved" ? "saved in Settings" : "environment"}.`

@@ -26,6 +26,30 @@ export function partnerTokenPath(): string | null {
   return path.join(expandHome(root), "partner-api-token");
 }
 
+export const DEFAULT_PORTAL_URL = "http://localhost:8090";
+
+export function partnerPortalUrlPath(): string | null {
+  const override = process.env.PARTNER_PORTAL_URL_FILE?.trim();
+  if (override === "off" || override === "-") return null;
+  if (override) return override;
+  const tokenFile = partnerTokenPath();
+  if (!tokenFile) return null;
+  return path.join(path.dirname(tokenFile), "partner-portal-url");
+}
+
+/** Portal origin. :8090 is the nginx prefix; the API process on :4000 has no /api prefix. */
+export function portalPartnerHealthUrl(base: string): string {
+  const trimmed = base.trim().replace(/\/$/, "");
+  if (trimmed.endsWith("/api")) return `${trimmed}/system/partner/health`;
+  try {
+    const parsed = new URL(trimmed);
+    if (parsed.port === "4000") return `${trimmed}/system/partner/health`;
+  } catch {
+    return `${trimmed}/api/system/partner/health`;
+  }
+  return `${trimmed}/api/system/partner/health`;
+}
+
 function usable(value: string | null | undefined): string | null {
   const token = (value ?? "").trim();
   return token.length >= MIN_TOKEN_LENGTH ? token : null;
@@ -87,6 +111,58 @@ export async function savePartnerToken(token: string | null): Promise<void> {
   await writeFile(file, `${trimmed}\n`, { encoding: "utf8", mode: 0o600 });
   await chmod(file, 0o600);
   savedCache = { loaded: true, token: trimmed };
+}
+
+let portalUrlCache: { loaded: boolean; url: string } = { loaded: false, url: "" };
+
+export async function readPortalUrl(): Promise<string> {
+  if (portalUrlCache.loaded) return portalUrlCache.url;
+  const file = partnerPortalUrlPath();
+  let url = "";
+  if (file) {
+    try {
+      url = (await readFile(file, "utf8")).trim().replace(/\/$/, "");
+    } catch {
+      url = "";
+    }
+  }
+  portalUrlCache = { loaded: true, url };
+  return url;
+}
+
+export async function savePortalUrl(url: string): Promise<void> {
+  const file = partnerPortalUrlPath();
+  if (!file) throw new Error("Portal URL storage is disabled");
+  const trimmed = url.trim().replace(/\/$/, "");
+  if (trimmed && !/^https?:\/\//i.test(trimmed)) {
+    throw new Error("Portal URL must start with http:// or https://");
+  }
+  if (!trimmed) {
+    await rm(file, { force: true });
+    portalUrlCache = { loaded: true, url: "" };
+    return;
+  }
+  await mkdir(path.dirname(file), { recursive: true });
+  await writeFile(file, `${trimmed}\n`, { encoding: "utf8", mode: 0o600 });
+  portalUrlCache = { loaded: true, url: trimmed };
+}
+
+export async function checkPortalConnection(url?: string): Promise<{ ok: boolean; message: string }> {
+  const token = await resolvePartnerToken();
+  const base = (url ?? (await readPortalUrl()) ?? "").trim() || DEFAULT_PORTAL_URL;
+  if (!token) return { ok: false, message: "Save a partner token first." };
+  try {
+    const response = await fetch(portalPartnerHealthUrl(base), {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (response.status === 200) return { ok: true, message: "Connected. gx-portal accepted this token." };
+    if (response.status === 401) return { ok: false, message: "gx-portal refused this token." };
+    if (response.status === 503) return { ok: false, message: "gx-portal has no partner token saved." };
+    return { ok: false, message: `gx-portal responded with status ${response.status}.` };
+  } catch {
+    return { ok: false, message: "gx-portal did not respond." };
+  }
 }
 
 export async function generatePartnerToken(): Promise<string> {
