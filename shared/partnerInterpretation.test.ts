@@ -79,15 +79,15 @@ describe("portal service to GVC track", () => {
     });
   });
 
-  it("maps health screening onto the carrier frequency rules without dark genes", () => {
+  it("maps health screening onto the health screen filter without dark genes", () => {
     expect(resolvePartnerTrack({ serviceCode: "health_screening" })).toEqual({
       accepted: true,
-      track: "carrier",
+      track: "health_screen",
       canonicalService: "health_screening",
       darkGeneResult: "not_requested",
     });
     expect(resolvePartnerTrack({ serviceCode: "health_snp" })).toMatchObject({
-      track: "carrier",
+      track: "health_screen",
       canonicalService: "health_screening",
       darkGeneResult: "not_requested",
     });
@@ -114,13 +114,13 @@ describe("portal service to GVC track", () => {
     ).toBe("pgx_only_out_of_scope");
   });
 
-  it("leaves standalone GVC health-screening orders on the existing carrier fallback", () => {
+  it("maps a standalone health-screening order onto the health screen filter", () => {
     expect(
       frequencyTrackForOrder({
         testCategory: "standard_carrier",
         packageCode: "HealthScreening",
       })
-    ).toBe("carrier");
+    ).toBe("health_screen");
   });
 });
 

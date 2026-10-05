@@ -98,10 +98,10 @@ export function GermlineOrderFields({
       <section className="space-y-4 rounded-xl border border-border/70 p-4">
         <h3 className="text-sm font-semibold">Hospital and identifiers</h3>
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Hospital name" required invalid={!value.hospitalName.trim()}>
+          <Field label="Hospital name">
             <Input value={value.hospitalName} onChange={event => set({ hospitalName: event.target.value })} />
           </Field>
-          <Field label="Doctor" required invalid={!value.doctor.trim()}>
+          <Field label="Doctor">
             <Input value={value.doctor} onChange={event => set({ doctor: event.target.value })} />
           </Field>
           <Field label="Medical record ID">

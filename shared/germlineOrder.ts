@@ -201,8 +201,6 @@ export function germlineOrderMissing(input: GermlineOrderInput): string[] {
   need(Boolean(order.patientBirth.trim()), "Patient birth");
   need(Boolean(order.patientGender), "Patient gender");
   need(Boolean(order.affected), "Affected");
-  need(Boolean(order.hospitalName.trim()), "Hospital name");
-  need(Boolean(order.doctor.trim()), "Doctor");
   need(Boolean(order.sampleCollectionDate.trim()), "Sample collection date");
   need(Boolean(order.reportLanguage), "Report language");
   need(Boolean(order.reportType), "Report type");

@@ -80,8 +80,6 @@ describe("germline service package codes", () => {
       "Patient birth",
       "Patient gender",
       "Affected",
-      "Hospital name",
-      "Doctor",
       "Sample collection date",
     ]);
     expect(

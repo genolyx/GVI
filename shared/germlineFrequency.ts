@@ -1,5 +1,11 @@
 /** Which frequency rules a case uses. The order's test type picks the track. */
-export const FREQUENCY_TRACKS = ["carrier", "rare_disease", "hereditary_cancer", "none"] as const;
+export const FREQUENCY_TRACKS = [
+  "carrier",
+  "rare_disease",
+  "hereditary_cancer",
+  "health_screen",
+  "none",
+] as const;
 
 export type FrequencyTrack = (typeof FREQUENCY_TRACKS)[number];
 
@@ -22,6 +28,7 @@ export const FREQUENCY_TRACK_LABEL: Record<FrequencyTrack, string> = {
   carrier: "Carrier screening",
   rare_disease: "Rare disease",
   hereditary_cancer: "Hereditary cancer",
+  health_screen: "Health screen",
   none: "No test type",
 };
 
@@ -34,6 +41,14 @@ export function frequencyTrackForOrder(input: {
   const program = (input.otherTestType ?? "").trim() || packageCode;
   if (program === "HereditaryCancer" || packageCode === "HereditaryCancer") {
     return "hereditary_cancer";
+  }
+  if (
+    packageCode === "HealthScreening" ||
+    packageCode === "Proactive" ||
+    program === "Proactive" ||
+    program === "HealthScreening"
+  ) {
+    return "health_screen";
   }
   if (
     packageCode === "WholeExome" ||
@@ -58,11 +73,14 @@ export function frequencyTrackSummary(track: FrequencyTrack): string {
       : "A Benign or Likely benign call is set aside and is not classified until it is run.";
   const intron = `An intronic variant more than ${INTRON_FLANK_BP} bp from the exon is removed. A plain pathogenic or likely pathogenic call beyond that distance can still stay.`;
   const utr = `A 5' UTR variant stays when it is within ${UTR_START_FLANK_BP} bp of the start codon. Other 5' UTR variants, the 3' UTR, and upstream or downstream variants are removed. A plain pathogenic or likely pathogenic call can still stay.`;
+  if (track === "health_screen") {
+    return "Only a ClinVar pathogenic or likely pathogenic call is kept, at any allele frequency. A VUS, a benign or likely benign call, a risk allele, and a blank ClinVar call are removed. Quality thresholds and a gene list still apply.";
+  }
   if (track === "hereditary_cancer") {
-    return `ClinVar VUS calls stay when they are under the frequency limit. ${benign} ${lab} ${intron} ${utr} A plain pathogenic or likely pathogenic call stays at any frequency when the gene is autosomal dominant or autosomal recessive. Low-penetrance and risk-allele calls follow the limit.`;
+    return `ClinVar VUS calls stay when they are under the frequency limit. ${benign} ${lab} ${intron} ${utr} A ClinVar pathogenic or likely pathogenic call stays at any allele frequency.`;
   }
   if (track === "rare_disease") {
-    return `ClinVar VUS calls stay when they are under the frequency limit. ${benign} ${lab} ${intron} ${utr} A plain pathogenic or likely pathogenic call stays at any frequency when the gene is autosomal dominant, autosomal recessive, or X-linked. Low-penetrance and risk-allele calls follow the limit.`;
+    return `ClinVar VUS calls stay when they are under the frequency limit. ${benign} ${lab} ${intron} ${utr} A ClinVar pathogenic or likely pathogenic call stays at any allele frequency.`;
   }
-  return `ClinVar VUS calls are removed. ${benign} ${lab} An intronic or UTR variant stays only when ClinVar calls it pathogenic or likely pathogenic. A low-penetrance or risk-allele call is removed. A plain pathogenic or likely pathogenic call stays at any frequency when the gene is autosomal dominant, autosomal recessive, or X-linked. Low-penetrance and risk-allele calls follow the limit.`;
+  return `ClinVar VUS calls are removed. ${benign} ${lab} An intronic or UTR variant stays only when ClinVar calls it pathogenic or likely pathogenic. A low-penetrance or risk-allele call is removed. A ClinVar pathogenic or likely pathogenic call stays at any allele frequency.`;
 }

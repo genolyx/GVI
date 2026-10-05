@@ -293,17 +293,26 @@ export function filterTimelineSteps(input: {
       detail: null,
     });
   }
-  if (input.filters.maxAf !== null) {
+  if (input.filters.maxAf !== null && input.filters.track !== "health_screen") {
     enabled.push({
       reason: "af",
       label: `gnomAD allele frequency is at most ${input.filters.maxAf}`,
       detail:
         input.filters.track === "none"
           ? "Every variant above this frequency is removed. ClinVar class and inheritance are not used. A missing frequency is read from the local gnomAD file. A site still missing there is kept."
-          : "A plain ClinVar pathogenic or likely pathogenic call stays above this limit when the gene is autosomal dominant or autosomal recessive. Carrier and rare-disease orders also keep an X-linked gene. Low-penetrance and risk-allele calls follow the limit. A missing frequency is read from the local gnomAD file. A site still missing there is kept.",
+          : "A ClinVar pathogenic or likely pathogenic call stays above this limit on the carrier, rare-disease, and hereditary-cancer tracks. A missing frequency is read from the local gnomAD file. A site still missing there is kept.",
     });
   }
-  if ((input.filters.track ?? "carrier") === "carrier") {
+  const track = input.filters.track ?? "carrier";
+  if (track === "health_screen") {
+    enabled.push({
+      reason: "clinvar",
+      label: "ClinVar pathogenic or likely pathogenic",
+      detail:
+        "Health screen keeps a pathogenic or likely pathogenic call at any allele frequency. A VUS, a benign call, a risk allele, and a blank ClinVar call are removed.",
+    });
+  }
+  if (track === "carrier") {
     enabled.push({
       reason: "vus",
       label: "ClinVar VUS is removed",
@@ -311,8 +320,8 @@ export function filterTimelineSteps(input: {
         "Carrier screening removes Uncertain significance. Rare disease and hereditary cancer keep a VUS that is under the frequency limit.",
     });
   }
-  if ((input.filters.track ?? "carrier") !== "none") {
-    const carrierBenign = (input.filters.track ?? "carrier") === "carrier";
+  if (track !== "none" && track !== "health_screen") {
+    const carrierBenign = track === "carrier";
     enabled.push({
       reason: "clinvar",
       label: carrierBenign
@@ -323,7 +332,7 @@ export function filterTimelineSteps(input: {
         : "Rare disease and hereditary cancer set aside every Benign or Likely benign call. A VUS stays when it is under the frequency limit.",
     });
   }
-  if ((input.filters.track ?? "carrier") !== "none") {
+  if (track !== "none" && track !== "health_screen") {
     enabled.push({
       reason: "lab",
       label: "Benign or likely benign from a major laboratory",
@@ -331,7 +340,7 @@ export function filterTimelineSteps(input: {
         "A submission of Benign or Likely benign from GeneDx, Invitae, Labcorp, Natera, Baylor Genetics, Ambry Genetics, Blueprint Genetics, PreventionGenetics, or Fulgent Genetics removes the variant.",
     });
   }
-  if ((input.filters.track ?? "carrier") === "carrier") {
+  if (track === "carrier") {
     enabled.push({
       reason: "intron",
       label: "Intronic variant is ClinVar pathogenic or likely pathogenic",
@@ -344,7 +353,7 @@ export function filterTimelineSteps(input: {
       detail:
         "Carrier screening keeps a UTR, upstream, or downstream variant only when ClinVar calls it pathogenic or likely pathogenic.",
     });
-  } else if ((input.filters.track ?? "carrier") !== "none") {
+  } else if (track !== "none" && track !== "health_screen") {
     enabled.push({
       reason: "intron",
       label: `Intronic variant is within ${INTRON_FLANK_BP} bp of the exon`,

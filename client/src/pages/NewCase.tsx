@@ -445,7 +445,7 @@ export default function NewCasePage() {
               <option value="">Select project</option>
               {projects.data?.map(project => (
                 <option key={project.id} value={project.id}>
-                  {project.code} · {project.name}
+                  {project.name}
                 </option>
               ))}
             </select>

@@ -14,7 +14,7 @@ import { trpc } from "@/lib/trpc";
 import { shortCallLabel } from "@shared/curation/institutional";
 import { isSingleVariantBatch } from "@shared/curation/workbench";
 import { codingHgvs, displayHgvs, displayTranscript } from "@shared/transcript";
-import { ArrowLeft, ArrowRight, Loader2 } from "lucide-react";
+import { ArrowLeft, Loader2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
@@ -92,11 +92,6 @@ export default function WorkbenchHomePage() {
     { organizationId: activeOrganizationId || 0 },
     { enabled: Boolean(activeOrganizationId && canRead) }
   );
-  const batches = trpc.workbench.listBatches.useQuery(
-    { organizationId: activeOrganizationId || 0 },
-    { enabled: Boolean(activeOrganizationId && canRead) }
-  );
-
   const runSingle = trpc.workbench.runSingle.useMutation({
     onSuccess: async (result, variables) => {
       await entries.refetch();
@@ -288,6 +283,7 @@ export default function WorkbenchHomePage() {
         const haystack = `${row.name} ${row.patientAlias}`.toLowerCase();
         if (haystack.includes(query)) return true;
       }
+      if (row.kind === "batch" && row.name.toLowerCase().includes(query)) return true;
       return row.entries.some(matches);
     });
   }, [entries.data, germlineCases.data, search]);
@@ -453,21 +449,6 @@ export default function WorkbenchHomePage() {
                   Create batch
                 </Button>
               </form>
-              {batches.data?.length ? (
-                <div className="flex flex-wrap gap-2">
-                  {batches.data.map(batch => (
-                    <Button
-                      key={batch.id}
-                      variant="outline"
-                      size="sm"
-                      onClick={() => navigate(`/workbench/batches/${batch.id}`)}
-                    >
-                      {batch.name}
-                      <ArrowRight className="ml-2 size-3.5" />
-                    </Button>
-                  ))}
-                </div>
-              ) : null}
             </CardContent>
           </Card>
         </div>
@@ -478,9 +459,9 @@ export default function WorkbenchHomePage() {
           <Input
             value={search}
             onChange={event => setSearch(event.target.value)}
-            placeholder="Gene, HGVSc, transcript, ACMG, or status"
+            placeholder="Gene, HGVSc, transcript, ACMG, status, or name"
             className="max-w-md"
-            aria-label="Search by gene, HGVSc, transcript, ACMG, or status"
+            aria-label="Search by gene, HGVSc, transcript, ACMG, status, or name"
           />
           <div className="flex items-start justify-between gap-3">
             <div>

@@ -33,6 +33,6 @@ describe("frequency track from the order", () => {
         testCategory: "standard_carrier",
         packageCode: "HealthScreening",
       })
-    ).toBe("carrier");
+    ).toBe("health_screen");
   });
 });

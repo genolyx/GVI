@@ -51,54 +51,58 @@ describe("ClinVar penetrance terms", () => {
 });
 
 describe("frequency exemptions", () => {
-  it("keeps a common recessive pathogenic allele and drops a named mild one", () => {
+  it("keeps a ClinVar pathogenic or likely pathogenic allele above the limit on every clinical track", () => {
+    const mild = allele({ gene: "GJB2", hgvsC: "c.109G>A", hgvsP: "p.Val37Ile" });
+    const lowPenetrance = allele({
+      gene: "HFE",
+      hgvsC: "c.845G>A",
+      hgvsP: "p.Cys282Tyr",
+      clinvarSignificance: "Pathogenic/Pathogenic, low penetrance",
+    });
+    const hypomorphic = allele({
+      gene: "CFTR",
+      hgvsC: "NM_000492.4:c.350G>A",
+      hgvsP: "p.Arg117His",
+    });
+    for (const track of ["carrier", "rare_disease", "hereditary_cancer"] as const) {
+      const context = { ...carrier, track };
+      expect(keepsAtAnyFrequency(mild, context)).toBe(true);
+      expect(keepsAtAnyFrequency(lowPenetrance, context)).toBe(true);
+      expect(keepsAtAnyFrequency(hypomorphic, context)).toBe(true);
+    }
     expect(
       keepsAtAnyFrequency(
-        allele({ gene: "HBB", hgvsC: "c.20A>T", hgvsP: "p.Glu7Val" }),
-        carrier
-      )
-    ).toBe(true);
-    expect(
-      keepsAtAnyFrequency(
-        allele({ gene: "GJB2", hgvsC: "c.109G>A", hgvsP: "p.Val37Ile" }),
+        allele({ gene: "HFE", clinvarSignificance: "Established risk allele" }),
         carrier
       )
     ).toBe(false);
     expect(
       keepsAtAnyFrequency(
-        allele({
-          gene: "HFE",
-          hgvsC: "c.845G>A",
-          hgvsP: "p.Cys282Tyr",
-          clinvarSignificance: "Pathogenic/Pathogenic, low penetrance",
-        }),
-        carrier
-      )
-    ).toBe(false);
-    expect(
-      keepsAtAnyFrequency(
-        allele({ gene: "CFTR", hgvsC: "NM_000492.4:c.350G>A", hgvsP: "p.Arg117His" }),
+        allele({ gene: "HFE", clinvarSignificance: "Benign/Likely pathogenic" }),
         carrier
       )
     ).toBe(false);
   });
 
-  it("counts a gene that is both AD and AR as recessive, and keeps X-linked off the cancer track", () => {
+  it("keeps a pathogenic call above the limit without an inheritance label", () => {
     expect(
-      keepsAtAnyFrequency(allele({ gene: "ATP7B", hgvsC: "c.1A>G" }), carrier)
+      keepsAtAnyFrequency(allele({ gene: "ATP7B", hgvsC: "c.1A>G" }), {
+        track: "rare_disease",
+        inheritance: new Map(),
+      })
     ).toBe(true);
     expect(
       keepsAtAnyFrequency(allele({ gene: "G6PD", hgvsC: "c.563C>T", hgvsP: "p.Ser188Phe" }), {
         ...carrier,
         track: "hereditary_cancer",
       })
-    ).toBe(false);
-    expect(
-      keepsAtAnyFrequency(allele({ gene: "MUTYH", hgvsC: "c.1A>G" }), {
-        ...carrier,
-        track: "hereditary_cancer",
-      })
     ).toBe(true);
+    expect(
+      keepsAtAnyFrequency(
+        allele({ gene: "MUTYH", hgvsC: "c.1A>G", clinvarSignificance: "Uncertain significance" }),
+        { ...carrier, track: "hereditary_cancer" }
+      )
+    ).toBe(false);
   });
 
   it("drops a common pathogenic allele when no test type is selected", () => {

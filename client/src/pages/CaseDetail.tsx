@@ -751,7 +751,7 @@ export default function CaseDetailPage() {
           onCancel={() => setEditingOrder(false)}
           onChange={setOrderDraft}
           request={{
-            project: [item.projectCode, item.projectName].filter(Boolean).join(" · "),
+            project: item.projectName,
             patientAlias: item.patientAlias,
             referenceBuild: item.referenceBuild,
             panelName: item.panelName ?? "",

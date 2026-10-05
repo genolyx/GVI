@@ -362,7 +362,7 @@ describe("VCF workbench filters", () => {
     expect(untyped.dropped.lab).toBe(0);
   });
 
-  it("keeps a common recessive pathogenic allele and drops the same frequency when it is low penetrance", () => {
+  it("keeps a common pathogenic allele and a low-penetrance pathogenic allele above the frequency limit", () => {
     const inheritance = new Map([["HBB", "AR"], ["HFE", "AR"]]);
     const filters = {
       genes: null,
@@ -406,8 +406,8 @@ describe("VCF workbench filters", () => {
       ],
       filters
     );
-    expect(result.kept.map(row => row.hgvsC)).toEqual(["c.20A>T", "c.187C>G"]);
-    expect(result.dropped.af).toBe(1);
+    expect(result.kept.map(row => row.hgvsC)).toEqual(["c.20A>T", "c.845G>A", "c.187C>G"]);
+    expect(result.dropped.af).toBe(0);
   });
 
   it("uses only frequency and quality when no test type is selected", () => {
@@ -493,6 +493,70 @@ describe("VCF workbench filters", () => {
     );
     expect(cancer.kept).toHaveLength(1);
     expect(cancer.held).toHaveLength(0);
+  });
+
+  it("keeps only ClinVar pathogenic and likely pathogenic calls on the health screen", () => {
+    const filters = {
+      genes: null,
+      maxAf: 0.001,
+      minQual: null,
+      minGenotypeQuality: null,
+      minDepth: null,
+      passOnly: false,
+      codingOnly: false,
+      excludeClinvarBenign: false,
+      excludeClinvarVus: false,
+      track: "health_screen" as const,
+      majorLabBenign: new Set(["17:400:C:T"]),
+    };
+    const row = (patch: Partial<(typeof parsed)[number]>) => ({ ...parsed[0], ...patch });
+    const result = applyVcfFilters(
+      [
+        row({
+          hgvsC: "c.20A>T",
+          populationAf: "0.08",
+          clinvarSignificance: "Pathogenic",
+          consequence: "intron_variant",
+          impact: "MODIFIER",
+        }),
+        row({
+          hgvsC: "c.109G>A",
+          populationAf: "0.04",
+          clinvarSignificance: "Likely pathogenic",
+        }),
+        row({
+          hgvsC: "c.845G>A",
+          populationAf: "0.06",
+          clinvarSignificance: "Pathogenic, low penetrance",
+        }),
+        row({
+          hgvsC: "c.524G>A",
+          populationAf: "0.00001",
+          clinvarSignificance: "Uncertain significance",
+        }),
+        row({
+          hgvsC: "c.68_69del",
+          populationAf: "0.00001",
+          clinvarSignificance: "Benign",
+        }),
+        row({
+          position: 400,
+          hgvsC: "c.5266dup",
+          populationAf: "0.00001",
+          clinvarSignificance: "Pathogenic",
+        }),
+        row({
+          hgvsC: "c.1A>G",
+          populationAf: "0.00001",
+          clinvarSignificance: null,
+        }),
+      ],
+      filters
+    );
+    expect(result.kept.map(item => item.hgvsC)).toEqual(["c.20A>T", "c.109G>A", "c.845G>A", "c.5266dup"]);
+    expect(result.held).toHaveLength(0);
+    expect(result.dropped.clinvar).toBe(3);
+    expect(result.dropped.af).toBe(0);
   });
 
   it("reads a panel file and a comma-separated list as gene symbols", () => {

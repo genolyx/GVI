@@ -1,9 +1,11 @@
 import { INTRON_FLANK_BP, UTR_START_FLANK_BP, type FrequencyTrack } from "@shared/germlineFrequency";
 import {
+  hasClinvarPathogenicCall,
   isNamedReducedPenetrance,
   isPlainPathogenicCall,
   isReducedPenetranceCall,
   keepsAtAnyFrequency,
+  keepsBeyondFlank,
   type FrequencyContext,
 } from "./frequencyPolicy";
 import { variantOverlapsPanel } from "./germlinePanel";
@@ -327,21 +329,29 @@ function failsOutsideClinvarHold(
   ) {
     return true;
   }
+  const track = filters.track ?? "carrier";
+  if (track === "health_screen") {
+    if (!hasClinvarPathogenicCall(variant.clinvarSignificance)) return true;
+    return failsGeneScope(variant, filters);
+  }
   const af = alleleFrequency(variant.populationAf);
   const aboveLimit = filters.maxAf !== null && af !== null && af > filters.maxAf;
   if (aboveLimit && !keepsAtAnyFrequency(variant, frequencyContext(filters))) return true;
-  const track = filters.track ?? "carrier";
   if (track === "carrier") {
     if (isIntronicSite(variant) && !isReportedPathogenic(variant)) return true;
     if (isUtrSite(variant) && !isReportedPathogenic(variant)) return true;
   } else if (track !== "none") {
-    if (isBeyondIntronFlank(variant) && !keepsAtAnyFrequency(variant, frequencyContext(filters))) {
+    if (isBeyondIntronFlank(variant) && !keepsBeyondFlank(variant, frequencyContext(filters))) {
       return true;
     }
-    if (isOutsideStartRegion(variant) && !keepsAtAnyFrequency(variant, frequencyContext(filters))) {
+    if (isOutsideStartRegion(variant) && !keepsBeyondFlank(variant, frequencyContext(filters))) {
       return true;
     }
   }
+  return failsGeneScope(variant, filters);
+}
+
+function failsGeneScope(variant: FilterableVariant, filters: VcfFilters): boolean {
   if (filters.codingOnly && (variant.impact === "LOW" || variant.impact === "MODIFIER")) return true;
   const gene = (variant.gene || "").toUpperCase();
   if (filters.genes && (!gene || !filters.genes.has(gene))) return true;
@@ -375,7 +385,7 @@ export function clinvarHoldReason(
   filters: VcfFilters
 ): HoldReason | null {
   const track = filters.track ?? "carrier";
-  if (track === "none") return null;
+  if (track === "none" || track === "health_screen") return null;
   if (failsOutsideClinvarHold(variant, filters)) return null;
   if (track === "carrier" && isClinvarVusCall(variant.clinvarSignificance)) return "vus";
   if (isClinvarBenignCall(variant.clinvarSignificance) && benignCallIsHeld(variant, track)) {
@@ -409,11 +419,15 @@ function firstFail(
     variant.readDepth < filters.minDepth
   )
     return "depth";
+  const track = filters.track ?? "carrier";
+  if (track === "health_screen") {
+    if (!hasClinvarPathogenicCall(variant.clinvarSignificance)) return "clinvar";
+    return geneScopeReason(variant, filters);
+  }
   const af = alleleFrequency(variant.populationAf);
   const aboveLimit =
     filters.maxAf !== null && af !== null && af > filters.maxAf;
   if (aboveLimit && !keepsAtAnyFrequency(variant, frequencyContext(filters))) return "af";
-  const track = filters.track ?? "carrier";
   if (track === "carrier" && isClinvarVusCall(variant.clinvarSignificance)) return "vus";
   if (
     track !== "none" &&
@@ -426,11 +440,18 @@ function firstFail(
     if (isIntronicSite(variant) && !isReportedPathogenic(variant)) return "intron";
     if (isUtrSite(variant) && !isReportedPathogenic(variant)) return "utr";
   } else if (track !== "none") {
-    if (isBeyondIntronFlank(variant) && !keepsAtAnyFrequency(variant, frequencyContext(filters)))
+    if (isBeyondIntronFlank(variant) && !keepsBeyondFlank(variant, frequencyContext(filters)))
       return "intron";
-    if (isOutsideStartRegion(variant) && !keepsAtAnyFrequency(variant, frequencyContext(filters)))
+    if (isOutsideStartRegion(variant) && !keepsBeyondFlank(variant, frequencyContext(filters)))
       return "utr";
   }
+  return geneScopeReason(variant, filters);
+}
+
+function geneScopeReason(
+  variant: FilterableVariant,
+  filters: VcfFilters
+): FilterReason | null {
   if (
     filters.codingOnly &&
     (variant.impact === "LOW" || variant.impact === "MODIFIER")

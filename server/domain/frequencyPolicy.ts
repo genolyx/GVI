@@ -19,8 +19,9 @@ type NamedAllele = {
 };
 
 /**
- * Alleles that are still often submitted to ClinVar as plain pathogenic.
- * They do not get the any-frequency recessive keep.
+ * Mild alleles often submitted to ClinVar as plain pathogenic.
+ * A pathogenic or likely pathogenic call still stays above the allele-frequency limit.
+ * These alleles do not get the deep-intron or distant-UTR keep.
  */
 const REDUCED_PENETRANCE: readonly NamedAllele[] = [
   { gene: "GJB2", coding: ["109g>a"], protein: ["val37ile"] },
@@ -44,6 +45,7 @@ const CANCER_FOUNDERS: readonly NamedAllele[] = [
 ];
 
 const PATHOGENIC = new Set(["pathogenic", "likely pathogenic"]);
+const BENIGN = new Set(["benign", "likely benign"]);
 
 export function clinvarText(value: string | null | undefined): string {
   if (!value) return "";
@@ -69,6 +71,13 @@ export function isPlainPathogenicCall(value: string | null | undefined): boolean
   if (isReducedPenetranceCall(value)) return false;
   const tokens = clinvarTokens(value);
   return tokens.length > 0 && tokens.every(token => PATHOGENIC.has(token));
+}
+
+/** ClinVar includes Pathogenic or Likely pathogenic and does not include a benign term. */
+export function hasClinvarPathogenicCall(value: string | null | undefined): boolean {
+  const tokens = clinvarTokens(value);
+  if (!tokens.some(token => PATHOGENIC.has(token))) return false;
+  return !tokens.some(token => BENIGN.has(token));
 }
 
 export function combinedInheritance(labels: readonly string[]): string {
@@ -126,10 +135,10 @@ function inheritanceExemption(inheritance: string, track: FrequencyTrack): boole
 }
 
 /**
- * True when this allele stays even though its population frequency is above the limit.
- * A blank ClinVar call, a conflict, a benign term, or a low-penetrance term does not qualify.
+ * True when this allele stays beyond the intron flank or the start-codon window.
+ * Inheritance still gates that keep. The allele-frequency override is separate.
  */
-export function keepsAtAnyFrequency(
+export function keepsBeyondFlank(
   variant: AlleleIdentity,
   context: FrequencyContext
 ): boolean {
@@ -140,4 +149,19 @@ export function keepsAtAnyFrequency(
   if (!isPlainPathogenicCall(variant.clinvarSignificance)) return false;
   const inheritance = context.inheritance.get((variant.gene || "").trim().toUpperCase()) ?? "";
   return inheritanceExemption(inheritance, context.track);
+}
+
+/**
+ * True when this allele stays even though its population frequency is above the limit.
+ * On the carrier, rare-disease, and cancer tracks a ClinVar pathogenic or likely
+ * pathogenic call qualifies, including a low-penetrance qualifier. A benign term,
+ * a risk allele with no pathogenic term, and a blank call do not.
+ */
+export function keepsAtAnyFrequency(
+  variant: AlleleIdentity,
+  context: FrequencyContext
+): boolean {
+  if (context.track === "none") return false;
+  if (hasClinvarPathogenicCall(variant.clinvarSignificance)) return true;
+  return context.track === "hereditary_cancer" && isNamedCancerFounder(variant);
 }

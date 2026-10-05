@@ -7,8 +7,8 @@ import { hasGeneScopeChoice } from "./geneScope";
  * Portal interpretation jobs. Standalone GVC orders keep using
  * `frequencyTrackForOrder` and are not accepted or rejected here.
  *
- * Health screening uses the carrier frequency rules and does not request dark
- * genes. Include PGx and Include APOE PGx travel with the job so GVC can decide
+ * Health screening keeps ClinVar pathogenic and likely pathogenic calls at any
+ * allele frequency and does not request dark genes. Include PGx and Include APOE PGx travel with the job so GVC can decide
  * whether those results belong on the order. sgNIPT and PGx-only panels are
  * outside this contract. Carrier jobs start with dark genes deferred. The portal
  * then sends the pipeline report and reads the interpreted sections from the
@@ -105,7 +105,7 @@ export const partnerInterpretationJobRequestSchema = z
     includePgx: z.boolean().default(false),
     includeApoePgx: z.boolean().default(false),
     /** Portal override. When set, this track is used instead of the service mapping. */
-    frequencyTrack: z.enum(["carrier", "rare_disease", "hereditary_cancer"]).optional(),
+    frequencyTrack: z.enum(["carrier", "rare_disease", "hereditary_cancer", "health_screen"]).optional(),
     expectedTrack: z.enum(FREQUENCY_TRACKS).optional(),
     callbackUrl: z.string().trim().url().max(2000).optional(),
   })
@@ -143,7 +143,7 @@ export const partnerInterpretationJobSchema = z
     idempotencyKey: z.string().min(1),
     externalOrderId: z.string().min(1),
     status: z.enum(PARTNER_JOB_STATUSES),
-    track: z.enum(["carrier", "rare_disease", "hereditary_cancer"]),
+    track: z.enum(["carrier", "rare_disease", "hereditary_cancer", "health_screen"]),
     canonicalService: z.enum(PARTNER_CANONICAL_SERVICES),
     darkGeneResult: z.enum(["deferred", "not_requested", "ready", "absent"]),
     includePgx: z.boolean(),
@@ -289,7 +289,7 @@ export function resolvePartnerTrack(input: {
 function acceptHealth(): PartnerTrackDecision {
   return {
     accepted: true,
-    track: "carrier",
+    track: "health_screen",
     canonicalService: "health_screening",
     darkGeneResult: "not_requested",
   };
