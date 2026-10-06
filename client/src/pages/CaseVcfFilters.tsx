@@ -216,7 +216,10 @@ export function GeneListField({
 }) {
   const utils = trpc.useUtils();
   const [savedId, setSavedId] = useState("");
+  const [geneQuery, setGeneQuery] = useState("");
   const listedGenes = parseGeneList(values.genes);
+  const query = geneQuery.trim().toUpperCase();
+  const visibleGenes = [...(listedGenes ?? [])].filter(gene => !query || gene.includes(query));
   const saved = trpc.germlinePanels.list.useQuery(
     { organizationId },
     { enabled: organizationId > 0 }
@@ -226,6 +229,7 @@ export function GeneListField({
   return (
     <div className="space-y-2">
       <Label htmlFor="case-gene-list">Gene list</Label>
+      <div className="flex flex-wrap items-center gap-2">
       <select
         id="case-gene-list"
         aria-label="Saved gene lists"
@@ -233,6 +237,7 @@ export function GeneListField({
         onChange={async event => {
           const id = event.target.value;
           setSavedId(id);
+          setGeneQuery("");
           onListId?.(id);
           if (!id || !organizationId) {
             onChange({ ...values, genes: "" });
@@ -250,7 +255,7 @@ export function GeneListField({
             toast.error("Could not load that gene list.");
           }
         }}
-        className="h-9 w-full max-w-xl rounded-lg border border-input bg-background px-3 text-sm"
+        className="h-9 min-w-48 flex-1 rounded-lg border border-input bg-background px-3 text-sm"
       >
         <option value="">No gene list</option>
         {geneLists.map(panel => (
@@ -259,10 +264,25 @@ export function GeneListField({
           </option>
         ))}
       </select>
-      {selected ? <GeneSymbolList genes={[...(listedGenes ?? [])]} /> : null}
+      <Input
+        value={geneQuery}
+        onChange={event => setGeneQuery(event.target.value)}
+        placeholder="Search"
+        aria-label="Search genes"
+        disabled={!selected}
+        className="h-9 w-44 font-mono"
+      />
+      </div>
+      {selected && listedGenes?.size ? (
+        visibleGenes.length ? (
+          <GeneSymbolList genes={visibleGenes} />
+        ) : (
+          <p className="text-xs text-muted-foreground">No genes match {geneQuery.trim()}.</p>
+        )
+      ) : null}
       <p className="text-xs leading-5 text-muted-foreground">
         {selected
-          ? `${selected.geneCount.toLocaleString()} genes. Code ${selected.code}. Portal analysis requests match this code. Lists are managed in Settings.`
+          ? `${query ? `${visibleGenes.length.toLocaleString()} of ` : ""}${selected.geneCount.toLocaleString()} genes. Code ${selected.code}. Portal analysis requests match this code. Lists are managed in Settings.`
           : "Choose a gene list saved in Settings, or use HPO terms."}
         {selected && hpo.trim() ? " A variant must also be linked to the HPO terms above." : ""}
       </p>
