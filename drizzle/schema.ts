@@ -397,6 +397,10 @@ export const users = pgTable("users", {
   lastSignedIn: timestamp("lastSignedIn", { withTimezone: true })
     .defaultNow()
     .notNull(),
+  /** Set when the signed-in person confirms the research-use notice. */
+  researchUseAcceptedAt: timestamp("researchUseAcceptedAt", {
+    withTimezone: true,
+  }),
 });
 
 export const organizations = pgTable(

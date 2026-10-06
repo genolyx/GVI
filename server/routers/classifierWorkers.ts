@@ -1,9 +1,8 @@
 import { inArray } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { z } from "zod";
-import { isPlatformAdminRole } from "../../shared/permissions";
 import { curationRuns } from "../../drizzle/schema";
-import { adminProcedure, protectedProcedure, router } from "../_core/trpc";
+import { router, superAdminProcedure } from "../_core/trpc";
 import {
   CLASSIFIER_WORKER_MAX,
   CLASSIFIER_WORKER_MIN,
@@ -11,20 +10,13 @@ import {
   listClassifierWorkerProcesses,
   writeClassifierWorkerCount,
 } from "../domain/curationWorker";
-import { requireDb, requireOrganizationPermission } from "../domain/tenant";
+import { requireDb } from "../domain/tenant";
 
 export const classifierWorkersRouter = router({
-  status: protectedProcedure
+  status: superAdminProcedure
     .input(z.object({ organizationId: z.number().int().positive().optional() }))
-    .query(async ({ ctx, input }) => {
-      if (input.organizationId) {
-        await requireOrganizationPermission(ctx.user.id, input.organizationId, "case:read");
-      } else if (!isPlatformAdminRole(ctx.user.role)) {
-        throw new TRPCError({ code: "FORBIDDEN", message: "Classifier worker settings are limited to platform admins." });
-      }
-      return workerStatus(input.organizationId ?? null);
-    }),
-  setCount: adminProcedure
+    .query(({ input }) => workerStatus(input.organizationId ?? null)),
+  setCount: superAdminProcedure
     .input(z.object({ count: z.number().int().min(CLASSIFIER_WORKER_MIN).max(CLASSIFIER_WORKER_MAX) }))
     .mutation(async ({ input }) => {
       writeClassifierWorkerCount(input.count);

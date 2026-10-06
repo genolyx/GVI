@@ -1,4 +1,4 @@
-import { parseGeneList } from "@shared/geneList";
+import { geneListCode, parseGeneList } from "@shared/geneList";
 import { describe, expect, it } from "vitest";
 import { parseVcf } from "./vcf";
 import {
@@ -563,5 +563,11 @@ describe("VCF workbench filters", () => {
     expect(parseGeneList("SCN1A, KCNQ2\nSTXBP1")).toEqual(new Set(["SCN1A", "KCNQ2", "STXBP1"]));
     expect(parseGeneList("gene\ttranscript\nBRCA1\tNM_007294.4\nNKX2-1\tNM_001079668.3")).toEqual(new Set(["BRCA1", "NKX2-1"]));
     expect(parseGeneList("   ")).toBeNull();
+  });
+
+  it("builds a portal panel code from the gene list name", () => {
+    expect(geneListCode("Carrier 2000+", new Set())).toBe("carrier-2000");
+    expect(geneListCode("Carrier 2000+", new Set(["carrier-2000"]))).toBe("carrier-2000-2");
+    expect(geneListCode("유전자", new Set())).toBe("genes");
   });
 });

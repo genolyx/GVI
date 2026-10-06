@@ -2,7 +2,6 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { trpc } from "@/lib/trpc";
 import {
   DEFAULT_MAX_ALLELE_FREQUENCY,
@@ -13,7 +12,7 @@ import {
 } from "@shared/germlineFrequency";
 import { parseGeneList } from "@shared/geneList";
 import { Loader2 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
 export type CaseVcfFilterValues = {
@@ -183,20 +182,6 @@ const DROP_LABELS: Record<string, string> = {
   utr: "UTR or flanking, away from the start codon",
 };
 
-function geneListCode(name: string, taken: Set<string>): string {
-  const base = name
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 72);
-  let code = base.length >= 2 && /^[a-z0-9]/.test(base) ? base : "genes";
-  if (!taken.has(code)) return code;
-  let suffix = 2;
-  while (taken.has(`${code}-${suffix}`)) suffix += 1;
-  return `${code}-${suffix}`.slice(0, 80);
-}
-
 export function GeneSymbolList({ genes }: { genes: string[] }) {
   const sorted = [...genes].sort();
   return (
@@ -230,159 +215,56 @@ export function GeneListField({
   onListId?: (panelId: string) => void;
 }) {
   const utils = trpc.useUtils();
-  const panelFileRef = useRef<HTMLInputElement>(null);
-  const [listName, setListName] = useState("");
   const [savedId, setSavedId] = useState("");
-  const [editingText, setEditingText] = useState(false);
   const listedGenes = parseGeneList(values.genes);
   const saved = trpc.germlinePanels.list.useQuery(
     { organizationId },
     { enabled: organizationId > 0 }
   );
   const geneLists = (saved.data ?? []).filter(panel => panel.geneCount > 0 && panel.regionCount === 0);
-  const deleteList = trpc.germlinePanels.remove.useMutation({
-    onSuccess: async result => {
-      toast.success(`Deleted “${result.name}”.`);
-      setSavedId("");
-      await utils.germlinePanels.list.invalidate();
-    },
-    onError: error => toast.error(error.message),
-  });
-  const saveList = trpc.germlinePanels.create.useMutation({
-    onSuccess: async result => {
-      toast.success(`Saved “${listName.trim()}”.`);
-      setListName("");
-      setSavedId(String(result.id));
-      await utils.germlinePanels.list.invalidate();
-    },
-    onError: error => toast.error(error.message),
-  });
+  const selected = geneLists.find(panel => String(panel.id) === savedId);
   return (
     <div className="space-y-2">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <Label htmlFor="case-genes">Gene list</Label>
-        <Button type="button" variant="outline" size="sm" onClick={() => panelFileRef.current?.click()}>
-          Load gene list
-        </Button>
-        <input
-          ref={panelFileRef}
-          type="file"
-          accept=".txt,.csv,.tsv,.genes"
-          className="hidden"
-          onChange={async event => {
-            const chosen = event.target.files?.[0];
-            event.target.value = "";
-            if (!chosen) return;
-            try {
-              const text = await chosen.text();
-              const combined = [values.genes.trim(), text.trim()].filter(Boolean).join("\n");
-              onChange({ ...values, genes: combined });
-              setEditingText(false);
-            } catch {
-              toast.error("Could not read that gene list.");
-            }
-          }}
-        />
-      </div>
-      <div className="flex flex-wrap items-center gap-2">
-        <select
-          aria-label="Saved gene lists"
-          value={savedId}
-          onChange={async event => {
-            const id = event.target.value;
-            setSavedId(id);
-            if (!id || !organizationId) {
-              onListId?.("");
-              return;
-            }
-            try {
-              const panel = await utils.germlinePanels.get.fetch({
-                organizationId,
-                panelId: Number(id),
-              });
-              onChange({ ...values, genes: panel.genes.join("\n") });
-              setEditingText(false);
-              onListId?.(id);
-            } catch {
-              toast.error("Could not load that gene list.");
-            }
-          }}
-          className="h-9 min-w-48 rounded-lg border border-input bg-background px-3 text-sm"
-        >
-          <option value="">Use a saved list</option>
-          {geneLists.map(panel => (
-            <option key={panel.id} value={panel.id}>
-              {panel.name} · {panel.geneCount.toLocaleString()} genes
-            </option>
-          ))}
-        </select>
-        <Input
-          value={listName}
-          onChange={event => setListName(event.target.value)}
-          placeholder="Name this list"
-          aria-label="Gene list name"
-          className="h-9 w-44"
-        />
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          disabled={!listName.trim() || !listedGenes?.size || saveList.isPending || !organizationId}
-          onClick={() => {
-            if (!listedGenes?.size) return;
-            const taken = new Set((saved.data ?? []).map(panel => panel.code));
-            saveList.mutate({
+      <Label htmlFor="case-gene-list">Gene list</Label>
+      <select
+        id="case-gene-list"
+        aria-label="Saved gene lists"
+        value={savedId}
+        onChange={async event => {
+          const id = event.target.value;
+          setSavedId(id);
+          onListId?.(id);
+          if (!id || !organizationId) {
+            onChange({ ...values, genes: "" });
+            return;
+          }
+          try {
+            const panel = await utils.germlinePanels.get.fetch({
               organizationId,
-              code: geneListCode(listName, taken),
-              name: listName.trim(),
-              genomeBuild: null,
-              genesText: values.genes,
+              panelId: Number(id),
             });
-          }}
-        >
-          {saveList.isPending ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
-          Save list
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          disabled={!savedId || deleteList.isPending}
-          onClick={() => {
-            if (!savedId) return;
-            deleteList.mutate({ organizationId, panelId: Number(savedId) });
-          }}
-        >
-          Delete list
-        </Button>
-      </div>
-      {listedGenes && listedGenes.size > 0 && !editingText ? (
-        <GeneSymbolList genes={[...listedGenes]} />
-      ) : (
-        <Textarea
-          id="case-genes"
-          value={values.genes}
-          onChange={event => {
-            onChange({ ...values, genes: event.target.value });
+            onChange({ ...values, genes: panel.genes.join("\n") });
+          } catch {
+            setSavedId("");
             onListId?.("");
-          }}
-          placeholder="SCN1A, KCNQ2, STXBP1"
-          className="field-sizing-fixed h-20 max-h-20 min-h-0 resize-none overflow-y-auto font-mono text-sm"
-        />
-      )}
-      {listedGenes && listedGenes.size > 0 ? (
-        <div className="flex justify-end">
-          <Button type="button" variant="ghost" size="sm" onClick={() => setEditingText(current => !current)}>
-            {editingText ? "Show gene list" : "Edit as text"}
-          </Button>
-        </div>
-      ) : null}
+            toast.error("Could not load that gene list.");
+          }
+        }}
+        className="h-9 w-full max-w-xl rounded-lg border border-input bg-background px-3 text-sm"
+      >
+        <option value="">No gene list</option>
+        {geneLists.map(panel => (
+          <option key={panel.id} value={panel.id}>
+            {panel.name} · {panel.code} · {panel.geneCount.toLocaleString()} genes
+          </option>
+        ))}
+      </select>
+      {selected ? <GeneSymbolList genes={[...(listedGenes ?? [])]} /> : null}
       <p className="text-xs leading-5 text-muted-foreground">
-        {listedGenes === null
-          ? "Paste symbols, load a file, or choose a saved list such as Carrier 2000+. Commas, spaces, and new lines all work. HPO terms can be used instead of a list."
-          : listedGenes.size === 0
-            ? "No gene symbols were recognized in that text."
-            : `${listedGenes.size.toLocaleString()} ${listedGenes.size === 1 ? "gene" : "genes"}. A variant must be in this list${hpo.trim() ? " and linked to the HPO terms above" : ""}.`}
+        {selected
+          ? `${selected.geneCount.toLocaleString()} genes. Code ${selected.code}. Portal analysis requests match this code. Lists are managed in Settings.`
+          : "Choose a gene list saved in Settings, or use HPO terms."}
+        {selected && hpo.trim() ? " A variant must also be linked to the HPO terms above." : ""}
       </p>
     </div>
   );

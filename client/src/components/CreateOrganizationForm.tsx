@@ -39,7 +39,7 @@ export function CreateOrganizationForm({
             setName(value);
             setSlug(value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""));
           }}
-          placeholder="Genolyx Clinical Lab"
+          placeholder="Research laboratory"
         />
       </div>
       <div className="space-y-2">

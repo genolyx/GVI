@@ -1,7 +1,10 @@
+import { eq } from "drizzle-orm";
 import { COOKIE_NAME } from "@shared/const";
+import { users } from "../drizzle/schema";
 import { getSessionCookieOptions } from "./_core/cookies";
 import { systemRouter } from "./_core/systemRouter";
-import { publicProcedure, router } from "./_core/trpc";
+import { protectedProcedure, publicProcedure, router } from "./_core/trpc";
+import { requireDb } from "./domain/tenant";
 import { organizationsRouter } from "./routers/organizations";
 import { projectsRouter } from "./routers/projects";
 import { casesRouter } from "./routers/cases";
@@ -27,6 +30,15 @@ export const appRouter = router({
   system: systemRouter,
   auth: router({
     me: publicProcedure.query(opts => opts.ctx.user),
+    acceptResearchUse: protectedProcedure.mutation(async ({ ctx }) => {
+      const acceptedAt = new Date();
+      const db = await requireDb();
+      await db
+        .update(users)
+        .set({ researchUseAcceptedAt: acceptedAt })
+        .where(eq(users.id, ctx.user.id));
+      return { researchUseAcceptedAt: acceptedAt };
+    }),
     logout: publicProcedure.mutation(({ ctx }) => {
       const cookieOptions = getSessionCookieOptions(ctx.req);
       ctx.res.clearCookie(COOKIE_NAME, { ...cookieOptions, maxAge: -1 });

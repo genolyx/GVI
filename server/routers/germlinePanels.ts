@@ -16,6 +16,45 @@ const code = z
   .trim()
   .regex(/^[a-z0-9][a-z0-9_-]{1,79}$/);
 
+const panelContentInput = {
+  name: z.string().trim().min(2).max(200),
+  description: z.string().trim().max(2000).optional(),
+  genomeBuild: z.enum(["GRCh37", "GRCh38"]).nullable(),
+  genesText: z.string().max(500_000).optional(),
+  bedText: z.string().max(20_000_000).optional(),
+};
+
+function panelContent(input: {
+  genesText?: string;
+  bedText?: string;
+  genomeBuild: "GRCh37" | "GRCh38" | null;
+}) {
+  if (Boolean(input.genesText?.trim()) === Boolean(input.bedText?.trim())) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "Provide either a gene list or a BED file, not both.",
+    });
+  }
+  let content;
+  try {
+    content = input.bedText?.trim()
+      ? parseGermlineBed(input.bedText)
+      : { genes: parseGermlineGeneText(input.genesText || ""), regions: null };
+  } catch (error) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: error instanceof Error ? error.message : "Invalid panel content.",
+    });
+  }
+  if (content.regions && !input.genomeBuild) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "A BED panel requires the reference build it was written against.",
+    });
+  }
+  return content;
+}
+
 export const germlinePanelsRouter = router({
   list: protectedProcedure
     .input(z.object({ organizationId: z.number().int().positive() }))
@@ -48,11 +87,7 @@ export const germlinePanelsRouter = router({
       z.object({
         organizationId: z.number().int().positive(),
         code,
-        name: z.string().trim().min(2).max(200),
-        description: z.string().trim().max(2000).optional(),
-        genomeBuild: z.enum(["GRCh37", "GRCh38"]).nullable(),
-        genesText: z.string().max(500_000).optional(),
-        bedText: z.string().max(20_000_000).optional(),
+        ...panelContentInput,
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -61,29 +96,7 @@ export const germlinePanelsRouter = router({
         input.organizationId,
         "case:create"
       );
-      if (Boolean(input.genesText?.trim()) === Boolean(input.bedText?.trim())) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: "Provide either a gene list or a BED file, not both.",
-        });
-      }
-      let content;
-      try {
-        content = input.bedText?.trim()
-          ? parseGermlineBed(input.bedText)
-          : { genes: parseGermlineGeneText(input.genesText || ""), regions: null };
-      } catch (error) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: error instanceof Error ? error.message : "Invalid panel content.",
-        });
-      }
-      if (content.regions && !input.genomeBuild) {
-        throw new TRPCError({
-          code: "BAD_REQUEST",
-          message: "A BED panel requires the reference build it was written against.",
-        });
-      }
+      const content = panelContent(input);
       const db = await requireDb();
       const rows = await db
         .insert(germlinePanels)
@@ -115,6 +128,7 @@ export const germlinePanelsRouter = router({
       });
       return {
         id: rows[0].id,
+        code: rows[0].code,
         geneCount: content.genes.length,
         regionCount: content.regions?.length ?? 0,
       };
@@ -148,6 +162,80 @@ export const germlinePanelsRouter = router({
         throw new TRPCError({ code: "NOT_FOUND", message: "Panel not found." });
       }
       return rows[0];
+    }),
+
+  update: protectedProcedure
+    .input(
+      z.object({
+        organizationId: z.number().int().positive(),
+        panelId: z.number().int().positive(),
+        ...panelContentInput,
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      await requireOrganizationPermission(
+        ctx.user.id,
+        input.organizationId,
+        "case:create"
+      );
+      const content = panelContent(input);
+      const db = await requireDb();
+      const existing = await db
+        .select()
+        .from(germlinePanels)
+        .where(
+          and(
+            eq(germlinePanels.id, input.panelId),
+            eq(germlinePanels.organizationId, input.organizationId)
+          )
+        )
+        .limit(1);
+      if (!existing[0]) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Gene list not found." });
+      }
+      const rows = await db
+        .update(germlinePanels)
+        .set({
+          name: input.name,
+          description: input.description || null,
+          genes: content.genes,
+          regions: content.regions,
+          genomeBuild: input.genomeBuild,
+          contentHash: germlinePanelHash(content, input.genomeBuild),
+        })
+        .where(
+          and(
+            eq(germlinePanels.id, input.panelId),
+            eq(germlinePanels.organizationId, input.organizationId)
+          )
+        )
+        .returning();
+      await writeAuditEvent({
+        organizationId: input.organizationId,
+        actorUserId: ctx.user.id,
+        action: "germline.panel.updated",
+        entityType: "germline_panel",
+        entityId: rows[0].id,
+        before: {
+          code: existing[0].code,
+          name: existing[0].name,
+          geneCount: existing[0].genes.length,
+          regionCount: existing[0].regions?.length ?? 0,
+        },
+        after: {
+          code: rows[0].code,
+          name: rows[0].name,
+          geneCount: content.genes.length,
+          regionCount: content.regions?.length ?? 0,
+        },
+        req: ctx.req,
+      });
+      return {
+        id: rows[0].id,
+        code: rows[0].code,
+        geneCount: content.genes.length,
+        regionCount: content.regions?.length ?? 0,
+      };
     }),
 
   remove: protectedProcedure

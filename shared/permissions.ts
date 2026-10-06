@@ -23,6 +23,23 @@ export function isSuperAdminRole(role: string | null | undefined): boolean {
   return role === "super_admin";
 }
 
+/**
+ * A platform admin can open another workspace. A new account with no membership
+ * creates the first one and becomes its administrator. An invited account joins
+ * through the invite instead of opening a second workspace.
+ */
+export function canProvisionOrganization(input: {
+  platformAdmin: boolean;
+  membershipCount: number;
+}): { ok: true } | { ok: false; message: string } {
+  if (input.platformAdmin || input.membershipCount === 0) return { ok: true };
+  return {
+    ok: false,
+    message:
+      "This account already belongs to an organization. Open the invite link, or ask an administrator to invite your email.",
+  };
+}
+
 export const PERMISSIONS = [
   "organization:manage",
   "member:invite",

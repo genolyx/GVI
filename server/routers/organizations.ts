@@ -10,8 +10,8 @@ import {
   projects,
   users,
 } from "../../drizzle/schema";
-import { ROLE_PERMISSIONS, ORGANIZATION_ROLES, SUPER_ADMIN_ORGANIZATION_ROLE, isSuperAdminRole } from "../../shared/permissions";
-import { adminProcedure, protectedProcedure, publicProcedure, router } from "../_core/trpc";
+import { ROLE_PERMISSIONS, ORGANIZATION_ROLES, SUPER_ADMIN_ORGANIZATION_ROLE, canProvisionOrganization, isPlatformAdminRole, isSuperAdminRole } from "../../shared/permissions";
+import { protectedProcedure, publicProcedure, router } from "../_core/trpc";
 import { writeAuditEvent } from "../domain/audit";
 import { requireDb, requireOrganizationPermission } from "../domain/tenant";
 
@@ -68,11 +68,10 @@ export const organizationsRouter = router({
   }),
 
   /**
-   * Provision a new organization workspace.
-   * Restricted to platform admins (users.role = admin or super_admin), not org-scoped administrators.
-   * The creator becomes the first organization administrator.
+   * The signed-in person with no organization creates the first workspace and
+   * becomes its administrator. Platform admins may create additional workspaces.
    */
-  create: adminProcedure
+  create: protectedProcedure
     .input(
       z.object({
         name: z.string().trim().min(2).max(160),
@@ -82,6 +81,17 @@ export const organizationsRouter = router({
     )
     .mutation(async ({ ctx, input }) => {
       const db = await requireDb();
+      const membershipRows = await db
+        .select({ value: count() })
+        .from(organizationMembers)
+        .where(eq(organizationMembers.userId, ctx.user.id));
+      const decision = canProvisionOrganization({
+        platformAdmin: isPlatformAdminRole(ctx.user.role),
+        membershipCount: Number(membershipRows[0]?.value ?? 0),
+      });
+      if (!decision.ok) {
+        throw new TRPCError({ code: "FORBIDDEN", message: decision.message });
+      }
       let result: number;
       try {
         result = await db.transaction(async tx => {

@@ -1,4 +1,4 @@
-import { ClassifierWorkersPanel } from "@/components/ClassifierWorkers";
+import { GeneListSettings } from "@/pages/GermlinePanels";
 import { ClassifierLimitPanel } from "@/components/ClassifierLimitPanel";
 import { PartnerAccessPanel } from "@/components/PartnerAccessPanel";
 import { PageHeader } from "@/components/PageHeader";
@@ -70,6 +70,7 @@ export default function SettingsPage() {
   if (query.isLoading) {
     return (
       <div className="space-y-5">
+        <GeneListSettings />
         <PartnerAccessPanel />
         <ClassifierLimitPanel />
         <Skeleton className="h-24" />
@@ -81,6 +82,7 @@ export default function SettingsPage() {
     return (
       <div className="space-y-7">
         <PageHeader eyebrow="Platform" title="Settings" description="Reference data mounted for curation." />
+        <GeneListSettings />
         <PartnerAccessPanel />
         <ClassifierLimitPanel />
         <StatePanel type="error" title="Failed to read reference data" description={query.error?.message || "No status returned."} onRetry={() => { void query.refetch(); }} />
@@ -99,9 +101,9 @@ export default function SettingsPage() {
         description="Databases and services the curation engine can use on this server."
         badge={`${ready}/${data.sources.length} available`}
       />
+      <GeneListSettings />
       <PartnerAccessPanel />
       <ClassifierLimitPanel />
-      <ClassifierWorkersPanel editable />
       <Card className="clinical-card shadow-none">
         <CardHeader>
           <CardTitle className="font-display text-base">Reference databases</CardTitle>

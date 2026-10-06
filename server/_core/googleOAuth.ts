@@ -94,6 +94,7 @@ function verifyState(state: string): GoogleOAuthState | null {
 function decodeIdTokenPayload(idToken: string): {
   sub?: string;
   email?: string;
+  email_verified?: boolean;
   name?: string;
 } {
   const parts = idToken.split(".");
@@ -192,6 +193,7 @@ export function registerGoogleOAuthRoutes(app: Express) {
 
       let sub: string | undefined;
       let email: string | null = null;
+      let emailVerified = false;
       let name: string | null = null;
 
       if (tokenJson.access_token) {
@@ -202,19 +204,27 @@ export function registerGoogleOAuthRoutes(app: Express) {
           const profile = (await userInfoRes.json()) as {
             sub?: string;
             email?: string;
+            email_verified?: boolean;
             name?: string;
           };
           sub = profile.sub;
           email = profile.email ?? null;
+          emailVerified = profile.email_verified === true;
           name = profile.name ?? null;
         }
       }
 
-      if (!sub && tokenJson.id_token) {
+      if (tokenJson.id_token && (!sub || !email || !emailVerified)) {
         const payload = decodeIdTokenPayload(tokenJson.id_token);
-        sub = payload.sub;
+        sub = sub ?? payload.sub;
         email = email ?? payload.email ?? null;
+        emailVerified = emailVerified || payload.email_verified === true;
         name = name ?? payload.name ?? null;
+      }
+
+      if (!email || !emailVerified) {
+        res.status(403).json({ error: "A verified Google email is required" });
+        return;
       }
 
       if (!sub) {

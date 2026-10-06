@@ -9,7 +9,6 @@ import DashboardLayout from "./components/DashboardLayout";
 import { OrganizationProvider } from "./contexts/OrganizationContext";
 import CasesPage from "./pages/Cases";
 import NewCasePage from "./pages/NewCase";
-import GermlinePanelsPage from "./pages/GermlinePanels";
 import CaseDetailPage from "./pages/CaseDetail";
 import WorkbenchPage from "./pages/Workbench";
 import WorkbenchLandingPage from "./pages/WorkbenchLanding";
@@ -38,7 +37,6 @@ function Router() {
       <Route path={"/cases"} component={CasesPage} />
       <Route path={"/cases/new"} component={NewCasePage} />
       <Route path={"/cases/:id"} component={CaseDetailPage} />
-      <Route path={"/germline-panels"} component={GermlinePanelsPage} />
       <Route path={"/workbench"} component={WorkbenchLandingPage} />
       <Route path={"/workbench/germline"} component={WorkbenchHomePage} />
       <Route path={"/workbench/somatic"} component={SomaticWorkbenchHomePage} />

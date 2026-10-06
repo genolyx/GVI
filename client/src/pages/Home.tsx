@@ -1,5 +1,5 @@
 import { useAuth } from "@/_core/hooks/useAuth";
-import { isPlatformAdminRole } from "@shared/permissions";
+import { isSuperAdminRole } from "@shared/permissions";
 import { ClassifierWorkersPanel } from "@/components/ClassifierWorkers";
 import { CreateOrganizationForm } from "@/components/CreateOrganizationForm";
 import { ClinicalStatus } from "@/components/ClinicalStatus";
@@ -40,7 +40,6 @@ import {
   Dna,
   FileSignature,
   FolderPlus,
-  Mail,
   Plus,
   ShieldCheck,
 } from "lucide-react";
@@ -51,24 +50,21 @@ import { useLocation } from "wouter";
 function OrganizationOnboarding() {
   const { user } = useAuth();
   const { refetchOrganizations } = useOrganization();
-  const isPlatformAdmin = isPlatformAdminRole(user?.role);
 
   return (
     <div className="mx-auto grid min-h-[72vh] max-w-5xl items-center gap-10 lg:grid-cols-[1.15fr_.85fr]">
       <div>
-        <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/5 px-3 py-1.5 text-xs font-medium text-primary">
+        <div className="mb-6 inline-flex items-center gap-2 rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1.5 text-xs font-medium text-amber-800 dark:text-amber-200">
           <ShieldCheck className="size-3.5" />
-          Isolated clinical workspace
+          Research Use Only
         </div>
         <h1 className="font-display text-4xl font-semibold leading-tight tracking-[-0.04em] sm:text-5xl">
-          From evidence to verdict,
+          Create your organization,
           <br />
-          <span className="text-primary">under expert control.</span>
+          <span className="text-primary">then invite your team.</span>
         </h1>
         <p className="mt-5 max-w-xl text-base leading-7 text-muted-foreground">
-          {isPlatformAdmin
-            ? "As a platform admin, you can provision a new organization workspace. Cases, variants, evidence, and reports stay inside that organization boundary."
-            : "Access is invite-only. Ask your organization administrator to invite your email, then open the invite link while signed in with the same address."}
+          The first person to sign in creates the organization and becomes its administrator. Cases, variants, and reports stay inside that organization. If someone already invited {user?.email || "this email"}, open that invite link instead of creating a second workspace.
         </p>
         <div className="mt-8 grid gap-3 sm:grid-cols-3">
           {[
@@ -87,46 +83,18 @@ function OrganizationOnboarding() {
         </div>
       </div>
       <div className="clinical-panel p-7">
-        {isPlatformAdmin ? (
-          <>
-            <div className="mb-6 grid size-11 place-items-center rounded-xl bg-primary/10 text-primary">
-              <Building2 className="size-5" />
-            </div>
-            <h2 className="font-display text-xl font-semibold">
-              Create organization workspace
-            </h2>
-            <p className="mt-1 text-sm leading-6 text-muted-foreground">
-              Platform admin only. After creation you become the first
-              organization administrator and can invite members.
-            </p>
-            <div className="mt-6">
-              <CreateOrganizationForm onCreated={refetchOrganizations} />
-            </div>
-          </>
-        ) : (
-          <>
-            <div className="mb-6 grid size-11 place-items-center rounded-xl bg-primary/10 text-primary">
-              <Mail className="size-5" />
-            </div>
-            <h2 className="font-display text-xl font-semibold">
-              Waiting for an invite
-            </h2>
-            <p className="mt-1 text-sm leading-6 text-muted-foreground">
-              Organization workspaces can only be created by platform admins. If
-              Genolyx (or your lab) already exists, ask an administrator to
-              invite{" "}
-              <span className="font-medium text-foreground">
-                {user?.email || "your email"}
-              </span>
-              .
-            </p>
-            <p className="mt-4 rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs leading-5 text-muted-foreground">
-              Invite links look like{" "}
-              <span className="font-mono text-foreground">/invite/…</span> and
-              must be opened while signed in with the invited email.
-            </p>
-          </>
-        )}
+        <div className="mb-6 grid size-11 place-items-center rounded-xl bg-primary/10 text-primary">
+          <Building2 className="size-5" />
+        </div>
+        <h2 className="font-display text-xl font-semibold">
+          Create organization
+        </h2>
+        <p className="mt-1 text-sm leading-6 text-muted-foreground">
+          You become the organization administrator and can invite members from the Organization page.
+        </p>
+        <div className="mt-6">
+          <CreateOrganizationForm onCreated={refetchOrganizations} />
+        </div>
       </div>
     </div>
   );
@@ -149,6 +117,7 @@ function activeWorkHref(item: {
 }
 
 export default function Home() {
+  const { user } = useAuth();
   const { activeOrganizationId, activeOrganization, isLoading, hasPermission } =
     useOrganization();
   const [, navigate] = useLocation();
@@ -314,7 +283,9 @@ export default function Home() {
           </>
         }
       />
-      <ClassifierWorkersPanel organizationId={activeOrganizationId} />
+      {isSuperAdminRole(user?.role) ? (
+        <ClassifierWorkersPanel organizationId={activeOrganizationId} editable />
+      ) : null}
       {!projects.isLoading && !projects.data?.length ? (
         <div className="clinical-card flex flex-col gap-4 border-dashed border-primary/30 bg-primary/[0.035] p-5 sm:flex-row sm:items-center sm:justify-between">
           <div>

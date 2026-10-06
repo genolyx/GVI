@@ -1,19 +1,37 @@
-import { parseGeneList } from "@shared/geneList";
-import { PageHeader } from "@/components/PageHeader";
+import { geneListCode, parseGeneList } from "@shared/geneList";
 import { StatePanel } from "@/components/StatePanel";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { useOrganization } from "@/contexts/OrganizationContext";
 import { trpc } from "@/lib/trpc";
-import { Loader2 } from "lucide-react";
+import { Copy, Loader2 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { GeneSymbolList } from "./CaseVcfFilters";
 
-export default function GermlinePanelsPage() {
-  const { activeOrganizationId, hasPermission } = useOrganization();
+async function copyText(value: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(value);
+    return true;
+  } catch {
+    const area = document.createElement("textarea");
+    area.value = value;
+    area.setAttribute("readonly", "");
+    area.style.position = "fixed";
+    area.style.left = "-9999px";
+    document.body.appendChild(area);
+    area.select();
+    const ok = document.execCommand("copy");
+    area.remove();
+    return ok;
+  }
+}
+
+export function GeneListSettings() {
+  const { activeOrganizationId, activeOrganization, hasPermission } = useOrganization();
   const utils = trpc.useUtils();
   const panels = trpc.germlinePanels.list.useQuery(
     { organizationId: activeOrganizationId || 0 },
@@ -22,23 +40,27 @@ export default function GermlinePanelsPage() {
   const create = trpc.germlinePanels.create.useMutation({
     onSuccess: async result => {
       toast.success(
-        `Panel saved with ${result.geneCount.toLocaleString()} genes${
+        `Saved ${result.code} with ${result.geneCount.toLocaleString()} genes${
           result.regionCount
             ? ` and ${result.regionCount.toLocaleString()} intervals`
             : ""
         }.`
       );
-      setCode("");
-      setName("");
-      setDescription("");
-      setGenesText("");
-      setBedText("");
-      setBedFileName("");
+      resetForm();
       await utils.germlinePanels.list.invalidate();
     },
     onError: error => toast.error(error.message),
   });
-  const [code, setCode] = useState("");
+  const update = trpc.germlinePanels.update.useMutation({
+    onSuccess: async result => {
+      toast.success(`Updated ${result.code}.`);
+      resetForm();
+      await utils.germlinePanels.list.invalidate();
+    },
+    onError: error => toast.error(error.message),
+  });
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editingCode, setEditingCode] = useState("");
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [genomeBuild, setGenomeBuild] = useState<"" | "GRCh37" | "GRCh38">("");
@@ -46,35 +68,94 @@ export default function GermlinePanelsPage() {
   const [genesText, setGenesText] = useState("");
   const [bedText, setBedText] = useState("");
   const [bedFileName, setBedFileName] = useState("");
+  const takenCodes = new Set((panels.data ?? []).map(panel => panel.code));
+  const draftCode = editingId ? editingCode : name.trim() ? geneListCode(name, takenCodes) : "";
+  function resetForm() {
+    setEditingId(null);
+    setEditingCode("");
+    setName("");
+    setDescription("");
+    setGenesText("");
+    setBedText("");
+    setBedFileName("");
+    setGenomeBuild("");
+    setSource("genes");
+  }
+  async function beginEdit(panelId: number) {
+    if (!activeOrganizationId) return;
+    try {
+      const panel = await utils.germlinePanels.get.fetch({
+        organizationId: activeOrganizationId,
+        panelId,
+      });
+      setEditingId(panel.id);
+      setEditingCode(panel.code);
+      setName(panel.name);
+      setDescription(panel.description ?? "");
+      setGenomeBuild(panel.genomeBuild ?? "");
+      if (panel.regions?.length) {
+        setSource("bed");
+        setGenesText("");
+        setBedText(
+          panel.regions
+            .map(region =>
+              [region.chromosome, String(region.start - 1), String(region.end), region.name ?? ""]
+                .join("\t")
+                .trimEnd()
+            )
+            .join("\n")
+        );
+        setBedFileName("Saved intervals");
+      } else {
+        setSource("genes");
+        setGenesText(panel.genes.join("\n"));
+        setBedText("");
+        setBedFileName("");
+      }
+      document.getElementById("gene-list-editor")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    } catch {
+      toast.error("Could not open that gene list.");
+    }
+  }
+  const remove = trpc.germlinePanels.remove.useMutation({
+    onSuccess: async result => {
+      toast.success(`Deleted “${result.name}”.`);
+      await utils.germlinePanels.list.invalidate();
+    },
+    onError: error => toast.error(error.message),
+  });
 
+  if (!activeOrganizationId) {
+    return (
+      <StatePanel
+        compact
+        type="empty"
+        title="Select an organization"
+        description="Gene lists belong to the organization chosen in the sidebar."
+      />
+    );
+  }
   if (!hasPermission("case:read")) {
     return (
-      <div className="space-y-7">
-        <PageHeader
-          eyebrow="Germline interpretation"
-          title="Interpretation panels"
-          description="Named gene lists and BED intervals that limit which VCF variants are stored."
-        />
-        <StatePanel
-          type="forbidden"
-          title="You do not have permission to view panels"
-          description="Ask your organization administrator for a role that includes case:read."
-        />
-      </div>
+      <StatePanel
+        compact
+        type="forbidden"
+        title="You do not have permission to view gene lists"
+        description="Ask your organization administrator for a role that includes case:read."
+      />
     );
   }
 
   return (
-    <div className="space-y-7">
-      <PageHeader
-        eyebrow="Germline interpretation"
-        title="Interpretation panels"
-        description="Save a gene list such as Carrier_302, or a BED of reportable intervals. A case copies the panel when it is created, and VCF ingest keeps variants in that scope."
-      />
-      <div className="clinical-card overflow-hidden">
-        <div className="border-b border-border/70 px-5 py-4">
-          <h2 className="font-display text-base">Saved panels</h2>
-        </div>
+    <Card className="clinical-card shadow-none">
+      <CardHeader>
+        <CardTitle className="font-display text-base">Gene lists</CardTitle>
+        <CardDescription className="text-xs">
+          Lists for {activeOrganization?.name || "this organization"}. A case chooses one of these lists. Portal analysis requests match the code. A BED keeps variants that overlap an interval.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-6">
+      <div className="overflow-hidden rounded-lg border border-border/70">
         {panels.isError ? (
           <div className="p-4">
             <StatePanel
@@ -98,6 +179,7 @@ export default function GermlinePanelsPage() {
                 <th className="px-5 py-3 font-medium">Build</th>
                 <th className="px-5 py-3 font-medium">Genes</th>
                 <th className="px-5 py-3 font-medium">Intervals</th>
+                <th className="px-5 py-3 font-medium"> </th>
               </tr>
             </thead>
             <tbody>
@@ -108,6 +190,45 @@ export default function GermlinePanelsPage() {
                   <td className="px-5 py-3">{panel.genomeBuild || "Either"}</td>
                   <td className="px-5 py-3">{panel.geneCount.toLocaleString()}</td>
                   <td className="px-5 py-3">{panel.regionCount.toLocaleString()}</td>
+                  <td className="px-5 py-3">
+                    <div className="flex justify-end gap-2">
+                      {hasPermission("case:create") ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => void beginEdit(panel.id)}
+                        >
+                          Edit
+                        </Button>
+                      ) : null}
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          void copyText(panel.code).then(ok => {
+                            if (ok) toast.success(`Copied ${panel.code}.`);
+                            else toast.error("Could not copy the code.");
+                          });
+                        }}
+                      >
+                        <Copy className="mr-2 size-3.5" />
+                        Copy
+                      </Button>
+                      {hasPermission("case:create") ? (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={remove.isPending}
+                          onClick={() => remove.mutate({ organizationId: activeOrganizationId, panelId: panel.id })}
+                        >
+                          Delete
+                        </Button>
+                      ) : null}
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -125,41 +246,41 @@ export default function GermlinePanelsPage() {
       </div>
       {hasPermission("case:create") ? (
         <form
+          id="gene-list-editor"
           className="clinical-card space-y-5 p-5"
           onSubmit={event => {
             event.preventDefault();
-            if (!activeOrganizationId) return;
-            create.mutate({
+            if (!activeOrganizationId || !draftCode) return;
+            const body = {
               organizationId: activeOrganizationId,
-              code,
               name,
               description: description || undefined,
               genomeBuild: genomeBuild || null,
               genesText: source === "genes" ? genesText : undefined,
               bedText: source === "bed" ? bedText : undefined,
-            });
+            };
+            if (editingId) update.mutate({ ...body, panelId: editingId });
+            else create.mutate({ ...body, code: draftCode });
           }}
         >
-          <div>
-            <h2 className="font-display text-base">New panel</h2>
-            <p className="mt-1 text-xs text-muted-foreground">
-              A gene list filters by symbol. A BED also keeps variants whose coordinates overlap an interval, including rows whose gene annotation is missing.
-            </p>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <h2 className="font-display text-base">{editingId ? "Edit gene list" : "New gene list"}</h2>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {editingId
+                  ? "Saving updates this list for new cases and Portal requests. Cases already created keep the genes they copied. The code stays the same."
+                  : "A gene list filters by symbol. A BED also keeps variants whose coordinates overlap an interval, including rows whose gene annotation is missing."}
+              </p>
+            </div>
+            {editingId ? (
+              <Button type="button" variant="outline" size="sm" onClick={resetForm}>
+                Cancel
+              </Button>
+            ) : null}
           </div>
           <div className="grid gap-5 sm:grid-cols-2">
             <div className="space-y-2">
-              <Label htmlFor="panel-code">Code</Label>
-              <Input
-                id="panel-code"
-                value={code}
-                onChange={event => setCode(event.target.value)}
-                placeholder="carrier_302"
-                className="font-mono"
-                required
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="panel-name">Display name</Label>
+              <Label htmlFor="panel-name">Name</Label>
               <Input
                 id="panel-name"
                 value={name}
@@ -167,6 +288,37 @@ export default function GermlinePanelsPage() {
                 placeholder="Carrier 302"
                 required
               />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="panel-code">Code</Label>
+              <div className="flex gap-2">
+                <Input
+                  id="panel-code"
+                  readOnly
+                  value={draftCode}
+                  placeholder="carrier-302"
+                  className="font-mono"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={!draftCode}
+                  onClick={() => {
+                    void copyText(draftCode).then(ok => {
+                      if (ok) toast.success(`Copied ${draftCode}.`);
+                      else toast.error("Could not copy the code.");
+                    });
+                  }}
+                >
+                  <Copy className="mr-2 size-4" />
+                  Copy
+                </Button>
+              </div>
+              <p className="text-xs leading-5 text-muted-foreground">
+                {editingId
+                  ? "Portal analysis requests keep matching this code."
+                  : "The code is created from the name. Portal analysis requests match this code."}
+              </p>
             </div>
           </div>
           <div className="space-y-2">
@@ -253,12 +405,13 @@ export default function GermlinePanelsPage() {
               ) : null}
             </div>
           )}
-          <Button type="submit" disabled={create.isPending || !activeOrganizationId}>
-            {create.isPending ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
-            Save panel
+          <Button type="submit" disabled={create.isPending || update.isPending || !activeOrganizationId || !draftCode}>
+            {create.isPending || update.isPending ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+            {editingId ? "Save changes" : "Save gene list"}
           </Button>
         </form>
       ) : null}
-    </div>
+      </CardContent>
+    </Card>
   );
 }

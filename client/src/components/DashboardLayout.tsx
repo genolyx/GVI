@@ -29,6 +29,8 @@ import {
 import { startLogin } from "@/const";
 import { useIsMobile } from "@/hooks/useMobile";
 import { AppearanceControls } from "@/components/AppearanceControls";
+import { ResearchUseBanner, ResearchUseGate } from "@/components/ResearchUseNotice";
+import { RESEARCH_USE_STATEMENT } from "@shared/researchUse";
 import { GenolyxMark, GenolyxWordmark } from "@/components/BrandMark";
 import {
   Activity,
@@ -82,8 +84,8 @@ function LoginPanel({ isDevAuth, isGoogleAuth }: { isDevAuth: boolean; isGoogleA
             <GenolyxWordmark onDark className="h-8 max-w-[180px]" />
             <p className="mt-2 text-[10px] uppercase tracking-[0.16em] text-slate-400">Variant Curation</p>
           </div>
-          <h1 className="font-display text-3xl font-semibold tracking-tight">Clinical evidence,<br />under expert control.</h1>
-          <p className="mt-3 max-w-sm text-sm leading-6 text-slate-400">Tenant isolation, evidence tracing, expert review, and immutable signed reports — all in one workspace.</p>
+          <h1 className="font-display text-3xl font-semibold tracking-tight">Research use only.<br />Not for clinical decisions.</h1>
+          <p className="mt-3 max-w-sm text-sm leading-6 text-slate-400">{RESEARCH_USE_STATEMENT}</p>
         </div>
         <div className="space-y-5 p-8">
           <div>
@@ -162,19 +164,23 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     const saved = localStorage.getItem(SIDEBAR_WIDTH_KEY);
     return saved ? Number(saved) : DEFAULT_WIDTH;
   });
-  const { loading, user } = useAuth();
+  const { loading, user, refresh } = useAuth();
   const [location] = useLocation();
   const isInviteRoute = location.startsWith("/invite/");
   useEffect(() => localStorage.setItem(SIDEBAR_WIDTH_KEY, String(sidebarWidth)), [sidebarWidth]);
 
   if (loading) return <DashboardLayoutSkeleton />;
-  // Invite links render their own shell (login CTA / accept) without the app chrome.
-  if (isInviteRoute) return <>{children}</>;
   if (!user) {
+    // Invite links render their own shell (login CTA / accept) without the app chrome.
+    if (isInviteRoute) return <>{children}</>;
     const isDevAuth = import.meta.env.VITE_DEV_AUTH === "true";
     const isGoogleAuth = import.meta.env.VITE_GOOGLE_AUTH === "true";
     return <LoginPanel isDevAuth={isDevAuth} isGoogleAuth={isGoogleAuth} />;
   }
+  if (!user.researchUseAcceptedAt) {
+    return <ResearchUseGate onAccepted={() => void refresh()} />;
+  }
+  if (isInviteRoute) return <>{children}</>;
   return (
     <SidebarProvider style={{ "--sidebar-width": `${sidebarWidth}px` } as CSSProperties}>
       <DashboardLayoutContent setSidebarWidth={setSidebarWidth}>{children}</DashboardLayoutContent>
@@ -279,6 +285,7 @@ function DashboardLayoutContent({ children, setSidebarWidth }: { children: React
         {!isCollapsed ? <div className="absolute right-0 top-0 z-50 h-full w-1 cursor-col-resize hover:bg-sidebar-primary/30" onMouseDown={() => setIsResizing(true)} /> : null}
       </div>
       <SidebarInset>
+        <ResearchUseBanner />
         <div className="sticky top-0 z-30 flex h-14 items-center justify-between border-b border-border/70 bg-background/85 px-3 backdrop-blur-xl sm:px-6">
           <div className="flex items-center gap-2">
             {isMobile ? <SidebarTrigger className="size-9" /> : null}

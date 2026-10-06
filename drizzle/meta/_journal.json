@@ -183,6 +183,13 @@
       "when": 1790494257079,
       "tag": "0025_variant_reference_depth",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1790494257080,
+      "tag": "0026_research_use_acceptance",
+      "breakpoints": true
     }
   ]
 }
