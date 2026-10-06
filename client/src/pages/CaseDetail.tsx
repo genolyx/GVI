@@ -199,6 +199,14 @@ export default function CaseDetailPage() {
     const status = query.data?.status;
     setTrackRunning(status === "queued" || status === "running");
   }, [query.data?.status]);
+  useEffect(() => {
+    if (!query.data) return;
+    setDraftFilters(current =>
+      current.secondaryFindings === query.data.consentSecondaryFindings
+        ? current
+        : { ...current, secondaryFindings: query.data.consentSecondaryFindings }
+    );
+  }, [query.data]);
   const timeline = trpc.cases.timeline.useQuery(
     { organizationId: activeOrganizationId || 0, caseId },
     {
@@ -351,6 +359,7 @@ export default function CaseDetailPage() {
     minDepth?: number | null;
     passOnly?: boolean;
     track?: FrequencyTrack;
+    secondaryFindings?: boolean;
   }) => {
     if (!activeOrganizationId) return;
     const canRun = item.status === "review_ready" || item.status === "failed";
@@ -786,6 +795,7 @@ export default function CaseDetailPage() {
           hasVcf={draftHasVcf}
           applyingScope={applyPanel.isPending || saveOrder.isPending}
           savedManifest={item.jobs[0]?.manifest}
+          secondaryFindingsConsent={item.consentSecondaryFindings}
           onApplyScope={scope => {
             void applyScope(scope);
           }}
@@ -1087,6 +1097,9 @@ function appliedFilterRows(jobs: Array<{ manifest: unknown }>): Array<[string, s
   if (typeof filters.genes === "string" && filters.genes.trim()) {
     rows.push(["Gene list", filters.genes.trim()]);
   }
+  if (typeof filters.secondaryFindings === "boolean") {
+    rows.push(["Secondary findings", filters.secondaryFindings ? "Yes" : "No"]);
+  }
   return rows;
 }
 
@@ -1294,6 +1307,7 @@ function GermlineOrderSection({
   hasVcf,
   applyingScope,
   savedManifest,
+  secondaryFindingsConsent,
   onApplyScope,
 }: {
   order: { [K in keyof Omit<GermlineOrderInput, "service">]: string } | null;
@@ -1326,6 +1340,7 @@ function GermlineOrderSection({
   hasVcf: boolean;
   applyingScope: boolean;
   savedManifest: unknown;
+  secondaryFindingsConsent: boolean;
   onApplyScope: (scope: {
     panelId?: number;
     genesText?: string;
@@ -1335,6 +1350,7 @@ function GermlineOrderSection({
     minDepth?: number | null;
     passOnly?: boolean;
     track?: FrequencyTrack;
+    secondaryFindings?: boolean;
   }) => void;
 }) {
   const [scopeFilters, setScopeFilters] = useState<CaseVcfFilterValues>(defaultVcfFilters);
@@ -1344,12 +1360,15 @@ function GermlineOrderSection({
   useEffect(() => {
     if (editing && !wasEditing.current) {
       const saved = filtersFromJobManifest(savedManifest);
-      setScopeFilters(saved.values);
+      setScopeFilters({
+        ...saved.values,
+        secondaryFindings: saved.values.secondaryFindings || secondaryFindingsConsent,
+      });
       setScopePanelId("");
       setScopeTrack(saved.track ?? "");
     }
     wasEditing.current = editing;
-  }, [editing, savedManifest]);
+  }, [editing, savedManifest, secondaryFindingsConsent]);
   const canRun = caseStatus === "review_ready" || caseStatus === "failed";
   const scopeReady = Boolean(
     scopeTrack && ((hasVcf && canRun) || scopePanelId || scopeFilters.genes.trim())
@@ -1499,6 +1518,7 @@ function GermlineOrderSection({
                     minDepth,
                     passOnly: scopeFilters.passOnly,
                     track: scopeTrack || undefined,
+                    secondaryFindings: scopeFilters.secondaryFindings,
                   });
                 }}
               >

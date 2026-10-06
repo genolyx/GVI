@@ -66,7 +66,6 @@ type FormState = {
   panelVersion: string;
   pairedNormal: boolean;
   consentClinicalAnalysis: boolean;
-  consentSecondaryFindings: boolean;
   consentDataUse: boolean;
 };
 
@@ -116,7 +115,6 @@ export default function NewCasePage() {
     panelVersion: "",
     pairedNormal: false,
     consentClinicalAnalysis: false,
-    consentSecondaryFindings: false,
     consentDataUse: false,
   });
   const [vcf, setVcf] = useState<File | null>(null);
@@ -239,7 +237,7 @@ export default function NewCasePage() {
               }
             : undefined,
         consentClinicalAnalysis: true,
-        consentSecondaryFindings: form.consentSecondaryFindings,
+        consentSecondaryFindings: filters.secondaryFindings,
         consentDataUse: form.consentDataUse,
         samples: [
           {
@@ -928,11 +926,6 @@ export default function NewCasePage() {
               "consentClinicalAnalysis",
               "Clinical analysis consent",
               "Consent to perform the requested genomic analysis and expert interpretation",
-            ],
-            [
-              "consentSecondaryFindings",
-              "Secondary findings",
-              "Consent to review secondary findings per applicable policy",
             ],
             [
               "consentDataUse",

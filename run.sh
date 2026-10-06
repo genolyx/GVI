@@ -2,16 +2,16 @@
 # GVI local helper — background dev or production server.
 #
 # Usage:
-#   ./run.sh dev  start|stop|restart
-#   ./run.sh prod start|stop|restart
+#   ./run_dev.sh  start|stop|restart|status
+#   ./run_prod.sh start|stop|restart|status
 #   ./run.sh status
 #
-# dev  runs `pnpm dev`  (Dev Login when DEV_AUTH=true).
-# prod runs `pnpm start` (requires dist/index.js; Google OAuth).
-# Both stay detached from this terminal. stop frees PORT either way.
+# dev  listens on DEV_PORT (else 3012) and runs `pnpm dev`.
+# prod listens on PROD_PORT (else 3010) and runs `pnpm start`.
+# Each mode has its own pid file and log, so both can stay up.
 #
-# Env: PORT (default from .env / .env.local, else 3010)
-#      GVI_LOG (default logs/server.log), GVI_PIDFILE (default pids/server.pid)
+# Env: DEV_PORT, PROD_PORT
+#      GVI_LOG, GVI_PIDFILE, GVI_MODEFILE (optional overrides)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -19,28 +19,14 @@ cd "$ROOT"
 
 MODE="${1:-}"
 ACTION="${2:-}"
-LOG="${GVI_LOG:-$ROOT/logs/server.log}"
-PIDFILE="${GVI_PIDFILE:-$ROOT/pids/server.pid}"
-MODEFILE="${GVI_MODEFILE:-$ROOT/pids/server.mode}"
+LOG=""
+PIDFILE=""
+MODEFILE=""
 
 usage() {
   sed -n '2,14p' "$0" >&2
   exit 1
 }
-
-read_port() {
-  local port="${PORT:-}"
-  if [[ -z "$port" && -f .env ]]; then
-    port="$(grep -E '^PORT=' .env 2>/dev/null | head -1 | cut -d= -f2- | tr -d '[:space:]' || true)"
-  fi
-  if [[ -z "$port" && -f .env.local ]]; then
-    port="$(grep -E '^PORT=' .env.local 2>/dev/null | head -1 | cut -d= -f2- | tr -d '[:space:]' || true)"
-  fi
-  echo "${port:-3010}"
-}
-
-PORT="$(read_port)"
-export PORT
 
 # Prefer .env then .env.local for other vars (tsx/vite also load .env).
 load_dotenv_file() {
@@ -53,8 +39,30 @@ load_dotenv_file() {
 }
 load_dotenv_file .env
 load_dotenv_file .env.local
-PORT="$(read_port)"
-export PORT
+
+apply_mode_paths() {
+  local mode="$1"
+  case "$mode" in
+    dev)
+      PORT="${DEV_PORT:-3012}"
+      LOG="${GVI_LOG:-$ROOT/logs/server-dev.log}"
+      PIDFILE="${GVI_PIDFILE:-$ROOT/pids/server-dev.pid}"
+      MODEFILE="${GVI_MODEFILE:-$ROOT/pids/server-dev.mode}"
+      # .env.local turns Google on for the production build. This process
+      # must keep Dev Login, and must not send OAuth back to the prod host.
+      export VITE_GOOGLE_AUTH=false
+      export VITE_DEV_AUTH=true
+      unset GOOGLE_REDIRECT_URI
+      ;;
+    prod)
+      PORT="${PROD_PORT:-3010}"
+      LOG="${GVI_LOG:-$ROOT/logs/server-prod.log}"
+      PIDFILE="${GVI_PIDFILE:-$ROOT/pids/server-prod.pid}"
+      MODEFILE="${GVI_MODEFILE:-$ROOT/pids/server-prod.mode}"
+      ;;
+  esac
+  export PORT
+}
 
 pids_on_port() {
   lsof -tiTCP:"$PORT" -sTCP:LISTEN 2>/dev/null || true
@@ -79,8 +87,18 @@ stop_pidfile() {
   fi
 }
 
+stop_legacy_dev() {
+  [[ "$MODE" == "dev" && -f "$ROOT/pids/server.pid" ]] || return 0
+  local saved="$PIDFILE"
+  PIDFILE="$ROOT/pids/server.pid"
+  stop_pidfile
+  PIDFILE="$saved"
+  rm -f "$ROOT/pids/server.mode"
+}
+
 stop_app() {
-  echo "→ Stopping GVI on port $PORT..."
+  echo "→ Stopping GVI ($MODE) on port $PORT..."
+  stop_legacy_dev
   stop_pidfile
   local pids
   pids="$(pids_on_port)"
@@ -129,7 +147,7 @@ wait_until_listening() {
 start_app() {
   local mode="$1"
   if [[ -n "$(pids_on_port)" ]]; then
-    echo "→ Port $PORT already in use. Use './run.sh $mode restart' or './run.sh $mode stop' first."
+    echo "→ Port $PORT already in use. Use './run_${mode}.sh restart' or './run_${mode}.sh stop' first."
     exit 1
   fi
   if ! command -v pnpm >/dev/null 2>&1; then
@@ -194,10 +212,15 @@ case "$MODE" in
     usage
     ;;
   status)
+    apply_mode_paths dev
+    status_app
+    echo
+    apply_mode_paths prod
     status_app
     exit 0
     ;;
   dev|prod)
+    apply_mode_paths "$MODE"
     ;;
   *)
     echo "Unknown mode: $MODE" >&2

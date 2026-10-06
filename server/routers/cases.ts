@@ -2160,6 +2160,7 @@ export const casesRouter = router({
         minDepth: z.number().int().min(0).max(100_000).nullable().optional(),
         passOnly: z.boolean().optional(),
         track: z.enum(FREQUENCY_TRACKS).optional(),
+        secondaryFindings: z.boolean().optional(),
       })
     )
     .mutation(async ({ ctx, input }) => {
@@ -2176,7 +2177,8 @@ export const casesRouter = router({
         input.minGenotypeQuality !== undefined ||
         input.minDepth !== undefined ||
         input.passOnly !== undefined ||
-        input.track !== undefined;
+        input.track !== undefined ||
+        input.secondaryFindings !== undefined;
       if (!changingPanel && !changingFilters) {
         throw new TRPCError({
           code: "BAD_REQUEST",
@@ -2294,6 +2296,14 @@ export const casesRouter = router({
         });
         geneCount = content.genes.length;
       }
+      if (input.secondaryFindings !== undefined) {
+        await db
+          .update(cases)
+          .set({ consentSecondaryFindings: input.secondaryFindings })
+          .where(
+            and(eq(cases.id, input.caseId), eq(cases.organizationId, input.organizationId))
+          );
+      }
       await writeAuditEvent({
         organizationId: input.organizationId,
         actorUserId: ctx.user.id,
@@ -2347,6 +2357,7 @@ export const casesRouter = router({
           codingOnly: false,
           excludeClinvarBenign: false,
           excludeClinvarVus: false,
+          secondaryFindings: input.secondaryFindings ?? previous?.secondaryFindings ?? false,
         },
         input.track
       );

@@ -656,16 +656,16 @@ export function GermlineCarrierReview({
       {tab === "Variants" || tab === "Secondary findings" || tab === "ClinVar filtered" ? (
         secondary && !secondaryFindingsConsent ? (
           <div className="rounded-xl border border-dashed px-4 py-10 text-center">
-            <p className="text-sm font-medium">Secondary findings were not consented</p>
+            <p className="text-sm font-medium">Secondary findings were not selected</p>
             <p className="mx-auto mt-1 max-w-md text-xs leading-5 text-muted-foreground">
-              The Secondary findings checkbox on the new case was left off, so this list stays empty.
+              The Secondary findings checkbox next to the gene list was left off, so this list stays empty.
             </p>
           </div>
         ) : (
         <div className="space-y-3">
           {secondary ? (
             <p className="text-xs leading-5 text-muted-foreground">
-              Consent is on for this case. These are the stored variants whose gene is on the ACMG SF v3.2 list. The new-case checkbox does not pull a second variant set.
+              Secondary findings is on. These stored variants are on the ACMG SF v3.2 list. Genes on that list are kept even when they are not on the selected gene list, and they use the same filter test type as the rest of this case.
             </p>
           ) : null}
           {showingHeld ? (

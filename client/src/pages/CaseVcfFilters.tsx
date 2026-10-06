@@ -25,6 +25,7 @@ export type CaseVcfFilterValues = {
   codingOnly: boolean;
   excludeClinvarBenign: boolean;
   excludeClinvarVus: boolean;
+  secondaryFindings: boolean;
 };
 
 export const defaultVcfFilters: CaseVcfFilterValues = {
@@ -37,6 +38,7 @@ export const defaultVcfFilters: CaseVcfFilterValues = {
   codingOnly: false,
   excludeClinvarBenign: false,
   excludeClinvarVus: false,
+  secondaryFindings: false,
 };
 
 export function FrequencyRules({
@@ -133,6 +135,7 @@ export function filtersFromJobManifest(manifest: unknown): {
       minDepth: numberField(filters.minDepth),
       passOnly: filters.passOnly !== false,
       codingOnly: false,
+      secondaryFindings: filters.secondaryFindings === true,
     },
   };
 }
@@ -154,6 +157,7 @@ export function vcfFiltersPayload(
     excludeClinvarBenign: false,
     excludeClinvarVus: false,
     track,
+    secondaryFindings: values.secondaryFindings,
   };
 }
 
@@ -273,6 +277,15 @@ export function GeneListField({
         disabled={!selected}
         className="h-9 w-44 font-mono"
       />
+      <label className="flex h-9 items-center gap-2 rounded-lg border border-input bg-background px-3 text-sm">
+        <Checkbox
+          checked={values.secondaryFindings}
+          onCheckedChange={checked =>
+            onChange({ ...values, secondaryFindings: checked === true })
+          }
+        />
+        Secondary findings
+      </label>
       </div>
       {selected && listedGenes?.size ? (
         visibleGenes.length ? (
@@ -285,6 +298,8 @@ export function GeneListField({
         {selected
           ? `${query ? `${visibleGenes.length.toLocaleString()} of ` : ""}${selected.geneCount.toLocaleString()} genes. Code ${selected.code}. Portal analysis requests match this code.`
           : "Choose a shared panel or one saved for this organization, or use HPO terms."}
+        {" "}
+        Checked, ACMG SF v3.2 genes that are not on this list are still kept. They use the same filter test type.
         {selected && hpo.trim() ? " A variant must also be linked to the HPO terms above." : ""}
       </p>
     </div>

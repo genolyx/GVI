@@ -92,6 +92,53 @@ describe("VCF workbench filters", () => {
     expect(result.dropped.panel).toBe(1);
   });
 
+  it("keeps opted-in ACMG secondary finding genes that are off the selected list", () => {
+    const site = (
+      gene: string,
+      populationAf: string,
+      clinvarSignificance: string
+    ) => ({
+      gene,
+      transcript: null,
+      hgvsC: "c.1A>G",
+      hgvsP: null,
+      populationAf,
+      readDepth: 30,
+      impact: "MODERATE",
+      siteQuality: 80,
+      genotypeQuality: 40,
+      callFilter: "PASS",
+      clinvarSignificance,
+    });
+    const rows = [
+      site("HBB", "0.0001", "Pathogenic"),
+      site("BRCA1", "0.0001", "Pathogenic"),
+      site("SCN1A", "0.0001", "Pathogenic"),
+      site("LDLR", "0.0001", "Uncertain significance"),
+      site("PALB2", "0.04", "Pathogenic"),
+    ];
+    const filters = {
+      genes: null,
+      panelGenes: new Set(["HBB"]),
+      maxAf: 0.001,
+      minQual: null,
+      minGenotypeQuality: null,
+      minDepth: null,
+      passOnly: false,
+      codingOnly: false,
+      excludeClinvarBenign: false,
+      excludeClinvarVus: false,
+      track: "carrier" as const,
+    };
+    const closed = applyVcfFilters(rows, filters);
+    expect(closed.kept.map(row => row.gene)).toEqual(["HBB"]);
+    const opened = applyVcfFilters(rows, { ...filters, secondaryFindings: true });
+    expect(opened.kept.map(row => row.gene).sort()).toEqual(["BRCA1", "HBB", "PALB2"]);
+    expect(opened.dropped.panel).toBe(1);
+    expect(opened.dropped.vus).toBe(1);
+    expect(opened.dropped.af).toBe(0);
+  });
+
   it("keeps a coordinate overlap when the gene is not on the panel list", () => {
     const result = applyVcfFilters(parsed, {
       genes: null,

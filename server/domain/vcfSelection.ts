@@ -30,6 +30,7 @@ export const vcfFilterSchema = z.object({
   excludeClinvarBenign: z.boolean().default(false),
   excludeClinvarVus: z.boolean().default(false),
   track: z.enum(FREQUENCY_TRACKS).optional(),
+  secondaryFindings: z.boolean().optional(),
 });
 
 export function withFrequencyTrack(
@@ -147,6 +148,7 @@ export async function selectVcfRecords(
     track,
     inheritance,
     majorLabBenign: majorLabSites,
+    secondaryFindings: filters.secondaryFindings,
   });
   const gnomadFilled = await fillMissingPopulationAf(
     [...filtered.kept, ...filtered.held.map(item => item.variant)],

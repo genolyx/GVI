@@ -1,4 +1,5 @@
 import { INTRON_FLANK_BP, UTR_START_FLANK_BP, type FrequencyTrack } from "@shared/germlineFrequency";
+import { isAcmgSecondaryFindingGene } from "@shared/secondaryFindings";
 import {
   hasClinvarPathogenicCall,
   isNamedReducedPenetrance,
@@ -64,6 +65,11 @@ export type VcfFilters = {
    * Keys are chromosome:position:ref:alt. Omitted or empty skips this rule.
    */
   majorLabBenign?: ReadonlySet<string>;
+  /**
+   * When set, an ACMG SF v3.2 gene stays in scope even if it is missing from
+   * the selected gene list, HPO genes, or panel regions. The track rules still apply.
+   */
+  secondaryFindings?: boolean;
 };
 
 export type FilterReason =
@@ -351,8 +357,16 @@ function failsOutsideClinvarHold(
   return failsGeneScope(variant, filters);
 }
 
+function secondaryFindingBypassesScope(
+  variant: FilterableVariant,
+  filters: VcfFilters
+): boolean {
+  return Boolean(filters.secondaryFindings) && isAcmgSecondaryFindingGene(variant.gene);
+}
+
 function failsGeneScope(variant: FilterableVariant, filters: VcfFilters): boolean {
   if (filters.codingOnly && (variant.impact === "LOW" || variant.impact === "MODIFIER")) return true;
+  if (secondaryFindingBypassesScope(variant, filters)) return false;
   const gene = (variant.gene || "").toUpperCase();
   if (filters.genes && (!gene || !filters.genes.has(gene))) return true;
   const geneMatch = !filters.panelGenes || Boolean(gene && filters.panelGenes.has(gene));
@@ -457,6 +471,7 @@ function geneScopeReason(
     (variant.impact === "LOW" || variant.impact === "MODIFIER")
   )
     return "impact";
+  if (secondaryFindingBypassesScope(variant, filters)) return null;
   const gene = (variant.gene || "").toUpperCase();
   if (filters.genes && (!gene || !filters.genes.has(gene))) return "hpo";
   const geneMatch =
