@@ -1408,7 +1408,7 @@ function GermlineOrderSection({
               <p className="text-sm font-medium">Panel or gene list</p>
               <p className="text-xs leading-5 text-muted-foreground">
                 {currentPanel ? `Current panel: ${currentPanel}.` : "No panel is attached."}
-                {" "}Choose a gene list saved in Settings. The existing VCF stays on the case.
+                {" "}Choose a shared panel or one saved for this organization. The existing VCF stays on the case.
               </p>
               <GeneListField
                 organizationId={organizationId}

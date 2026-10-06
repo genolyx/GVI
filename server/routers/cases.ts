@@ -1106,10 +1106,13 @@ export const casesRouter = router({
             .select()
             .from(germlinePanels)
             .where(
-              and(
-                eq(germlinePanels.id, input.germlinePanel.panelId!),
-                eq(germlinePanels.organizationId, input.organizationId)
+            and(
+              eq(germlinePanels.id, input.germlinePanel.panelId!),
+              or(
+                eq(germlinePanels.organizationId, input.organizationId),
+                eq(germlinePanels.shared, true)
               )
+            )
             )
             .limit(1);
           const panel = rows[0];
@@ -1813,7 +1816,10 @@ export const casesRouter = router({
           .where(
             and(
               eq(germlinePanels.id, input.germlinePanel.panelId),
-              eq(germlinePanels.organizationId, input.organizationId)
+              or(
+                eq(germlinePanels.organizationId, input.organizationId),
+                eq(germlinePanels.shared, true)
+              )
             )
           )
           .limit(1);
@@ -2222,7 +2228,10 @@ export const casesRouter = router({
           .where(
             and(
               eq(germlinePanels.id, input.panelId),
-              eq(germlinePanels.organizationId, input.organizationId)
+              or(
+                eq(germlinePanels.organizationId, input.organizationId),
+                eq(germlinePanels.shared, true)
+              )
             )
           )
           .limit(1);

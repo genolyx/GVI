@@ -952,7 +952,7 @@ export default function SomaticGovernancePage() {
                             json: event.target.value,
                           }))
                         }
-                        placeholder='{"schemaVersion":1,"kind":"somatic_amp_proposal_rule",...}'
+                        placeholder='{"kind":"nccn_evidence_revision","status":"active",...} or {"schemaVersion":1,"kind":"somatic_amp_proposal_rule",...}'
                       />
                     </Field>
                   </div>

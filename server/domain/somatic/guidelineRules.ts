@@ -6,12 +6,18 @@ import {
 } from "../../../drizzle/schema";
 import { requireDb } from "../tenant";
 import {
+  parseNccnRevision,
+  type NccnEvidenceRevision,
+} from "./nccn/classify";
+import {
   parseApprovedGuidelineRule,
   type ApprovedGuidelineRule,
 } from "./rules";
 
 export type ActiveGuidelineRuleSet = {
   rules: ApprovedGuidelineRule[];
+  nccnRevisions: NccnEvidenceRevision[];
+  nccnReleaseId: string | null;
   ignoredRecordIds: number[];
   releaseVersions: Record<string, string>;
 };
@@ -69,8 +75,10 @@ export async function loadActiveGuidelineRules(
     );
 
   const rules: ApprovedGuidelineRule[] = [];
+  const nccnRevisions: NccnEvidenceRevision[] = [];
   const ignoredRecordIds: number[] = [];
   const releaseVersions: Record<string, string> = {};
+  let nccnReleaseId: string | null = null;
   for (const { record, release, provider } of rows) {
     const effective =
       (!record.effectiveFrom || record.effectiveFrom <= at) &&
@@ -78,6 +86,12 @@ export async function loadActiveGuidelineRules(
     if (!effective) continue;
 
     releaseVersions[provider.code] = release.version;
+    const nccn = parseNccnRevision(record.guideline);
+    if (nccn) {
+      nccnRevisions.push(nccn);
+      nccnReleaseId = String(release.id);
+      continue;
+    }
     const rule = parseApprovedGuidelineRule(record.guideline, {
       recordId: record.id,
       recordKey: record.recordKey,
@@ -90,6 +104,6 @@ export async function loadActiveGuidelineRules(
     else ignoredRecordIds.push(record.id);
   }
 
-  return { rules, ignoredRecordIds, releaseVersions };
+  return { rules, nccnRevisions, nccnReleaseId, ignoredRecordIds, releaseVersions };
 }
 

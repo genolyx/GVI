@@ -416,6 +416,114 @@ export default function SomaticWorkbenchPage({ caseId }: { caseId: number }) {
               <Card className="clinical-card shadow-none">
                 <CardHeader>
                   <CardTitle className="text-base">
+                    NCCN classification steps
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {detail.data.assertion.proposalFlags.nccn ? (
+                    <>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge variant="outline">
+                          {detail.data.assertion.proposalFlags.nccn
+                            .provisionalTier
+                            ? `Provisional Tier ${detail.data.assertion.proposalFlags.nccn.provisionalTier}`
+                            : "No provisional tier"}
+                        </Badge>
+                        <Badge variant="secondary">
+                          {detail.data.assertion.proposalFlags.nccn.nccnMatchStatus}
+                        </Badge>
+                        <Badge variant="secondary">
+                          {
+                            detail.data.assertion.proposalFlags.nccn
+                              .classificationStatus
+                          }
+                        </Badge>
+                      </div>
+                      <p className="text-xs leading-5 text-muted-foreground">
+                        Rule {detail.data.assertion.proposalFlags.nccn.ruleVersion}
+                        . The overall tier stays unset until a reviewer finalizes
+                        it. An NCCN category is not copied into an AMP level.
+                      </p>
+                      <ol className="space-y-2">
+                        {detail.data.assertion.proposalFlags.nccn.steps.map(
+                          step => (
+                            <li
+                              key={step.id}
+                              className="rounded-xl border border-border/70 p-3"
+                            >
+                              <div className="flex items-center justify-between gap-3">
+                                <p className="text-sm font-semibold">
+                                  {step.order}. {step.label}
+                                </p>
+                                <Badge variant="outline">{step.outcome}</Badge>
+                              </div>
+                              <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                                {step.detail}
+                              </p>
+                              {step.reasonCodes.length ? (
+                                <p className="mt-1 font-mono text-[11px] text-muted-foreground">
+                                  {step.reasonCodes.join(" · ")}
+                                </p>
+                              ) : null}
+                            </li>
+                          )
+                        )}
+                      </ol>
+                      {detail.data.assertion.proposalFlags.nccn.assertionResults
+                        .length ? (
+                        <div className="space-y-2">
+                          {detail.data.assertion.proposalFlags.nccn.assertionResults.map(
+                            item => (
+                              <div
+                                key={item.evidenceId}
+                                className="rounded-xl border border-border/70 p-3 text-xs leading-5"
+                              >
+                                <p className="font-semibold">
+                                  {item.assertionId} · {item.location}
+                                </p>
+                                <p className="text-muted-foreground">
+                                  Guideline {item.guidelineVersion} · category{" "}
+                                  {item.nccnCategory || "not applied"} ·
+                                  candidate level {item.candidateLevel || "none"}
+                                </p>
+                                {item.regimenId ? (
+                                  <p className="text-muted-foreground">
+                                    Regimen {item.regimenId} ·{" "}
+                                    {item.combinationType} ·{" "}
+                                    {(item.drugIds ?? []).join(", ") || "no drug id"}
+                                  </p>
+                                ) : null}
+                                {item.fdaApproval || item.mfdsApproval ? (
+                                  <p className="text-muted-foreground">
+                                    FDA {item.fdaApproval} · MFDS {item.mfdsApproval}
+                                    {item.offLabel ? " · off-label" : ""} · KR{" "}
+                                    {item.regionalApproval || "not recorded"}. Approval
+                                    is separate from the AMP level.
+                                  </p>
+                                ) : null}
+                                <p className="font-mono text-[11px] text-muted-foreground">
+                                  {item.ruleIds.join(" · ") || "no rule"} ·{" "}
+                                  {item.reasonCodes.join(" · ")}
+                                </p>
+                              </div>
+                            )
+                          )}
+                        </div>
+                      ) : null}
+                    </>
+                  ) : (
+                    <p className="text-xs leading-5 text-muted-foreground">
+                      This assertion was saved before the NCCN step trace. Start
+                      somatic interpretation again to record the classification
+                      order.
+                    </p>
+                  )}
+                </CardContent>
+              </Card>
+
+              <Card className="clinical-card shadow-none">
+                <CardHeader>
+                  <CardTitle className="text-base">
                     Source-native evidence
                   </CardTitle>
                 </CardHeader>

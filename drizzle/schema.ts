@@ -692,6 +692,7 @@ export const germlinePanels = pgTable(
     regions: jsonb("regions").$type<GermlinePanelRegion[]>(),
     genomeBuild: referenceBuildEnum("genomeBuild"),
     contentHash: varchar("contentHash", { length: 64 }).notNull(),
+    shared: boolean("shared").default(false).notNull(),
     createdBy: integer("createdBy")
       .notNull()
       .references(() => users.id),
@@ -729,9 +730,9 @@ export const germlineCasePanels = pgTable(
       foreignColumns: [cases.id, cases.organizationId],
     }).onDelete("cascade"),
     foreignKey({
-      name: "germline_case_panels_panel_org_fk",
-      columns: [table.panelId, table.organizationId],
-      foreignColumns: [germlinePanels.id, germlinePanels.organizationId],
+      name: "germline_case_panels_panel_fk",
+      columns: [table.panelId],
+      foreignColumns: [germlinePanels.id],
     }).onDelete("restrict"),
   ]
 );
@@ -1475,6 +1476,7 @@ export type SomaticProposalFlags = {
     providerCode: string;
     sourceCitation: string;
   } | null;
+  nccn?: import("@shared/nccn").NccnEvaluation;
 };
 
 export const somaticClinicalAssertions = pgTable(

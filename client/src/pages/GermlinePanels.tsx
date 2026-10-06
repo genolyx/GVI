@@ -1,5 +1,9 @@
 import { geneListCode, parseGeneList } from "@shared/geneList";
+import { isSuperAdminRole } from "@shared/permissions";
+import { useAuth } from "@/_core/hooks/useAuth";
+import { PageHeader } from "@/components/PageHeader";
 import { StatePanel } from "@/components/StatePanel";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -31,6 +35,8 @@ async function copyText(value: string): Promise<boolean> {
 }
 
 export function GeneListSettings() {
+  const { user } = useAuth();
+  const superAdmin = isSuperAdminRole(user?.role);
   const { activeOrganizationId, activeOrganization, hasPermission } = useOrganization();
   const utils = trpc.useUtils();
   const panels = trpc.germlinePanels.list.useQuery(
@@ -68,6 +74,7 @@ export function GeneListSettings() {
   const [genesText, setGenesText] = useState("");
   const [bedText, setBedText] = useState("");
   const [bedFileName, setBedFileName] = useState("");
+  const [share, setShare] = useState(true);
   const takenCodes = new Set((panels.data ?? []).map(panel => panel.code));
   const draftCode = editingId ? editingCode : name.trim() ? geneListCode(name, takenCodes) : "";
   function resetForm() {
@@ -80,6 +87,7 @@ export function GeneListSettings() {
     setBedFileName("");
     setGenomeBuild("");
     setSource("genes");
+    setShare(true);
   }
   async function beginEdit(panelId: number) {
     if (!activeOrganizationId) return;
@@ -90,6 +98,7 @@ export function GeneListSettings() {
       });
       setEditingId(panel.id);
       setEditingCode(panel.code);
+      setShare(panel.shared);
       setName(panel.name);
       setDescription(panel.description ?? "");
       setGenomeBuild(panel.genomeBuild ?? "");
@@ -131,7 +140,7 @@ export function GeneListSettings() {
         compact
         type="empty"
         title="Select an organization"
-        description="Gene lists belong to the organization chosen in the sidebar."
+        description="Panels belong to the organization chosen in the sidebar. Shared panels stay visible in every organization."
       />
     );
   }
@@ -151,7 +160,7 @@ export function GeneListSettings() {
       <CardHeader>
         <CardTitle className="font-display text-base">Gene lists</CardTitle>
         <CardDescription className="text-xs">
-          Lists for {activeOrganization?.name || "this organization"}. A case chooses one of these lists. Portal analysis requests match the code. A BED keeps variants that overlap an interval.
+          {activeOrganization?.name || "This organization"} sees shared panels and the panels it saves. A case can use either. Portal analysis requests match the code.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-6">
@@ -175,6 +184,7 @@ export function GeneListSettings() {
             <thead className="text-left text-xs text-muted-foreground">
               <tr className="border-b border-border/70">
                 <th className="px-5 py-3 font-medium">Name</th>
+                <th className="px-5 py-3 font-medium">Source</th>
                 <th className="px-5 py-3 font-medium">Code</th>
                 <th className="px-5 py-3 font-medium">Build</th>
                 <th className="px-5 py-3 font-medium">Genes</th>
@@ -186,13 +196,16 @@ export function GeneListSettings() {
               {panels.data.map(panel => (
                 <tr key={panel.id} className="border-b border-border/50 last:border-0">
                   <td className="px-5 py-3 font-medium">{panel.name}</td>
+                  <td className="px-5 py-3 text-xs text-muted-foreground">
+                    {panel.shared ? "Shared" : "This organization"}
+                  </td>
                   <td className="px-5 py-3 font-mono text-xs">{panel.code}</td>
                   <td className="px-5 py-3">{panel.genomeBuild || "Either"}</td>
                   <td className="px-5 py-3">{panel.geneCount.toLocaleString()}</td>
                   <td className="px-5 py-3">{panel.regionCount.toLocaleString()}</td>
                   <td className="px-5 py-3">
                     <div className="flex justify-end gap-2">
-                      {hasPermission("case:create") ? (
+                      {panel.editable && hasPermission("case:create") ? (
                         <Button
                           type="button"
                           variant="outline"
@@ -216,7 +229,7 @@ export function GeneListSettings() {
                         <Copy className="mr-2 size-3.5" />
                         Copy
                       </Button>
-                      {hasPermission("case:create") ? (
+                      {panel.editable && hasPermission("case:create") ? (
                         <Button
                           type="button"
                           variant="outline"
@@ -259,8 +272,19 @@ export function GeneListSettings() {
               genesText: source === "genes" ? genesText : undefined,
               bedText: source === "bed" ? bedText : undefined,
             };
-            if (editingId) update.mutate({ ...body, panelId: editingId });
-            else create.mutate({ ...body, code: draftCode });
+            if (editingId) {
+              update.mutate({
+                ...body,
+                panelId: editingId,
+                ...(superAdmin ? { shared: share } : {}),
+              });
+            } else {
+              create.mutate({
+                ...body,
+                code: draftCode,
+                ...(superAdmin ? { shared: share } : {}),
+              });
+            }
           }}
         >
           <div className="flex items-start justify-between gap-3">
@@ -345,6 +369,16 @@ export function GeneListSettings() {
               <option value="GRCh37">GRCh37</option>
             </select>
           </div>
+          {superAdmin ? (
+            <div className="flex items-center gap-2 text-sm">
+              <Checkbox
+                id="panel-share"
+                checked={share}
+                onCheckedChange={value => setShare(value === true)}
+              />
+              <Label htmlFor="panel-share">Available to every client</Label>
+            </div>
+          ) : null}
           <div className="flex gap-2">
             {(["genes", "bed"] as const).map(item => (
               <button
@@ -413,5 +447,18 @@ export function GeneListSettings() {
       ) : null}
       </CardContent>
     </Card>
+  );
+}
+
+export default function PanelsPage() {
+  return (
+    <div className="space-y-7">
+      <PageHeader
+        eyebrow="Interpretation"
+        title="Panels"
+        description="Shared panels are available in every organization. Panels saved here belong to the organization in the sidebar."
+      />
+      <GeneListSettings />
+    </div>
   );
 }

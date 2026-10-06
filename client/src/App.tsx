@@ -23,6 +23,7 @@ import InviteAcceptPage from "./pages/InviteAccept";
 import AuditLogPage from "./pages/AuditLog";
 import SecurityConsolePage from "./pages/SecurityConsole";
 import SettingsPage from "./pages/Settings";
+import PanelsPage from "./pages/GermlinePanels";
 import LiteraturePage from "./pages/Literature";
 import ClassificationsPage from "./pages/Classifications";
 import SomaticReportTemplatesPage from "./pages/SomaticReportTemplates";
@@ -35,6 +36,7 @@ function Router() {
       <Route path={"/"} component={Home} />
       <Route path={"/invite/:token"} component={InviteAcceptPage} />
       <Route path={"/cases"} component={CasesPage} />
+      <Route path={"/panels"} component={PanelsPage} />
       <Route path={"/cases/new"} component={NewCasePage} />
       <Route path={"/cases/:id"} component={CaseDetailPage} />
       <Route path={"/workbench"} component={WorkbenchLandingPage} />

@@ -38,6 +38,7 @@ import {
   ChevronDown,
   BookOpen,
   ClipboardList,
+  Library,
   Dna,
   FileSignature,
   FlaskConical,
@@ -144,6 +145,7 @@ const menuItems: Array<{
 }> = [
   { icon: LayoutDashboard, label: "Dashboard", path: "/", permission: "case:read" },
   { icon: ClipboardList, label: "Cases", path: "/cases", permission: "case:read" },
+  { icon: Library, label: "Panels", path: "/panels", permission: "case:read" },
   { icon: FlaskConical, label: "Variant Workbench", path: "/workbench", permission: "variant:read" },
   { icon: FileSignature, label: "Clinical Reports", path: "/reports", permission: "report:read" },
   { icon: Activity, label: "Audit Log", path: "/audit", permission: "audit:view" },

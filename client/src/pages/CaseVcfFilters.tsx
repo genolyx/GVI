@@ -261,6 +261,7 @@ export function GeneListField({
         {geneLists.map(panel => (
           <option key={panel.id} value={panel.id}>
             {panel.name} · {panel.code} · {panel.geneCount.toLocaleString()} genes
+            {panel.shared ? " · Shared" : ""}
           </option>
         ))}
       </select>
@@ -282,8 +283,8 @@ export function GeneListField({
       ) : null}
       <p className="text-xs leading-5 text-muted-foreground">
         {selected
-          ? `${query ? `${visibleGenes.length.toLocaleString()} of ` : ""}${selected.geneCount.toLocaleString()} genes. Code ${selected.code}. Portal analysis requests match this code. Lists are managed in Settings.`
-          : "Choose a gene list saved in Settings, or use HPO terms."}
+          ? `${query ? `${visibleGenes.length.toLocaleString()} of ` : ""}${selected.geneCount.toLocaleString()} genes. Code ${selected.code}. Portal analysis requests match this code.`
+          : "Choose a shared panel or one saved for this organization, or use HPO terms."}
         {selected && hpo.trim() ? " A variant must also be linked to the HPO terms above." : ""}
       </p>
     </div>

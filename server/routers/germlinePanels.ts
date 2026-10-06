@@ -1,7 +1,8 @@
 import { TRPCError } from "@trpc/server";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { germlineCasePanels, germlinePanels } from "../../drizzle/schema";
+import { isSuperAdminRole } from "@shared/permissions";
 import { protectedProcedure, router } from "../_core/trpc";
 import {
   germlinePanelHash,
@@ -55,6 +56,30 @@ function panelContent(input: {
   return content;
 }
 
+function readablePanel(organizationId: number, panelId: number) {
+  return and(
+    eq(germlinePanels.id, panelId),
+    or(
+      eq(germlinePanels.organizationId, organizationId),
+      eq(germlinePanels.shared, true)
+    )
+  );
+}
+
+async function assertCodeAvailable(code: string, exceptPanelId?: number) {
+  const db = await requireDb();
+  const rows = await db
+    .select({ id: germlinePanels.id })
+    .from(germlinePanels)
+    .where(sql`lower(${germlinePanels.code}) = ${code.toLowerCase()}`);
+  if (rows.some(row => row.id !== exceptPanelId)) {
+    throw new TRPCError({
+      code: "CONFLICT",
+      message: "That panel code is already in use.",
+    });
+  }
+}
+
 export const germlinePanelsRouter = router({
   list: protectedProcedure
     .input(z.object({ organizationId: z.number().int().positive() }))
@@ -65,11 +90,17 @@ export const germlinePanelsRouter = router({
         "case:read"
       );
       const db = await requireDb();
+      const superAdmin = isSuperAdminRole(ctx.user.role);
       const rows = await db
         .select()
         .from(germlinePanels)
-        .where(eq(germlinePanels.organizationId, input.organizationId))
-        .orderBy(asc(germlinePanels.name));
+        .where(
+          or(
+            eq(germlinePanels.organizationId, input.organizationId),
+            eq(germlinePanels.shared, true)
+          )
+        )
+        .orderBy(desc(germlinePanels.shared), asc(germlinePanels.name));
       return rows.map(row => ({
         id: row.id,
         code: row.code,
@@ -79,6 +110,11 @@ export const germlinePanelsRouter = router({
         geneCount: row.genes.length,
         regionCount: row.regions?.length ?? 0,
         contentHash: row.contentHash,
+        shared: row.shared,
+        ownerOrganizationId: row.organizationId,
+        editable:
+          superAdmin ||
+          (row.organizationId === input.organizationId && !row.shared),
       }));
     }),
 
@@ -87,6 +123,7 @@ export const germlinePanelsRouter = router({
       z.object({
         organizationId: z.number().int().positive(),
         code,
+        shared: z.boolean().optional(),
         ...panelContentInput,
       })
     )
@@ -96,7 +133,9 @@ export const germlinePanelsRouter = router({
         input.organizationId,
         "case:create"
       );
+      const shared = isSuperAdminRole(ctx.user.role) && input.shared === true;
       const content = panelContent(input);
+      await assertCodeAvailable(input.code);
       const db = await requireDb();
       const rows = await db
         .insert(germlinePanels)
@@ -109,6 +148,7 @@ export const germlinePanelsRouter = router({
           regions: content.regions,
           genomeBuild: input.genomeBuild,
           contentHash: germlinePanelHash(content, input.genomeBuild),
+          shared,
           createdBy: ctx.user.id,
         })
         .returning();
@@ -151,12 +191,7 @@ export const germlinePanelsRouter = router({
       const rows = await db
         .select()
         .from(germlinePanels)
-        .where(
-          and(
-            eq(germlinePanels.id, input.panelId),
-            eq(germlinePanels.organizationId, input.organizationId)
-          )
-        )
+        .where(readablePanel(input.organizationId, input.panelId))
         .limit(1);
       if (!rows[0]) {
         throw new TRPCError({ code: "NOT_FOUND", message: "Panel not found." });
@@ -169,6 +204,7 @@ export const germlinePanelsRouter = router({
       z.object({
         organizationId: z.number().int().positive(),
         panelId: z.number().int().positive(),
+        shared: z.boolean().optional(),
         ...panelContentInput,
       })
     )
@@ -180,19 +216,25 @@ export const germlinePanelsRouter = router({
       );
       const content = panelContent(input);
       const db = await requireDb();
+      const superAdmin = isSuperAdminRole(ctx.user.role);
       const existing = await db
         .select()
         .from(germlinePanels)
-        .where(
-          and(
-            eq(germlinePanels.id, input.panelId),
-            eq(germlinePanels.organizationId, input.organizationId)
-          )
-        )
+        .where(readablePanel(input.organizationId, input.panelId))
         .limit(1);
       if (!existing[0]) {
         throw new TRPCError({ code: "NOT_FOUND", message: "Gene list not found." });
       }
+      const owns = existing[0].organizationId === input.organizationId;
+      if (!(superAdmin || (owns && !existing[0].shared))) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "A shared panel can be changed by a Super Administrator.",
+        });
+      }
+      const shared = superAdmin
+        ? (input.shared ?? existing[0].shared)
+        : existing[0].shared;
       const rows = await db
         .update(germlinePanels)
         .set({
@@ -202,11 +244,12 @@ export const germlinePanelsRouter = router({
           regions: content.regions,
           genomeBuild: input.genomeBuild,
           contentHash: germlinePanelHash(content, input.genomeBuild),
+          shared,
         })
         .where(
           and(
             eq(germlinePanels.id, input.panelId),
-            eq(germlinePanels.organizationId, input.organizationId)
+            eq(germlinePanels.organizationId, existing[0].organizationId)
           )
         )
         .returning();
@@ -252,22 +295,33 @@ export const germlinePanelsRouter = router({
         "case:create"
       );
       const db = await requireDb();
+      const superAdmin = isSuperAdminRole(ctx.user.role);
+      const existing = await db
+        .select()
+        .from(germlinePanels)
+        .where(readablePanel(input.organizationId, input.panelId))
+        .limit(1);
+      if (!existing[0]) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Gene list not found." });
+      }
+      const owns = existing[0].organizationId === input.organizationId;
+      if (!(superAdmin || (owns && !existing[0].shared))) {
+        throw new TRPCError({
+          code: "FORBIDDEN",
+          message: "A shared panel can be deleted by a Super Administrator.",
+        });
+      }
       const removed = await db.transaction(async tx => {
         await tx
           .update(germlineCasePanels)
           .set({ panelId: null })
-          .where(
-            and(
-              eq(germlineCasePanels.panelId, input.panelId),
-              eq(germlineCasePanels.organizationId, input.organizationId)
-            )
-          );
+          .where(eq(germlineCasePanels.panelId, input.panelId));
         return tx
           .delete(germlinePanels)
           .where(
             and(
               eq(germlinePanels.id, input.panelId),
-              eq(germlinePanels.organizationId, input.organizationId)
+              eq(germlinePanels.organizationId, existing[0].organizationId)
             )
           )
           .returning({ id: germlinePanels.id, name: germlinePanels.name });

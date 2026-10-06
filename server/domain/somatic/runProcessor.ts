@@ -18,6 +18,7 @@ import { evidenceDiseaseConcept, matchPinnedDisease } from "./diseaseMatch";
 import { loadActiveGuidelineRules } from "./guidelineRules";
 import { analyzeSomaticVariantWithReference } from "./normalize";
 import type { SomaticEvidenceProvider } from "./provider";
+import { classifyNccn } from "./nccn/classify";
 import { evaluateSomaticProposal, SOMATIC_RULESET_VERSION } from "./rules";
 
 export const SOMATIC_PIPELINE_VERSION = "somatic-cds-1";
@@ -298,6 +299,19 @@ export async function processSomaticRun(input: {
           tumor: caseTumor,
           guidelineRules: guidelineRuleSet.rules,
         });
+        const nccn = classifyNccn({
+          knowledgeReleaseId: guidelineRuleSet.nccnReleaseId,
+          analysisAsOf: new Date().toISOString().slice(0, 10),
+          gene: variant.gene,
+          variantType: "SNV_INDEL",
+          normalizedVariant: variant.hgvsP || variant.hgvsC,
+          copyChange: null,
+          functionalClass: null,
+          variantOrigin: "somatic",
+          tumorCode: caseTumor.code,
+          patient: {},
+          revisions: guidelineRuleSet.nccnRevisions,
+        });
         await db.insert(somaticClinicalAssertions).values({
           organizationId,
           runId,
@@ -323,6 +337,7 @@ export async function processSomaticRun(input: {
               new Set(domainEvidence.map(item => item.diseaseMatch))
             ),
             appliedRule: proposal.appliedRule,
+            nccn,
           },
         });
       }
