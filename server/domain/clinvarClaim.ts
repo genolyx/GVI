@@ -1,5 +1,6 @@
 import type { CurationDocument } from "../../shared/curation/document";
 import { clinvarVariationIdAt } from "./clinvarAllele";
+import { alignStoredIndel } from "./forwardAllele";
 
 /** HGVS search for this transcript, so a bare c. change cannot open another isoform. */
 export function clinvarAlleleSearchUrl(gene: string, transcript: string, change: string): string {
@@ -72,7 +73,8 @@ export async function alignClinvarClaim<T extends CurationDocument>(document: T)
   const ref = String(parsed.ref || "");
   const alt = String(parsed.alt || "");
   if (!chrom || !Number.isInteger(position) || !ref || !alt) return document;
-  const matched = await clinvarVariationIdAt(chrom, position, ref, alt);
+  const aligned = await alignStoredIndel(chrom, position, ref, alt);
+  const matched = await clinvarVariationIdAt(chrom, aligned.position, aligned.ref, aligned.alt);
   if (!matched.available) return document;
   return withoutUnmatchedClinvar(document, matched.id);
 }

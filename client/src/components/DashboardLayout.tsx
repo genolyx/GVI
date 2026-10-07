@@ -28,9 +28,11 @@ import {
 } from "@/components/ui/sidebar";
 import { startLogin } from "@/const";
 import { useIsMobile } from "@/hooks/useMobile";
+import { pathAfterOrganizationChange } from "@/lib/organizationScope";
 import { AppearanceControls } from "@/components/AppearanceControls";
 import { ResearchUseBanner, ResearchUseGate } from "@/components/ResearchUseNotice";
 import { RESEARCH_USE_STATEMENT } from "@shared/researchUse";
+import appVersion from "../../../version.json";
 import { GenolyxMark, GenolyxWordmark } from "@/components/BrandMark";
 import {
   Activity,
@@ -52,6 +54,11 @@ import {
 import { type CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { DashboardLayoutSkeleton } from "./DashboardLayoutSkeleton";
+
+function formatAppVersion(version: string): string {
+  const trimmed = version.trim();
+  return trimmed.startsWith("v") ? trimmed : `v${trimmed}`;
+}
 
 /** Login panel: Google OAuth primary, optional local Dev Login. */
 function LoginPanel({ isDevAuth, isGoogleAuth }: { isDevAuth: boolean; isGoogleAuth: boolean }) {
@@ -201,6 +208,12 @@ function DashboardLayoutContent({ children, setSidebarWidth }: { children: React
   const { organizations, activeOrganization, setActiveOrganizationId, hasPermission, isLoading: organizationsLoading, organizationError, refetchOrganizations } = useOrganization();
   const visibleMenuItems = menuItems.filter(item => item.platformAdmin ? isPlatformAdminRole(user?.role) : hasPermission(item.permission || ""));
   const activeMenuItem = menuItems.find(item => item.path === "/" ? location === "/" : location.startsWith(item.path));
+  const selectOrganization = (id: number) => {
+    if (id === activeOrganization?.id) return;
+    const next = pathAfterOrganizationChange(location);
+    setActiveOrganizationId(id);
+    if (next) setLocation(next);
+  };
   const ActiveIcon = activeMenuItem?.icon;
 
   useEffect(() => { if (isCollapsed) setIsResizing(false); }, [isCollapsed]);
@@ -255,7 +268,7 @@ function DashboardLayoutContent({ children, setSidebarWidth }: { children: React
                   </button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="start" className="w-64">
-                  {organizations.map(org => <DropdownMenuItem key={org.id} onClick={() => setActiveOrganizationId(org.id)} className="gap-3 py-2.5"><Building2 className="size-4 text-muted-foreground" /><div className="min-w-0"><p className="truncate text-sm font-medium">{org.name}</p><p className="text-xs text-muted-foreground">{org.dataRegion} · {organizationRoleLabel(org.role)}</p></div></DropdownMenuItem>)}
+                  {organizations.map(org => <DropdownMenuItem key={org.id} onClick={() => selectOrganization(org.id)} className="gap-3 py-2.5"><Building2 className="size-4 text-muted-foreground" /><div className="min-w-0"><p className="truncate text-sm font-medium">{org.name}</p><p className="text-xs text-muted-foreground">{org.dataRegion} · {organizationRoleLabel(org.role)}</p></div></DropdownMenuItem>)}
                 </DropdownMenuContent>
               </DropdownMenu>
             ) : null}
@@ -269,6 +282,9 @@ function DashboardLayoutContent({ children, setSidebarWidth }: { children: React
             </SidebarMenu>
           </SidebarContent>
           <SidebarFooter className="border-t border-sidebar-border/60 p-3">
+            {!isCollapsed ? (
+              <p className="px-1 pb-1.5 text-xs tracking-wide text-sidebar-foreground/45">{formatAppVersion(appVersion.version)}</p>
+            ) : null}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <button className="flex w-full items-center gap-3 rounded-lg p-1 text-left hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-sidebar-ring">

@@ -6,12 +6,14 @@ import {
   type CurationRunInput,
 } from "../../drizzle/schema";
 import { curationDocumentSchema, type CurationSummary } from "../../shared/curation/document";
+import { isSingleVariantBatch } from "../../shared/curation/workbench";
 import { mergeCurationDocument } from "./curationMerge";
 import { requireDb } from "./tenant";
 import { storageGetText } from "../storage";
 
 export type StoredClassification = {
   id: number;
+  organizationId: number;
   documentKey: string;
   documentHash: string | null;
   rawKey: string | null;
@@ -25,7 +27,13 @@ export type StoredClassification = {
   completedAt: Date | null;
 };
 
-/** Latest succeeded classification of this gene and HGVSc in the organization. */
+/**
+ * Latest succeeded engine analysis of this gene and HGVSc.
+ *
+ * The requesting organization's own result wins. Otherwise the latest result from
+ * any organization is used, so a second institution does not repeat the workup.
+ * Institutional calls stay on the run row and are not part of this lookup.
+ */
 export async function findStoredClassification(
   organizationId: number,
   gene: string,
@@ -36,6 +44,7 @@ export async function findStoredClassification(
   const rows = await db
     .select({
       id: curationRuns.id,
+      organizationId: curationRuns.organizationId,
       documentKey: curationRuns.documentKey,
       documentHash: curationRuns.documentHash,
       rawKey: curationRuns.rawKey,
@@ -51,7 +60,6 @@ export async function findStoredClassification(
     .from(curationRuns)
     .where(
       and(
-        eq(curationRuns.organizationId, organizationId),
         eq(curationRuns.status, "succeeded"),
         sql`${curationRuns.documentKey} is not null`,
         sql`lower(${curationRuns.input}->>'gene') = ${gene.trim().toLowerCase()}`,
@@ -59,7 +67,10 @@ export async function findStoredClassification(
         ...(exceptRunId ? [ne(curationRuns.id, exceptRunId)] : [])
       )
     )
-    .orderBy(desc(curationRuns.completedAt))
+    .orderBy(
+      sql`case when ${curationRuns.organizationId} = ${organizationId} then 0 else 1 end`,
+      desc(curationRuns.completedAt)
+    )
     .limit(1);
   const row = rows[0];
   if (!row?.documentKey) return null;
@@ -104,6 +115,65 @@ async function mergeStoredDocument(
   }
 }
 
+export function reusedClassificationMessage(
+  sourceOrganizationId: number,
+  requestOrganizationId: number,
+  sourceRunId: number
+) {
+  if (sourceOrganizationId === requestOrganizationId) {
+    return `Reused the stored classification from run ${sourceRunId}.`;
+  }
+  return "Reused the shared engine analysis. The institutional call is left open for this organization.";
+}
+
+export type AnalysisReusePlace = {
+  sourceRunId: number;
+  kind: "case" | "batch" | "single" | "shared";
+  label: string;
+  batchId: number | null;
+  caseId: number | null;
+};
+
+/** Where a reused analysis already lives. Another organization's case or batch is not named. */
+export function analysisReusePlace(args: {
+  requestOrganizationId: number;
+  source: {
+    id: number;
+    organizationId: number;
+    batchId: number | null;
+    batchName: string | null;
+    caseId: number | null;
+    caseNumber: string | null;
+  };
+}): AnalysisReusePlace {
+  const source = args.source;
+  if (source.organizationId !== args.requestOrganizationId) {
+    return {
+      sourceRunId: source.id,
+      kind: "shared",
+      label: "Shared engine analysis",
+      batchId: null,
+      caseId: null,
+    };
+  }
+  if (source.batchId && source.batchName && !isSingleVariantBatch(source.batchName)) {
+    return { sourceRunId: source.id, kind: "batch", label: source.batchName, batchId: source.batchId, caseId: null };
+  }
+  if (source.caseId && source.caseNumber && !source.batchId) {
+    return { sourceRunId: source.id, kind: "case", label: source.caseNumber, batchId: null, caseId: source.caseId };
+  }
+  if (source.batchId) {
+    return { sourceRunId: source.id, kind: "single", label: "Single variants", batchId: source.batchId, caseId: null };
+  }
+  return {
+    sourceRunId: source.id,
+    kind: source.caseNumber ? "case" : "single",
+    label: source.caseNumber || "Single variant",
+    batchId: source.batchId,
+    caseId: source.caseId,
+  };
+}
+
 /** Attach a finished classification to this variant and skip the engine. */
 export async function recordReusedClassification(args: {
   organizationId: number;
@@ -144,7 +214,7 @@ export async function recordReusedClassification(args: {
     organizationId: args.organizationId,
     runId: id,
     status: "succeeded",
-    message: `Reused the stored classification from run ${args.stored.id}.`,
+    message: reusedClassificationMessage(args.stored.organizationId, args.organizationId, args.stored.id),
     progressPercent: 100,
   });
   await mergeStoredDocument(
@@ -222,7 +292,7 @@ export async function reuseQueuedClassifications(
       organizationId,
       runId: run.id,
       status: "succeeded",
-      message: `Reused the stored classification from run ${stored.id}.`,
+      message: reusedClassificationMessage(stored.organizationId, organizationId, stored.id),
       progressPercent: 100,
     });
     await mergeStoredDocument(

@@ -8,8 +8,10 @@ import {
   institutionalClassForLabel,
 } from "../../shared/curation/institutional";
 import { isSingleVariantBatch, SINGLE_VARIANTS_BATCH } from "../../shared/curation/workbench";
+import { isSuperAdminRole } from "../../shared/permissions";
 import { protectedProcedure, router } from "../_core/trpc";
 import { writeAuditEvent } from "../domain/audit";
+import { analysisReusePlace, reusedClassificationMessage, type AnalysisReusePlace } from "../domain/curationReuse";
 import { enqueueCurationRun } from "../domain/curationQueue";
 import { ensureCurationWorker } from "../domain/curationWorker";
 import { checkHumanGeneSymbol } from "../domain/geneSymbol";
@@ -67,31 +69,44 @@ async function requireKnownGene(gene: string) {
   return result.symbol;
 }
 
-async function requireBatch(organizationId: number, batchId: number) {
+async function findBatch(organizationId: number, batchId: number) {
   const db = await requireDb();
   const rows = await db
     .select()
     .from(curationBatches)
     .where(and(eq(curationBatches.organizationId, organizationId), eq(curationBatches.id, batchId)))
     .limit(1);
-  if (!rows[0]) throw new TRPCError({ code: "NOT_FOUND", message: "Batch not found" });
-  return rows[0];
+  return rows[0] ?? null;
 }
 
-type ReusedAnalysis = {
-  sourceRunId: number;
-  kind: "case" | "batch" | "single";
-  label: string;
-  batchId: number | null;
-  caseId: number | null;
-};
+async function requireBatch(organizationId: number, batchId: number) {
+  const batch = await findBatch(organizationId, batchId);
+  if (!batch) throw new TRPCError({ code: "NOT_FOUND", message: "Batch not found" });
+  return batch;
+}
 
-/** Latest succeeded analysis of the same gene and HGVSc in this organization. */
+/** Super admins can open a batch link while another organization is selected. */
+async function batchForReader(user: { id: number; role: string }, organizationId: number, batchId: number) {
+  await requireOrganizationPermission(user.id, organizationId, "variant:read");
+  const selected = await findBatch(organizationId, batchId);
+  if (selected || !isSuperAdminRole(user.role)) return selected;
+  const db = await requireDb();
+  const rows = await db.select().from(curationBatches).where(eq(curationBatches.id, batchId)).limit(1);
+  const owned = rows[0];
+  if (!owned) return null;
+  await requireOrganizationPermission(user.id, owned.organizationId, "variant:read");
+  return owned;
+}
+
+type ReusedAnalysis = AnalysisReusePlace;
+
+/** Latest succeeded engine analysis of this gene and HGVSc, preferring this organization. */
 async function findCompletedAnalysis(organizationId: number, gene: string, hgvsC: string) {
   const db = await requireDb();
   const rows = await db
     .select({
       id: curationRuns.id,
+      organizationId: curationRuns.organizationId,
       batchId: curationRuns.batchId,
       caseId: curationRuns.caseId,
       documentKey: curationRuns.documentKey,
@@ -116,35 +131,35 @@ async function findCompletedAnalysis(organizationId: number, gene: string, hgvsC
     .leftJoin(cases, and(eq(cases.id, curationRuns.caseId), eq(cases.organizationId, curationRuns.organizationId)))
     .where(
       and(
-        eq(curationRuns.organizationId, organizationId),
         eq(curationRuns.status, "succeeded"),
         sql`${curationRuns.documentKey} is not null`,
         sql`lower(${curationRuns.input}->>'gene') = ${gene.trim().toLowerCase()}`,
         sql`lower(${curationRuns.input}->>'hgvsC') = ${hgvsC.trim().toLowerCase()}`
       )
     )
-    .orderBy(desc(curationRuns.completedAt))
+    .orderBy(
+      sql`case when ${curationRuns.organizationId} = ${organizationId} then 0 else 1 end`,
+      desc(curationRuns.completedAt)
+    )
     .limit(1);
   return rows[0] ?? null;
 }
 
-function reusedPlace(source: NonNullable<Awaited<ReturnType<typeof findCompletedAnalysis>>>): ReusedAnalysis {
-  if (source.batchId && source.batchName && !isSingleVariantBatch(source.batchName)) {
-    return { sourceRunId: source.id, kind: "batch", label: source.batchName, batchId: source.batchId, caseId: null };
-  }
-  if (source.caseId && source.caseNumber && !source.batchId) {
-    return { sourceRunId: source.id, kind: "case", label: source.caseNumber, batchId: null, caseId: source.caseId };
-  }
-  if (source.batchId) {
-    return { sourceRunId: source.id, kind: "single", label: "Single variants", batchId: source.batchId, caseId: null };
-  }
-  return {
-    sourceRunId: source.id,
-    kind: source.caseNumber ? "case" : "single",
-    label: source.caseNumber || "Single variant",
-    batchId: source.batchId,
-    caseId: source.caseId,
-  };
+function reusedPlace(
+  requestOrganizationId: number,
+  source: NonNullable<Awaited<ReturnType<typeof findCompletedAnalysis>>>
+): ReusedAnalysis {
+  return analysisReusePlace({
+    requestOrganizationId,
+    source: {
+      id: source.id,
+      organizationId: source.organizationId,
+      batchId: source.batchId,
+      batchName: source.batchName,
+      caseId: source.caseId,
+      caseNumber: source.caseNumber,
+    },
+  });
 }
 
 /** Store a new entry that points at an existing document instead of queueing the classifier. */
@@ -167,7 +182,7 @@ async function reuseCompletedAnalysis(args: {
 }) {
   const source = await findCompletedAnalysis(args.organizationId, args.input.gene, args.input.hgvsC);
   if (!source?.documentKey) return null;
-  const place = reusedPlace(source);
+  const place = reusedPlace(args.organizationId, source);
   const where =
     place.kind === "batch" ? `batch ${place.label}` : place.kind === "case" ? `case ${place.label}` : "Single variants";
   const db = await requireDb();
@@ -209,7 +224,10 @@ async function reuseCompletedAnalysis(args: {
     organizationId: args.organizationId,
     runId: id,
     status: "succeeded",
-    message: `Reused the completed analysis from ${where}.`,
+    message:
+      place.kind === "shared"
+        ? reusedClassificationMessage(source.organizationId, args.organizationId, source.id)
+        : `Reused the completed analysis from ${where}.`,
     progressPercent: 100,
   });
   return { id, reused: place };
@@ -383,18 +401,37 @@ export const workbenchRouter = router({
       return { id: batch.id, name: input.name };
     }),
 
+  /** Which organization owns this batch. Super admins use it to open a link from another organization. */
+  locateBatch: protectedProcedure
+    .input(z.object({ batchId: z.number().int().positive() }))
+    .query(async ({ ctx, input }) => {
+      if (!isSuperAdminRole(ctx.user.role)) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Batch not found" });
+      }
+      const db = await requireDb();
+      const rows = await db
+        .select({ organizationId: curationBatches.organizationId })
+        .from(curationBatches)
+        .where(eq(curationBatches.id, input.batchId))
+        .limit(1);
+      const organizationId = rows[0]?.organizationId;
+      if (!organizationId) throw new TRPCError({ code: "NOT_FOUND", message: "Batch not found" });
+      await requireOrganizationPermission(ctx.user.id, organizationId, "variant:read");
+      return { organizationId };
+    }),
+
   getBatch: protectedProcedure
     .input(orgInput.extend({ batchId: z.number().int().positive() }))
     .query(async ({ ctx, input }) => {
-      await requireOrganizationPermission(ctx.user.id, input.organizationId, "variant:read");
-      const batch = await requireBatch(input.organizationId, input.batchId);
+      const batch = await batchForReader(ctx.user, input.organizationId, input.batchId);
+      if (!batch) throw new TRPCError({ code: "NOT_FOUND", message: "Batch not found" });
       const db = await requireDb();
       const entries = await db
         .select(entryColumns)
         .from(curationRuns)
         .where(
           and(
-            eq(curationRuns.organizationId, input.organizationId),
+            eq(curationRuns.organizationId, batch.organizationId),
             eq(curationRuns.batchId, input.batchId)
           )
         )
@@ -402,6 +439,7 @@ export const workbenchRouter = router({
       const omim = await loadOmimCatalog();
       return {
         batch,
+        organizationId: batch.organizationId,
         entries: entries.map(entry => ({
           ...entry,
           omim: omimForGene(omim, entry.input.gene),

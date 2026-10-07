@@ -19,6 +19,7 @@ import urllib.parse
 from flask import Blueprint, request, jsonify
 from flask import jsonify, request
 from google.genai import types
+from vc_engine.allele_norm import align_query_allele
 from vc_engine.clinvar import _clinvar_cdot_label_from_esummary, _clinvar_coding_hgvs_from_hit, _clinvar_display_sig_from_rcv, _clinvar_geneinfo_matches, _clinvar_genomic_hgvs_from_hit, _clinvar_name_change_class, _clinvar_plp_sig_for_deleted_exon, _clinvar_rcv_any_pathogenic_or_likely, _clinvar_rcv_list_from_hit, _clinvar_sig_from_esummary_obj, _clinvar_variant_id_from_hit, _clinvar_variation_uid_for_pubmed_elink, _fetch_clinvar_aliases, _fetch_clinvar_esummary_map, _fetch_myvariant_clinvar_variant_hit, clinvar_allele_search_term, clinvar_allele_search_url, clinvar_portal_url
 from vc_engine.gnomad_local import apply_local_gnomad, homozygote_count, homozygote_total, local_gnomad_configured
 from vc_engine.hgmd import _hgmd_ordered_candidate_keys, _merge_hgmd_downstream_hits, _merge_hgmd_skipped_exon_hits, _merge_hgmd_upstream_hits
@@ -2266,8 +2267,27 @@ def _resolve_clinvar_from_genomic_locus(
     if existing and not overwrite:
         return False
 
-    fetch_start = max(0, g0 - 25)
-    fetch_end = g1 + 25
+    match_pos, match_ref, match_alt = align_query_allele(
+        chrom, g0, parsed_data.get("ref"), parsed_data.get("alt")
+    )
+    try:
+        match_pos_i = int(match_pos)
+        match_end = match_pos_i + max(len(str(match_ref or "")) - 1, 0)
+    except (TypeError, ValueError):
+        match_pos_i = g0
+        match_end = g1
+    if (match_pos_i, str(match_ref or "").upper(), str(match_alt or "").upper()) != (
+        g0,
+        str(parsed_data.get("ref") or "").upper(),
+        str(parsed_data.get("alt") or "").upper(),
+    ):
+        print(
+            f"ClinVar allele align: {chrom}:{g0} {parsed_data.get('ref')}>{parsed_data.get('alt')} "
+            f"-> {match_pos_i} {match_ref}>{match_alt}"
+        )
+
+    fetch_start = max(0, min(g0, match_pos_i) - 25)
+    fetch_end = max(g1, match_end) + 25
     candidate_ids = []
     id_to_rec = {}
     try:
@@ -2283,7 +2303,11 @@ def _resolve_clinvar_from_genomic_locus(
             rec_end = _vcf_record_genomic_end(rec)
             q_class = _c_dot_change_class(_myvariant_c_dot_tail_norm(c_dot))
             if q_class in ("del", "dup", "ins", "indel"):
-                if not _genomic_intervals_near_or_overlap(g0, g1, rec.pos, rec_end, max_gap=30):
+                near_query = _genomic_intervals_near_or_overlap(g0, g1, rec.pos, rec_end, max_gap=30)
+                near_aligned = _genomic_intervals_near_or_overlap(
+                    match_pos_i, match_end, rec.pos, rec_end, max_gap=30
+                )
+                if not near_query and not near_aligned:
                     continue
             elif not _genomic_intervals_overlap(g0, g1, rec.pos, rec_end):
                 continue
@@ -2317,7 +2341,7 @@ def _resolve_clinvar_from_genomic_locus(
             variation_name, effective_gene, target_transcript, c_dot, hgvs_p=hgvs_p
         )
         same_allele = _clinvar_vcf_record_same_allele(
-            rec, g0, parsed_data.get("ref"), parsed_data.get("alt")
+            rec, match_pos_i, match_ref, match_alt
         )
         if same_allele:
             # Same rule as the variant table: chromosome, position, ref, and alt.

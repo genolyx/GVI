@@ -39,15 +39,14 @@ export function OrganizationProvider({ children }: { children: React.ReactNode }
   });
 
   useEffect(() => {
-    if (!organizations.length) {
-      setActiveOrganizationIdState(null);
-      return;
-    }
-    if (!activeOrganizationId || !organizations.some(org => org.id === activeOrganizationId)) {
-      setActiveOrganizationIdState(organizations[0].id);
-      localStorage.setItem(STORAGE_KEY, String(organizations[0].id));
-    }
-  }, [organizations, activeOrganizationId]);
+    const loaded = query.data;
+    if (!loaded?.length) return;
+    if (activeOrganizationId && loaded.some(org => org.id === activeOrganizationId)) return;
+    const saved = Number(localStorage.getItem(STORAGE_KEY));
+    const next = loaded.some(org => org.id === saved) ? saved : loaded[0].id;
+    setActiveOrganizationIdState(next);
+    localStorage.setItem(STORAGE_KEY, String(next));
+  }, [query.data, activeOrganizationId]);
 
   const activeOrganization =
     organizations.find(org => org.id === activeOrganizationId) || null;

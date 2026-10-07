@@ -9,10 +9,12 @@ import { formatDateTime } from "@/lib/datetime";
 import { cn } from "@/lib/utils";
 import { trpc } from "@/lib/trpc";
 import { SINGLE_VARIANTS_BATCH } from "@shared/curation/workbench";
+import { shortCallLabel } from "@shared/curation/institutional";
 import { ArrowLeft, Loader2 } from "lucide-react";
 import { Fragment, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useLocation, useParams } from "wouter";
+import { ClinVarMarks } from "./ClinVarMarks";
 import { AnalysisLogDialog } from "./AnalysisLogDialog";
 import { DeleteEntryDialog } from "./DeleteEntryDialog";
 import { ReusedAnalysisDialog, type ReusedAnalysisNotice } from "./ReusedAnalysisDialog";
@@ -20,8 +22,9 @@ import { BatchNameField } from "./BatchNameField";
 import { VariantIntakeForm } from "./intake";
 import { SortHeader, compareSortValues, type SortDirection } from "./sort";
 import { classificationTone, entryAction, entryChip, entryReview, variantAnalyzedAt, workbenchStatusClass, workbenchStatusLabel } from "./status";
+import { useOwningBatchOrg } from "./useOwningBatchOrg";
 
-type BatchSortKey = "index" | "gene" | "hgvs" | "transcript" | "omim" | "inheritance" | "disease" | "lab" | "case" | "acmg" | "status" | "analyzed";
+type BatchSortKey = "index" | "gene" | "hgvs" | "transcript" | "omim" | "inheritance" | "disease" | "lab" | "case" | "clinvar" | "acmg" | "institutional" | "status" | "analyzed";
 
 export default function BatchPage() {
   const params = useParams<{ batchId: string }>();
@@ -102,7 +105,9 @@ export default function BatchPage() {
       if (key === "disease") return (entry.omim ?? []).map(item => item.disease).filter(Boolean).join(" ");
       if (key === "lab") return entry.input.labId || "";
       if (key === "case") return entry.input.externalCaseId || "";
-      if (key === "acmg") return entry.summary?.classification?.label || "";
+      if (key === "clinvar") return entry.summary?.clinvarSignificance || "";
+      if (key === "acmg") return shortCallLabel(entry.summary?.classification?.label) || "";
+      if (key === "institutional") return entry.institutionalLabel || "";
       if (key === "status") return workbenchStatusLabel(entry.status);
       return variantAnalyzedAt(entry.status, entry.completedAt);
     };
@@ -112,7 +117,12 @@ export default function BatchPage() {
     setSort(current => (current?.key === key && current.direction === "asc" ? { key, direction: "desc" } : { key, direction: "asc" }));
   };
 
-  if (batch.isLoading) return <p className="text-sm text-muted-foreground">Loading batch…</p>;
+  const locatingOrg = useOwningBatchOrg(
+    batchId,
+    Boolean(batch.isError && batch.error.message.includes("Batch not found")),
+    batch.data?.organizationId
+  );
+  if (batch.isLoading || locatingOrg) return <p className="text-sm text-muted-foreground">Loading batch…</p>;
   if (batch.isError) {
     return <StatePanel type="error" title="Failed to load batch" description={batch.error.message} onRetry={() => { void batch.refetch(); }} />;
   }
@@ -199,7 +209,9 @@ export default function BatchPage() {
                       ["transcript", "Transcript"],
                       ["lab", "Lab ID"],
                       ["case", "Case"],
+                      ["clinvar", "ClinVar"],
                       ["acmg", "ACMG"],
+                      ["institutional", "Institutional"],
                       ["status", "Status"],
                       ["analyzed", "Analyzed time"],
                     ] as const).map(([key, label]) => (
@@ -249,7 +261,19 @@ export default function BatchPage() {
                         <td className="py-2 pr-3 text-muted-foreground">{entry.input.labId || "—"}</td>
                         <td className="py-2 pr-3 text-muted-foreground">{entry.input.externalCaseId || "—"}</td>
                         <td className="py-2 pr-3">
-                          {acmg ? <Badge variant="outline" className={cn(entryChip, classificationTone(acmg.class))}>{acmg.label}</Badge> : <span className="text-muted-foreground">—</span>}
+                          <ClinVarMarks significance={entry.summary?.clinvarSignificance} />
+                        </td>
+                        <td className="py-2 pr-3">
+                          {acmg ? <Badge variant="outline" className={cn(entryChip, classificationTone(acmg.class))}>{shortCallLabel(acmg.label)}</Badge> : <span className="text-muted-foreground">—</span>}
+                        </td>
+                        <td className="py-2 pr-3">
+                          {entry.institutionalLabel ? (
+                            <Badge variant="outline" className={cn(entryChip, classificationTone(entry.institutionalClass))}>
+                              {shortCallLabel(entry.institutionalLabel)}
+                            </Badge>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
                         </td>
                         <td className="py-2 pr-3">
                           <Badge variant="outline" className={cn(entryChip, workbenchStatusClass(entry.status))}>{workbenchStatusLabel(entry.status)}</Badge>

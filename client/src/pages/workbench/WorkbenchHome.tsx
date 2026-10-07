@@ -18,6 +18,7 @@ import { ArrowLeft, Loader2 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import { useLocation } from "wouter";
+import { ClinVarMarks } from "./ClinVarMarks";
 import { AnalysisLogDialog } from "./AnalysisLogDialog";
 import { DeleteEntryDialog } from "./DeleteEntryDialog";
 import {
@@ -45,6 +46,7 @@ type EntrySortKey =
   | "gene"
   | "hgvs"
   | "transcript"
+  | "clinvar"
   | "acmg"
   | "institutional"
   | "status"
@@ -328,7 +330,8 @@ export default function WorkbenchHomePage() {
       if (key === "gene") return entry.input.gene;
       if (key === "hgvs") return entry.input.hgvsC;
       if (key === "transcript") return entry.input.transcript || "";
-      if (key === "acmg") return entry.summary?.classification?.label || "";
+      if (key === "clinvar") return entry.summary?.clinvarSignificance || "";
+      if (key === "acmg") return shortCallLabel(entry.summary?.classification?.label) || "";
       if (key === "institutional") return entry.institutionalLabel || "";
       if (key === "status") return workbenchStatusLabel(entry.status);
       return variantAnalyzedAt(entry.status, entry.completedAt);
@@ -504,6 +507,7 @@ export default function WorkbenchHomePage() {
                         ["gene", "Gene"],
                         ["hgvs", "HGVSc"],
                         ["transcript", "Transcript (NM)"],
+                        ["clinvar", "ClinVar"],
                         ["acmg", "ACMG"],
                         ["institutional", "Institutional"],
                         ["status", "Status"],
@@ -598,6 +602,7 @@ export default function WorkbenchHomePage() {
                               ? `${row.variantCount.toLocaleString()} variants`
                               : `${members.length} variants`}
                           </td>
+                          <td className="py-2 pr-3 text-muted-foreground">—</td>
                           <td className="py-2 pr-3 text-muted-foreground">—</td>
                           <td className="py-2 pr-3 text-muted-foreground">—</td>
                           <td className="py-2 pr-3 text-muted-foreground">—</td>
@@ -758,6 +763,9 @@ export default function WorkbenchHomePage() {
                         </td>
                         <td className="py-2 pr-3">
                           {displayTranscript(entry.input.transcript) || "—"}
+                        </td>
+                        <td className="py-2 pr-3">
+                          <ClinVarMarks significance={entry.summary?.clinvarSignificance} />
                         </td>
                         <td className="py-2 pr-3">
                           {acmg ? (

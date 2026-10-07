@@ -54,6 +54,7 @@ type Impact = "HIGH" | "MODERATE" | "LOW" | "MODIFIER" | "UNKNOWN";
 export default function WorkbenchPage() {
   const params = useParams<{ caseId: string }>();
   const caseId = Number(params.caseId);
+  const [, navigate] = useLocation();
   const { activeOrganizationId, hasPermission } = useOrganization();
   const caseQuery = trpc.cases.get.useQuery(
     { organizationId: activeOrganizationId || 0, caseId },
@@ -78,6 +79,11 @@ export default function WorkbenchPage() {
         type="error"
         title="Unable to load case workflow"
         description={caseQuery.error?.message || "Case not found."}
+        action={
+          <Button variant="outline" onClick={() => navigate("/workbench")}>
+            Back to workbench
+          </Button>
+        }
       />
     );
   }

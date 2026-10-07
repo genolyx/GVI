@@ -13,6 +13,7 @@ import { useLocation, useParams } from "wouter";
 import { criterionEvidence } from "./acmgSummary";
 import { genomicIdentity } from "./genomicIdentity";
 import { workbenchStatusLabel } from "./status";
+import { useOwningBatchOrg } from "./useOwningBatchOrg";
 
 export default function BatchReviewPage() {
   const params = useParams<{ batchId: string; runId: string }>();
@@ -93,7 +94,12 @@ export default function BatchReviewPage() {
 
   const go = (id: number) => navigate(`/workbench/batches/${batchId}/review/${id}`);
 
-  if (batch.isLoading) return <p className="text-sm text-muted-foreground">Loading review…</p>;
+  const locatingOrg = useOwningBatchOrg(
+    batchId,
+    Boolean(batch.isError && batch.error.message.includes("Batch not found")),
+    batch.data?.organizationId
+  );
+  if (batch.isLoading || locatingOrg) return <p className="text-sm text-muted-foreground">Loading review…</p>;
   if (batch.isError) {
     return <StatePanel type="error" title="Failed to load batch" description={batch.error.message} onRetry={() => { void batch.refetch(); }} />;
   }
