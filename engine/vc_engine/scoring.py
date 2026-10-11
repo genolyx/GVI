@@ -389,7 +389,7 @@ def apply_acmg(parsed_data, splice_points=None, nmd_points=None):
                 "type": "pathogenic",
                 "weight": "strong",
             })
-        elif parsed_data.get("different_pathogenic") or parsed_data.get("pm5_local_alleles"):
+        if parsed_data.get("different_pathogenic") or parsed_data.get("pm5_local_alleles"):
             criteria.append({
                 "code": "PM5",
                 "desc": (

@@ -65,6 +65,17 @@
     AGT:'Ser',AGC:'Ser',AGA:'Arg',AGG:'Arg',GGT:'Gly',GGC:'Gly',GGA:'Gly',GGG:'Gly',
   };
   const AA3 = { A:'Ala',R:'Arg',N:'Asn',D:'Asp',C:'Cys',E:'Glu',Q:'Gln',G:'Gly',H:'His',I:'Ile',L:'Leu',K:'Lys',M:'Met',F:'Phe',P:'Pro',S:'Ser',T:'Thr',W:'Trp',Y:'Tyr',V:'Val','*':'Ter' };
+  const AA1 = { Ala:'A',Arg:'R',Asn:'N',Asp:'D',Cys:'C',Glu:'E',Gln:'Q',Gly:'G',His:'H',Ile:'I',Leu:'L',Lys:'K',Met:'M',Phe:'F',Pro:'P',Ser:'S',Thr:'T',Trp:'W',Tyr:'Y',Val:'V',Ter:'*' };
+
+  function aaChangeKey(label) {
+    const m = String(label || '').match(/p\.(?:([A-Z*])(\d+)([A-Z*])|([A-Z][a-z]{2})(\d+)([A-Z][a-z]{2}|\*))/);
+    if (!m) return '';
+    const ref = m[1] || AA1[m[4]] || '';
+    const alt = m[3] || AA1[m[6]] || '';
+    const pos = m[2] || m[5] || '';
+    if (!ref || !alt || !pos) return '';
+    return ref + pos + alt;
+  }
 
   function proteinForOtherBase(variantC, variantP, otherC) {
     const v = String(variantC || '').match(/^c\.(\d+)([ACGT])>([ACGT])$/i);
@@ -122,6 +133,30 @@
     return bits;
   }
 
+  function hgmdBits(rows) {
+    const bits = [];
+    (rows || []).forEach((row) => {
+      if (!row || typeof row !== 'object') return;
+      const raw = String(row.hgvs_c || '').trim();
+      const cdot = (raw.match(/c\.[^\s/]+/) || [])[0] || raw;
+      const protein = String(row.amino || '').trim();
+      const tag = String(row.tag || 'HGMD').trim() || 'HGMD';
+      let hgvs = cdot ? esc(cdot) : '';
+      if (protein && protein !== cdot) hgvs += (hgvs ? ' / ' : '') + esc(protein);
+      if (!hgvs) return;
+      const pmids = [];
+      (row.pmids || []).forEach((rawId) => {
+        const id = String(rawId).replace(/\.0$/, '').trim();
+        if (/^\d+$/.test(id) && pmids.indexOf(id) < 0) pmids.push(id);
+      });
+      const pmidHtml = pmids.map((id) => (
+        '<a href="https://pubmed.ncbi.nlm.nih.gov/' + encodeURIComponent(id) + '/" target="_blank" rel="noopener">PMID ' + esc(id) + '</a>'
+      )).join(', ');
+      bits.push(hgvs + ': ' + esc(tag) + ' (HGMD' + (pmidHtml ? ', ' + pmidHtml : '') + ')');
+    });
+    return bits;
+  }
+
   function bitsFromText(text) {
     return decodeHgvs(text).split(';').map((part) => {
       const cdot = (part.match(/c\.[^\s;/()]+/) || [])[0] || '';
@@ -168,11 +203,13 @@
           .concat((pd && pd.alternate_alleles) || [])
           .concat((pd && pd.vus_alternate_alleles) || [])
           .concat((pd && pd.splice_junction_alleles) || [])
-          .concat((pd && pd.splice_junction_vus_alleles) || []), pd, true);
+          .concat((pd && pd.splice_junction_vus_alleles) || []), pd, true)
+          .concat(hgmdBits(pd && pd.hgmd_nucleotide_alternates));
       } else if (/same amino acid/i.test(name)) {
         bits = bitsFromRows([]
           .concat((pd && pd.same_protein_position_alleles) || [])
-          .concat((pd && pd.pm5_local_alleles) || []), pd, false);
+          .concat((pd && pd.pm5_local_alleles) || []), pd, false)
+          .concat(hgmdBits(pd && pd.hgmd_amino_acid_alternates));
       } else if (/nearby residue/i.test(name)) {
         bits = bitsFromRows((pd && pd.regional_hotspot) || [], pd, false);
       }
@@ -184,6 +221,19 @@
       if (/:\s*none\b/i.test(line)) return;
       kept.push(line.replace(/\.\s*$/, ''));
     });
+    function placeHgmdLine(title, rows, before) {
+      const bits = hgmdBits(rows);
+      if (!bits.length) return;
+      if (kept.some((line) => line.toLowerCase().indexOf(title.toLowerCase() + ':') === 0)) return;
+      let at = kept.length;
+      for (let i = 0; i < before.length; i += 1) {
+        const idx = kept.findIndex((line) => before[i].test(line));
+        if (idx >= 0) { at = idx; break; }
+      }
+      kept.splice(at, 0, joinAlleles(title, bits));
+    }
+    placeHgmdLine('Same nucleotide', pd && pd.hgmd_nucleotide_alternates, [/^Same amino acid/i, /^Nearby residue/i]);
+    placeHgmdLine('Same amino acid', pd && pd.hgmd_amino_acid_alternates, [/^Nearby residue/i]);
     const sig = String((pd && pd.clinvar_sig) || '').trim();
     const vid = String((pd && pd.clinvar_rcv) || '').trim();
     const hasEntry = sig && vid && !/not found/i.test(sig);
@@ -277,10 +327,10 @@
     const sig = String((pd && pd.clinvar_sig) || '').trim();
     const vid = String((pd && pd.clinvar_rcv) || '').trim();
     const hasEntry = sig && vid && !/not found/i.test(sig);
-    if (hasEntry && !items.some((item) => item.label === 'ClinVar')) {
+    if (hasEntry && !items.some((item) => item.label === 'ClinVar' || item.label === 'Allelic context')) {
       const variantAt = items.findIndex((item) => item.label === 'The Variant');
       items.splice(variantAt + 1, 0, {
-        label: 'ClinVar',
+        label: 'Allelic context',
         body: 'This variant — ' + esc(sig) + ' (<a href="https://www.ncbi.nlm.nih.gov/clinvar/variation/' + encodeURIComponent(vid) + '/" target="_blank" rel="noopener">ClinVar ' + esc(vid) + '</a>)',
       });
     }
@@ -297,8 +347,8 @@
     const rank = (label) => rankOf(label);
     items.sort((a, b) => rank(a.label) - rank(b.label));
     items.forEach((item) => {
-      if (item.label !== 'Allelic context' && item.label !== 'Allelic context (noncoding)') return;
-      item.label = 'ClinVar';
+      if (item.label !== 'ClinVar' && item.label !== 'Allelic context' && item.label !== 'Allelic context (noncoding)') return;
+      item.label = 'Allelic context';
       item.body = item.body
         .split(/<br\s*\/?>/i)
         .map((line) => line.trim())
@@ -311,7 +361,7 @@
     const merged = [];
     items.forEach((item) => {
       const prev = merged[merged.length - 1];
-      if (prev && prev.label === 'ClinVar' && item.label === 'ClinVar') {
+      if (prev && prev.label === 'Allelic context' && item.label === 'Allelic context') {
         prev.body = prev.body + '<br>' + item.body;
       } else {
         merged.push(item);
@@ -336,7 +386,7 @@
           body = body.replace(/haploinsufficiency score\s+3\b/i, 'haploinsufficiency score 3 (loss of function)');
         }
       }
-      if (label === 'ClinVar') {
+      if (label === 'Allelic context') {
         body = summarizeClinVarBody(body, variantName, pd);
         if (!evidenceText(body)) return '';
       }
@@ -1054,12 +1104,53 @@ if (isMechanismTruncating) {
 }
 
 let altPill = '';
+let ps1Pill = '';
 let pm5LocalPill = '';
 let hotspotPill = '';
-if (res.parsed_data.c_allele_search_link || res.parsed_data.p_allele_search_link) {
+if (res.parsed_data.c_allele_search_link || res.parsed_data.p_allele_search_link || res.parsed_data.hgmd_c_allele_search_link || res.parsed_data.hgmd_p_allele_search_link) {
     let fullTheoretical = "None found.";
     let search_c = res.parsed_data.c_allele_search_link || '#';
     let search_p = res.parsed_data.p_allele_search_link || '#';
+    let search_hgmd_c = res.parsed_data.hgmd_c_allele_search_link || '';
+    let search_hgmd_p = res.parsed_data.hgmd_p_allele_search_link || '';
+    const hgmdSearch = (href, color) => href
+        ? ` <a href="${href}" target="_blank" style="color:${color}; text-decoration: underline; margin-left:4px;">(Search HGMD)</a>`
+        : '';
+    const escHtml = (value) => String(value || '').replace(/[&<>]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[ch]));
+    const pmidIds = (list) => {
+        const ids = [];
+        (list || []).forEach((raw) => {
+            const id = String(raw).replace(/\.0$/, '').trim();
+            if (/^\d+$/.test(id) && ids.indexOf(id) < 0) ids.push(id);
+        });
+        return ids;
+    };
+    const pmidBrackets = (list, color) => pmidIds(list).map((id) => (
+        `<a href="https://pubmed.ncbi.nlm.nih.gov/${id}/" target="_blank" style="color:${color}; text-decoration:underline;">[PMID: ${id}]</a>`
+    )).join(' ');
+    const cKey = (value) => {
+        const raw = String(value || '').trim();
+        return (raw.match(/c\.[^\s/]+/) || [raw])[0];
+    };
+    const hgmdAmino = res.parsed_data.hgmd_amino_acid_alternates || [];
+    const pmidsForC = (cdot) => {
+        const key = cKey(cdot);
+        const ids = [];
+        hgmdAmino.forEach((row) => {
+            if (cKey(row && row.hgvs_c) !== key) return;
+            pmidIds(row.pmids).forEach((id) => { if (ids.indexOf(id) < 0) ids.push(id); });
+        });
+        return ids;
+    };
+    const hgmdTrueAltRows = (rows) => (rows || []).map((a) => {
+        const label = escHtml(a.hgvs_c);
+        const name = a.link
+            ? `<a href="${a.link}" target="_blank" style="color:#fbbf24; text-decoration:underline;">${label}</a>`
+            : label;
+        const tag = escHtml(a.tag || 'DM');
+        const papers = pmidBrackets(a.pmids, '#fbbf24');
+        return `${name} (HGMD ${tag})${papers ? ` ${papers}` : ''}`;
+    }).join('<br>');
     
     let pm5Badge = '';
     if (res.parsed_data.different_pathogenic) {
@@ -1071,14 +1162,19 @@ if (res.parsed_data.c_allele_search_link || res.parsed_data.p_allele_search_link
             pm5Badge = `<span style="background: rgba(251, 191, 36, 0.2); color: #fbbf24; padding: 2px 6px; border-radius: 4px; margin-left: 8px; border: 1px solid rgba(251, 191, 36, 0.5); font-size: 11px; text-transform: uppercase; font-weight: bold; letter-spacing: 0.5px;">⚠️ External PM5 Detected <a href="${search_p}" target="_blank" style="color:#fbbf24; text-decoration:underline;">(Search)</a></span>`;
         }
     }
-    if (res.parsed_data.alternate_alleles && res.parsed_data.alternate_alleles.length > 0) {
-        let totalAlts = res.parsed_data.alternate_alleles.length;
+    const hgmdNucleotide = res.parsed_data.hgmd_nucleotide_alternates || [];
+    if ((res.parsed_data.alternate_alleles && res.parsed_data.alternate_alleles.length > 0) || hgmdNucleotide.length > 0) {
+        const clinvarAlts = res.parsed_data.alternate_alleles || [];
+        let totalAlts = clinvarAlts.length + hgmdNucleotide.length;
         
-        let altText = res.parsed_data.alternate_alleles.map(a => `${a.hgvs_c} (${a.significance}) [ClinVar Variation ID: ${a.vid || '?'}]`).join(', ');
-        let uiAltText = res.parsed_data.alternate_alleles.map(a => `${a.hgvs_c} (${a.significance}) <a href="https://www.ncbi.nlm.nih.gov/clinvar/variation/${a.vid}/" target="_blank" style="color:#fbbf24; text-decoration:underline;">[VID: ${a.vid || '?'}]</a>`).join('<br>');
+        let altText = clinvarAlts.map(a => `${a.hgvs_c} (${a.significance}) [ClinVar Variation ID: ${a.vid || '?'}]`).join(', ');
+        let uiAltText = clinvarAlts.map(a => `${a.hgvs_c} (${a.significance}) <a href="https://www.ncbi.nlm.nih.gov/clinvar/variation/${a.vid}/" target="_blank" style="color:#fbbf24; text-decoration:underline;">[VID: ${a.vid || '?'}]</a>`).join('<br>');
+        const hgmdPlain = hgmdNucleotide.map(a => `${a.hgvs_c} (HGMD ${a.tag || 'DM'})${pmidIds(a.pmids).length ? ` [PMID: ${pmidIds(a.pmids).join('] [PMID: ')}]` : ''}`).join(', ');
+        if (hgmdPlain) altText = altText ? `${altText}, ${hgmdPlain}` : hgmdPlain;
+        if (hgmdNucleotide.length) uiAltText = uiAltText ? `${uiAltText}<br>${hgmdTrueAltRows(hgmdNucleotide)}` : hgmdTrueAltRows(hgmdNucleotide);
         
         fullTheoretical = `True Alternate Alleles: ${altText}`;
-        altPill = `<div class="eval-allele-wide"><span class="data-pill" style="border-color: #fbbf24; background: rgba(251, 191, 36, 0.1); color: #fbbf24; display: block; max-width: fit-content;">⚠️ True Alternate Alleles: <strong>Yes (${totalAlts} variants found)</strong> <a href="${search_c}" target="_blank" style="color:#fbbf24; text-decoration: underline; margin-left:4px;">(Search ClinVar)</a>${pm5Badge}<br><span style="font-size:12px; font-weight:normal; opacity:0.9; margin-top:4px; display:inline-block; line-height:1.6;">${uiAltText}</span></span></div>`;
+        altPill = `<div class="eval-allele-wide"><span class="data-pill" style="border-color: #fbbf24; background: rgba(251, 191, 36, 0.1); color: #fbbf24; display: block; max-width: fit-content;">⚠️ True Alternate Alleles: <strong>Yes (${totalAlts} variants found)</strong> <a href="${search_c}" target="_blank" style="color:#fbbf24; text-decoration: underline; margin-left:4px;">(Search ClinVar)</a>${hgmdSearch(search_hgmd_c, '#fbbf24')}${pm5Badge}<br><span style="font-size:12px; font-weight:normal; opacity:0.9; margin-top:4px; display:inline-block; line-height:1.6;">${uiAltText}</span></span></div>`;
     } else if (res.parsed_data.vus_alternate_alleles && res.parsed_data.vus_alternate_alleles.length > 0) {
         let totalVus = res.parsed_data.vus_alternate_alleles.length;
         
@@ -1086,12 +1182,12 @@ if (res.parsed_data.c_allele_search_link || res.parsed_data.p_allele_search_link
         let uiAltText = res.parsed_data.vus_alternate_alleles.map(a => `${a.hgvs_c} (${a.significance}) <a href="https://www.ncbi.nlm.nih.gov/clinvar/variation/${a.vid}/" target="_blank" style="color:#d1d5db; text-decoration:underline;">[VID: ${a.vid || '?'}]</a>`).join('<br>');
         
         fullTheoretical = `VUS/Conflicting Alternate Alleles: ${altText}`;
-        altPill = `<div class="eval-allele-wide"><span class="data-pill" style="border-color: #6b7280; background: rgba(107, 114, 128, 0.1); color: #d1d5db; display: block; max-width: fit-content;">True Alternate Alleles: <strong>None Pathogenic, but found ${totalVus} VUS/Conflicting</strong> <a href="${search_c}" target="_blank" style="color:#d1d5db; text-decoration: underline; margin-left:4px;">(Search ClinVar)</a>${pm5Badge}<br><span style="font-size:12px; font-weight:normal; opacity:0.9; margin-top:4px; display:inline-block; line-height:1.6;">${uiAltText}</span></span></div>`;
+        altPill = `<div class="eval-allele-wide"><span class="data-pill" style="border-color: #6b7280; background: rgba(107, 114, 128, 0.1); color: #d1d5db; display: block; max-width: fit-content;">True Alternate Alleles: <strong>None Pathogenic, but found ${totalVus} VUS/Conflicting</strong> <a href="${search_c}" target="_blank" style="color:#d1d5db; text-decoration: underline; margin-left:4px;">(Search ClinVar)</a>${hgmdSearch(search_hgmd_c, '#d1d5db')}${pm5Badge}<br><span style="font-size:12px; font-weight:normal; opacity:0.9; margin-top:4px; display:inline-block; line-height:1.6;">${uiAltText}</span></span></div>`;
     } else if ((res.parsed_data.same_protein_position_alleles && res.parsed_data.same_protein_position_alleles.length > 0)
         || (res.parsed_data.pm5_local_alleles && res.parsed_data.pm5_local_alleles.length > 0)) {
-        altPill = `<div class="eval-allele-wide"><span class="data-pill" style="border-color: rgba(255,255,255,0.2); background: rgba(255, 255, 255, 0.05); color: #e2e8f0; display: block; max-width: fit-content;">True Alternate Alleles: <strong>None at this exact HGVSc allele</strong> <a href="${search_c}" target="_blank" style="color:#e2e8f0; text-decoration: underline;">(Search)</a>${pm5Badge}<br><span style="font-size:11px;font-weight:normal;opacity:0.85;margin-top:4px;display:inline-block;">Same-amino-acid / PM5 context is listed below.</span></span></div>`;
+        altPill = `<div class="eval-allele-wide"><span class="data-pill" style="border-color: rgba(255,255,255,0.2); background: rgba(255, 255, 255, 0.05); color: #e2e8f0; display: block; max-width: fit-content;">True Alternate Alleles: <strong>None at this exact HGVSc allele</strong> <a href="${search_c}" target="_blank" style="color:#e2e8f0; text-decoration: underline;">(Search)</a>${hgmdSearch(search_hgmd_c, '#e2e8f0')}${pm5Badge}<br><span style="font-size:11px;font-weight:normal;opacity:0.85;margin-top:4px;display:inline-block;">Same-amino-acid / PM5 context is listed below.</span></span></div>`;
     } else {
-        altPill = `<div class="eval-allele-wide"><span class="data-pill" style="border-color: rgba(255,255,255,0.2); background: rgba(255, 255, 255, 0.05); color: #e2e8f0; display: block; max-width: fit-content;">True Alternate Alleles: <strong>None (<a href="${search_c}" target="_blank" style="color:#e2e8f0; text-decoration: underline;">Search</a>)</strong>${pm5Badge}</span></div>`;
+        altPill = `<div class="eval-allele-wide"><span class="data-pill" style="border-color: rgba(255,255,255,0.2); background: rgba(255, 255, 255, 0.05); color: #e2e8f0; display: block; max-width: fit-content;">True Alternate Alleles: <strong>None (<a href="${search_c}" target="_blank" style="color:#e2e8f0; text-decoration: underline;">Search</a>)</strong>${hgmdSearch(search_hgmd_c, '#e2e8f0')}${pm5Badge}</span></div>`;
     }
 
     const sjAlts = res.parsed_data.splice_junction_alleles || [];
@@ -1120,15 +1216,85 @@ if (res.parsed_data.c_allele_search_link || res.parsed_data.p_allele_search_link
         pm5LocalPill = `<div class="eval-allele-wide"><span class="data-pill" style="border-color: #8b5cf6; background: rgba(139, 92, 246, 0.12); color: #c4b5fd; display: block; max-width: fit-content;">Alternative HGVSc/p. on ${nmLabel} (literature): <strong>${totalSp} at same aa ${res.parsed_data.protein_start || '?'}</strong><br><span style="font-size:11px; font-weight:normal; opacity:0.85;">Same transcript as your variant — different nucleotide and/or protein change (e.g. c.532 vs c.533).</span><br><span style="font-size:12px; font-weight:normal; opacity:0.9; margin-top:4px; display:inline-block; line-height:1.6;">${uiSpText}</span></span></div>`;
     }
 
-    if (res.parsed_data.pm5_local_alleles && res.parsed_data.pm5_local_alleles.length > 0) {
-        let totalPM5 = res.parsed_data.pm5_local_alleles.length;
-        let hsText = res.parsed_data.pm5_local_alleles.map(a => `${_alleleLabel(a)} (${a.significance}) [ClinVar Variation ID: ${a.vid || '?'}]`).join(', ');
-        let uiHsText = res.parsed_data.pm5_local_alleles.map(a => `${_alleleLabel(a)} (${a.significance}) <a href="https://www.ncbi.nlm.nih.gov/clinvar/variation/${a.vid}/" target="_blank" style="color:#a855f7; text-decoration:underline;">[VID: ${a.vid || '?'}]</a>`).join('<br>');
+    const userAaKey = aaChangeKey(res.parsed_data.hgvs_p);
+    const storedPs1 = res.parsed_data.identical_pathogenic_alleles || [];
+    const derivedPs1 = [];
+    if (!storedPs1.length && userAaKey) {
+      (res.parsed_data.alternate_alleles || []).forEach((row) => {
+        if (aaChangeKey(row && row.hgvs_p) === userAaKey) derivedPs1.push(Object.assign({ source: 'ClinVar' }, row));
+      });
+      []
+        .concat(res.parsed_data.hgmd_nucleotide_alternates || [])
+        .concat(res.parsed_data.hgmd_amino_acid_alternates || [])
+        .forEach((row) => {
+          if (!row || aaChangeKey(row.amino) !== userAaKey) return;
+          if (String(row.tag || '').toUpperCase().indexOf('DM') !== 0) return;
+          if (derivedPs1.some((have) => cKey(have.hgvs_c) === cKey(row.hgvs_c))) return;
+          derivedPs1.push(Object.assign({ source: 'HGMD', hgvs_p: row.amino }, row));
+        });
+    }
+    const ps1Alleles = storedPs1.length ? storedPs1 : derivedPs1;
+    if (ps1Alleles.length || res.parsed_data.identical_pathogenic) {
+      const ps1Lines = ps1Alleles.map((a) => {
+        const cdot = escHtml(a.hgvs_c || '');
+        const protein = escHtml(a.hgvs_p || a.amino || '');
+        let name = cdot;
+        if (protein && protein !== cdot) name += (name ? ' (' + protein + ')' : protein);
+        if (!name) name = 'Same amino acid change';
+        if (a.source === 'HGMD' || a.tag) {
+          const papers = pmidBrackets(a.pmids, '#fb7185');
+          const linked = a.link
+            ? `<a href="${a.link}" target="_blank" style="color:#fb7185; text-decoration:underline;">${name}</a>`
+            : name;
+          return `${linked} (HGMD ${escHtml(a.tag || 'DM')})${papers ? ` ${papers}` : ''}`;
+        }
+        const vid = String(a.vid || '').trim();
+        const sig = escHtml(a.significance || 'Pathogenic');
+        const vidLink = vid
+          ? ` <a href="https://www.ncbi.nlm.nih.gov/clinvar/variation/${encodeURIComponent(vid)}/" target="_blank" style="color:#fb7185; text-decoration:underline;">[VID: ${escHtml(vid)}]</a>`
+          : '';
+        return `${name} (${sig})${vidLink}`;
+      });
+      const rcv = String(res.parsed_data.identical_pathogenic_rcv || '').trim();
+      if (!ps1Lines.length && rcv) {
+        ps1Lines.push(`ClinVar ${escHtml(rcv)}`);
+      }
+      const ps1Count = ps1Alleles.length || (res.parsed_data.identical_pathogenic ? 1 : 0);
+      if (ps1Lines.length) {
+        ps1Pill = `<div class="eval-allele-wide"><span class="data-pill" style="border-color: #fb7185; background: rgba(251, 113, 133, 0.12); color: #fecdd3; display: block; max-width: fit-content;">⚠️ PS1 Same amino acid change: <strong>Yes (${ps1Count} variant${ps1Count === 1 ? '' : 's'})</strong><br><span style="font-size:12px; font-weight:normal; opacity:0.95; margin-top:4px; display:inline-block; line-height:1.6;">${ps1Lines.join('<br>')}</span></span></div>`;
+      }
+    }
+
+    const pm5Alleles = res.parsed_data.pm5_local_alleles || [];
+    const pm5C = {};
+    pm5Alleles.forEach((a) => { pm5C[cKey(a.hgvs_c)] = true; });
+    const hgmdSameAa = hgmdAmino.filter((row) => {
+      if (!row || !cKey(row.hgvs_c) || pm5C[cKey(row.hgvs_c)]) return false;
+      const key = aaChangeKey(row.amino);
+      return !(userAaKey && key && key === userAaKey);
+    });
+    if (pm5Alleles.length > 0 || hgmdSameAa.length > 0) {
+        let totalPM5 = pm5Alleles.length + hgmdSameAa.length;
+        let hsText = pm5Alleles.map(a => `${_alleleLabel(a)} (${a.significance}) [ClinVar Variation ID: ${a.vid || '?'}]`).join(', ');
+        const hgmdPlainAa = hgmdSameAa.map(a => `${a.hgvs_c}${a.amino ? ` (${a.amino})` : ''} (HGMD ${a.tag || 'DM'})${pmidIds(a.pmids).length ? ` [PMID: ${pmidIds(a.pmids).join('] [PMID: ')}]` : ''}`).join(', ');
+        if (hgmdPlainAa) hsText = hsText ? `${hsText}, ${hgmdPlainAa}` : hgmdPlainAa;
+        let uiHsText = pm5Alleles.map(a => {
+            const papers = pmidBrackets(pmidsForC(a.hgvs_c), '#a855f7');
+            return `${_alleleLabel(a)} (${a.significance}) <a href="https://www.ncbi.nlm.nih.gov/clinvar/variation/${a.vid}/" target="_blank" style="color:#a855f7; text-decoration:underline;">[VID: ${a.vid || '?'}]</a>${papers ? ` ${papers}` : ''}`;
+        }).concat(hgmdSameAa.map((a) => {
+            const label = escHtml(a.hgvs_c);
+            const name = a.link
+                ? `<a href="${a.link}" target="_blank" style="color:#a855f7; text-decoration:underline;">${label}</a>`
+                : label;
+            const prot = a.amino ? ` (${escHtml(a.amino)})` : '';
+            const papers = pmidBrackets(a.pmids, '#a855f7');
+            return `${name}${prot} (HGMD ${escHtml(a.tag || 'DM')})${papers ? ` ${papers}` : ''}`;
+        })).join('<br>');
         
         if (fullTheoretical === "None found.") fullTheoretical = `PM5 Local Alleles: ${hsText}`;
         else fullTheoretical += ` | PM5 Local Alleles: ${hsText}`;
         
-        pm5LocalPill = `<div class="eval-allele-wide"><span class="data-pill" style="border-color: #a855f7; background: rgba(168, 85, 247, 0.1); color: #a855f7; display: block; max-width: fit-content;">⚠️ PM5 Structural Overlaps: <strong>Yes (${totalPM5} variant(s) at same amino acid)</strong> <a href="${search_p}" target="_blank" style="color:#a855f7; text-decoration: underline; margin-left:4px;">(Search ClinVar)</a><br><span style="font-size:12px; font-weight:normal; opacity:0.9; margin-top:4px; display:inline-block; line-height:1.6;">${uiHsText}</span></span></div>`;
+        pm5LocalPill = `<div class="eval-allele-wide"><span class="data-pill" style="border-color: #a855f7; background: rgba(168, 85, 247, 0.1); color: #a855f7; display: block; max-width: fit-content;">⚠️ PM5 Structural Overlaps: <strong>Yes (${totalPM5} variant(s) at same amino acid)</strong> <a href="${search_p}" target="_blank" style="color:#a855f7; text-decoration: underline; margin-left:4px;">(Search ClinVar)</a>${hgmdSearch(search_hgmd_p, '#a855f7')}<br><span style="font-size:12px; font-weight:normal; opacity:0.9; margin-top:4px; display:inline-block; line-height:1.6;">${uiHsText}</span></span></div>`;
     }
 
     if (res.parsed_data.alternate_transcript_literature && res.parsed_data.alternate_transcript_literature.length > 0) {
@@ -1402,6 +1568,7 @@ ${(() => {
 ${clinvarScanPill}
 ${exonicFsPrimaryPill}
 ${altPill}
+${ps1Pill}
 ${pm5LocalPill}
 ${hotspotPill}
 ${autoPill}

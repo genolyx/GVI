@@ -378,6 +378,8 @@ from vc_engine.hgmd import (
     _hgmd_lookup_keys,
     _hgmd_ordered_candidate_keys,
     _hgmd_gene_mutation_url,
+    record_hgmd_allele,
+    hgmd_codon_number,
     _merge_hgmd_upstream_hits,
     _merge_hgmd_downstream_hits,
     _merge_hgmd_skipped_exon_hits,
@@ -461,6 +463,10 @@ def _hgmd_row_protein_positions(row):
                 "aac",
             )
         )
+        if cn == "codon":
+            codon_number = hgmd_codon_number(row[col])
+            if codon_number:
+                pos_vals.append(codon_number)
         if prot_hint:
             pos_vals.extend(_protein_positions_from_text_blob(row[col]))
     for col in row.index:
@@ -510,6 +516,15 @@ if os.path.exists(hgmd_path):
                         "positions": positions,
                     }
                 )
+            record_hgmd_allele(
+                gene_upper,
+                hgvs_c_cell,
+                positions,
+                tag,
+                disease,
+                pmids_union,
+                amino=row.get("amino", ""),
+            )
             for key in _hgmd_lookup_keys(gene_upper, hgvs_c_cell):
                 GLOBAL_HGMD[key] = banner
                 GLOBAL_HGMD_PMIDS[key] = list(pmids_union)

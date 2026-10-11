@@ -22,7 +22,7 @@ from google.genai import types
 from vc_engine.allele_norm import align_query_allele
 from vc_engine.clinvar import _clinvar_cdot_label_from_esummary, _clinvar_coding_hgvs_from_hit, _clinvar_display_sig_from_rcv, _clinvar_geneinfo_matches, _clinvar_genomic_hgvs_from_hit, _clinvar_name_change_class, _clinvar_plp_sig_for_deleted_exon, _clinvar_rcv_any_pathogenic_or_likely, _clinvar_rcv_list_from_hit, _clinvar_sig_from_esummary_obj, _clinvar_variant_id_from_hit, _clinvar_variation_uid_for_pubmed_elink, _fetch_clinvar_aliases, _fetch_clinvar_esummary_map, _fetch_myvariant_clinvar_variant_hit, clinvar_allele_search_term, clinvar_allele_search_url, clinvar_portal_url
 from vc_engine.gnomad_local import apply_local_gnomad, homozygote_count, homozygote_total, local_gnomad_configured
-from vc_engine.hgmd import _hgmd_ordered_candidate_keys, _merge_hgmd_downstream_hits, _merge_hgmd_skipped_exon_hits, _merge_hgmd_upstream_hits
+from vc_engine.hgmd import _hgmd_ordered_candidate_keys, _merge_hgmd_downstream_hits, _merge_hgmd_skipped_exon_hits, _merge_hgmd_upstream_hits, hgmd_alternate_residue_hits
 from vc_engine.lit_index import search_lit_index
 from vc_engine.noncoding import (
     append_noncoding_curation_logic_section,
@@ -1948,6 +1948,31 @@ def _format_allele_entries_plain(alleles):
     return out
 
 
+def _format_hgmd_residue_plain(hits):
+    """HGMD spreadsheet rows for the allelic-context sentence, with PMIDs."""
+    out = []
+    for hit in hits or []:
+        if not isinstance(hit, dict):
+            continue
+        hgvs_c = (hit.get("hgvs_c") or "").strip()
+        amino = (hit.get("amino") or "").strip()
+        if hgvs_c and amino and hgvs_c != amino:
+            hgvs = f"{hgvs_c} / {amino}"
+        else:
+            hgvs = amino or hgvs_c
+        if not hgvs:
+            continue
+        tag = (hit.get("tag") or "HGMD").strip() or "HGMD"
+        pmids = []
+        for raw in hit.get("pmids") or []:
+            pid = str(raw).replace(".0", "").strip()
+            if pid.isdigit() and pid not in pmids:
+                pmids.append(pid)
+        pmid = f"; PMID {', '.join(pmids)}" if pmids else ""
+        out.append(f"{hgvs} — {tag} (HGMD{pmid})")
+    return out
+
+
 def _allelic_nucleotide_change_lines(parsed_data):
     """P/LP or VUS at the same c. locus / splice junction."""
     lines = []
@@ -2108,7 +2133,9 @@ def _append_allelic_context_logic_sections(sections, parsed_data):
     if entry:
         lines.append(entry)
     nuc = _allelic_nucleotide_change_lines(parsed_data)
+    nuc.extend(_format_hgmd_residue_plain(parsed_data.get("hgmd_nucleotide_alternates")))
     aa = _allelic_amino_acid_change_lines(parsed_data)
+    aa.extend(_format_hgmd_residue_plain(parsed_data.get("hgmd_amino_acid_alternates")))
     nearby = _allelic_nearby_residue_change_lines(parsed_data)
 
     if nuc:
@@ -2127,7 +2154,7 @@ def _append_allelic_context_logic_sections(sections, parsed_data):
 
     if not lines:
         lines.append("This variant is not in ClinVar.")
-    sections.append(("ClinVar", _logic_lines_block(*lines)))
+    sections.append(("Allelic context", _logic_lines_block(*lines)))
 
 
 def _append_clinical_overlap_sections(sections, parsed_data):
@@ -2478,6 +2505,55 @@ def _missense_same_aa_change(hgvs_p_a, hgvs_p_b):
     return a["ref_1"] == b["ref_1"] and a["alt_1"] == b["alt_1"]
 
 
+def _append_identical_protein_allele(parsed_data, allele):
+    """Remember one other variant with this exact amino-acid change (PS1)."""
+    alleles = parsed_data.get("identical_pathogenic_alleles")
+    if not isinstance(alleles, list):
+        alleles = []
+        parsed_data["identical_pathogenic_alleles"] = alleles
+    key = (
+        str(allele.get("hgvs_c") or ""),
+        str(allele.get("hgvs_p") or ""),
+        str(allele.get("vid") or ""),
+        str(allele.get("source") or ""),
+    )
+    for existing in alleles:
+        if (
+            str(existing.get("hgvs_c") or ""),
+            str(existing.get("hgvs_p") or ""),
+            str(existing.get("vid") or ""),
+            str(existing.get("source") or ""),
+        ) == key:
+            return
+    alleles.append(allele)
+    parsed_data["identical_pathogenic"] = True
+
+
+def _collect_hgmd_ps1_alleles(parsed_data):
+    """HGMD DM rows with this same protein change are PS1, not a different-residue PM5."""
+    user_p = str(parsed_data.get("hgvs_p") or "").strip()
+    if not user_p:
+        return
+    for bucket in ("hgmd_nucleotide_alternates", "hgmd_amino_acid_alternates"):
+        for hit in parsed_data.get(bucket) or []:
+            if not isinstance(hit, dict):
+                continue
+            amino = str(hit.get("amino") or "").strip()
+            tag = str(hit.get("tag") or "").strip()
+            if not tag.upper().startswith("DM"):
+                continue
+            if not _missense_same_aa_change(user_p, amino):
+                continue
+            _append_identical_protein_allele(parsed_data, {
+                "hgvs_c": hit.get("hgvs_c") or "",
+                "hgvs_p": amino,
+                "tag": tag,
+                "pmids": list(hit.get("pmids") or []),
+                "link": hit.get("link") or "",
+                "source": "HGMD",
+            })
+
+
 def _transcript_base_id(transcript):
     tx = (transcript or "").strip().replace(" ", "")
     if "." in tx:
@@ -2794,15 +2870,58 @@ def _upgrade_hgvs_p_from_named_sources(parsed_data, http_session=None):
 
 
 def _resolve_user_transcript_base(parsed_data, target_transcript):
-    """User-selected NM (required for same-aa-position matching; never cross-transcript)."""
-    tx = _transcript_base_id(parsed_data.get("transcript") or target_transcript)
-    if tx:
-        return tx
-    for pair in parsed_data.get("refseq_nm_synonyms") or []:
+    """Curator's NM, or the MANE Select transcript when none was entered.
+
+    The chosen accession is stored on the variant so the alternate-allele search
+    uses that main transcript instead of every isoform.
+    """
+    typed = _transcript_base_id(target_transcript)
+    if typed:
+        return typed
+    ranked = sorted(
+        parsed_data.get("refseq_nm_synonyms") or [],
+        key=lambda pair: (
+            0 if str(pair.get("mane_select") or "").strip() else 1,
+            0 if pair.get("canonical") else 1,
+        ),
+    )
+    chosen = ""
+    for pair in ranked:
         nm = (pair.get("refseq") or pair.get("nm") or pair.get("accession") or "").strip()
-        if nm.upper().startswith("NM_"):
-            return _transcript_base_id(nm)
-    return ""
+        if nm.upper().startswith(("NM_", "NR_")):
+            chosen = nm
+            break
+    if not chosen:
+        selected = str(parsed_data.get("selected_refseq") or "").strip()
+        if selected.upper().startswith(("NM_", "NR_")):
+            chosen = selected
+    if not chosen:
+        return ""
+    parsed_data["transcript"] = chosen
+    return _transcript_base_id(chosen)
+
+
+def _fetch_myvariant_hits_at_protein_position_any(http_session, gene, protein_pos):
+    """Same amino-acid index when the curator did not name a transcript.
+
+    The position field is numeric, so p.178 does not pull p.1780. A short timeout
+    keeps a gene-wide query from stalling the classification.
+    """
+    if not (gene and protein_pos is not None):
+        return []
+    try:
+        q = f"clinvar.gene.symbol:{gene} AND snpeff.ann.protein.position:{int(protein_pos)}"
+        url = (
+            f"https://myvariant.info/v1/query?q={q}"
+            f"&fields={_MYVARIANT_LOCAL_ALLELE_FIELDS}&size=200"
+        )
+        resp = http_session.get(url, timeout=12)
+        if resp.status_code != 200:
+            return []
+        return list(resp.json().get("hits") or [])
+    except Exception as e:
+        print(f"Same-protein-position MyVariant query (no transcript) error: {e}")
+        return []
 
 
 def _fetch_myvariant_hits_at_protein_position(http_session, gene, tx_base, protein_pos):
@@ -3049,6 +3168,24 @@ def _classify_local_allele_hit(
                 break
 
     user_c_dot = (parsed_data.get("c_dot") or parsed_data.get("hgvs_c") or "").strip()
+    # No transcript was entered. Still accept another allele at this c. coordinate,
+    # instead of dropping the hit because it is not tied to an NM.
+    if not matched_c and not strict_tx_base:
+        for c in cv_hgvs or []:
+            tail = _normalize_clinvar_c_dot(c.split(":")[-1] if ":" in c else c)
+            if tail and _is_colocalized_cdna_alternate(user_c_dot, tail, user_c_anchor):
+                matched_c = tail
+                break
+    if not alt_hgvs_p and not strict_tx_base:
+        prot_list = (ah.get("clinvar") or {}).get("hgvs", {}).get("protein", [])
+        if isinstance(prot_list, str):
+            prot_list = [prot_list]
+        named_p = (parsed_data.get("hgvs_p") or "").strip()
+        for raw in prot_list or []:
+            p = (raw or "").split(":")[-1].strip()
+            if p.startswith("p.") and named_p and _same_protein_position_different_change(named_p, p):
+                alt_hgvs_p = p
+                break
     is_true_allele = False
     if matched_c and "c." in matched_c:
         is_true_allele = _is_colocalized_cdna_alternate(
@@ -4411,6 +4548,10 @@ def analyze_variant():
                         best_ann = a
                         
                 # Commit the consequence based on the best parsed annotation
+                if best_ann and not target_transcript:
+                    feature = (best_ann.get("feature_id") or "").strip()
+                    if feature.upper().startswith(("NM_", "NR_")):
+                        parsed_data["selected_refseq"] = feature
                 if best_ann:
                     raw_effect = best_ann.get('effect', 'unknown').lower()
                     if 'stop_gained' in raw_effect:
@@ -6777,6 +6918,7 @@ def analyze_variant():
 
                 parsed_data['internal_hotspot'] = False
                 parsed_data['identical_pathogenic'] = False
+                parsed_data['identical_pathogenic_alleles'] = []
                 parsed_data['different_pathogenic'] = False
                 parsed_data['inframe_overlap_pathogenic'] = False
 
@@ -6904,6 +7046,26 @@ def analyze_variant():
                                             parsed_data['identical_pathogenic'] = True
                                             if rcv_acc:
                                                 parsed_data['identical_pathogenic_rcv'] = rcv_acc
+                                            vid_ps1 = cv_hit.get('clinvar', {}).get('variant_id', '')
+                                            if isinstance(vid_ps1, list):
+                                                vid_ps1 = vid_ps1[0] if vid_ps1 else ''
+                                            c_ps1 = ''
+                                            for coding_str in cv_coding or []:
+                                                tail = str(coding_str).split(':')[-1].strip()
+                                                if tail.startswith('c.'):
+                                                    c_ps1 = tail.split()[0]
+                                                    break
+                                            sig_ps1 = ''
+                                            if rcv_data:
+                                                sig_ps1 = str(rcv_data[0].get('clinical_significance') or '').strip()
+                                            _append_identical_protein_allele(parsed_data, {
+                                                "hgvs_c": c_ps1,
+                                                "hgvs_p": p_hgvs_p,
+                                                "vid": str(vid_ps1 or ""),
+                                                "significance": sig_ps1 or "Pathogenic",
+                                                "rcv": rcv_acc,
+                                                "source": "ClinVar",
+                                            })
                                         elif diff_change and _clinvar_rcv_any_pathogenic_or_likely(rcv_data):
                                             parsed_data['different_pathogenic'] = True
                                             if rcv_acc:
@@ -7036,9 +7198,20 @@ def analyze_variant():
 
         combined_hits = []
         hit_ids_seen = set()
+        all_vids = []
+
+        target_p_anchor = _protein_position_from_hgvs_p(parsed_data.get('hgvs_p', ''))
+        if not target_p_anchor:
+            try:
+                target_p_anchor = int(parsed_data.get('protein_start'))
+            except (TypeError, ValueError):
+                target_p_anchor = None
+        strict_tx_base = _resolve_user_transcript_base(parsed_data, target_transcript)
+        stored_tx = str(parsed_data.get("transcript") or "")
+        if strict_tx_base and not stored_tx.upper().startswith(strict_tx_base):
+            parsed_data["transcript"] = strict_tx_base
 
         if g_chrom and g_start and g_end and _clinvar_vcf():
-            all_vids = []
             try:
                 # Provide a 15-bp genomic buffer to mathematically capture ClinVar INDELs that are natively left-aligned
                 # along homopolymer arrays (e.g. c.2230del physically occupying position 11123260 instead of 11123263)
@@ -7068,12 +7241,17 @@ def analyze_variant():
             except Exception as e:
                 print(f"Error fetching Pysam-to-MyVariant tandem logic: {e}")
 
-        # Fallback: local ClinVar VCF missing or returned no rows — same cDNA locus (other alleles) via MyVariant
-        if _clinvar_remote() and pos_match and effective_gene:
+        # Fallback when the local window found nothing. The query must name the
+        # transcript. A bare *68* search also matches c.680 and stalls MyVariant
+        # when no transcript was entered.
+        if _clinvar_remote() and not all_vids and pos_match and effective_gene and strict_tx_base:
             cpos_digits = pos_match.group(1).split('_')[0].split('+')[0].split('-')[0]
             if cpos_digits.isdigit():
                 try:
-                    fb_q = f'clinvar.gene.symbol:{effective_gene} AND clinvar.hgvs.coding:*{cpos_digits}*'
+                    fb_q = (
+                        f"clinvar.gene.symbol:{effective_gene} AND "
+                        f"clinvar.hgvs.coding:*{strict_tx_base}*c.{cpos_digits}*"
+                    )
                     fb_url = (
                         f"https://myvariant.info/v1/query?q={fb_q}"
                         f"&fields={_MYVARIANT_LOCAL_ALLELE_FIELDS}&size=1000"
@@ -7088,16 +7266,6 @@ def analyze_variant():
                 except Exception as e:
                     print(f"Alternate allele MyVariant locus fallback error: {e}")
 
-        target_p_anchor = _protein_position_from_hgvs_p(parsed_data.get('hgvs_p', ''))
-        if not target_p_anchor:
-            try:
-                target_p_anchor = int(parsed_data.get('protein_start'))
-            except (TypeError, ValueError):
-                target_p_anchor = None
-        strict_tx_base = _resolve_user_transcript_base(parsed_data, target_transcript)
-        if strict_tx_base:
-            parsed_data['transcript'] = strict_tx_base
-
         _sj_locus = _resolve_splice_junction_locus(c_dot, parsed_data)
         _allele_fetchers = []
         if target_p_anchor and effective_gene and strict_tx_base:
@@ -7110,6 +7278,12 @@ def analyze_variant():
             _allele_fetchers.append(
                 lambda eg=effective_gene, tx=strict_tx_base, aa=target_p_anchor: (
                     _fetch_myvariant_hits_at_protein_position(http_session, eg, tx, aa)
+                )
+            )
+        elif target_p_anchor and effective_gene:
+            _allele_fetchers.append(
+                lambda eg=effective_gene, aa=target_p_anchor: (
+                    _fetch_myvariant_hits_at_protein_position_any(http_session, eg, aa)
                 )
             )
         if _sj_locus and effective_gene:
@@ -7284,7 +7458,12 @@ def analyze_variant():
         # HGMD length/base suffixes (1570_1590del21 ↔ c.1570_1590del).
         parsed_data['hgmd_local'] = "HGMD: Not Found"
         parsed_data['hgmd_excel_pmids'] = []
+        parsed_data['hgmd_nucleotide_alternates'] = []
+        parsed_data['hgmd_amino_acid_alternates'] = []
+        parsed_data['hgmd_c_allele_search_link'] = ""
+        parsed_data['hgmd_p_allele_search_link'] = ""
         _hgmd_matched_key = None
+        hgmd_candidate_keys = []
         try:
             hgmd_candidate_keys = _hgmd_ordered_candidate_keys(
                 effective_gene.upper(), c_dot, parsed_data
@@ -7297,6 +7476,20 @@ def analyze_variant():
                     break
         except Exception as hgmd_err:
             print(f"HGMD Index Collision Error: {hgmd_err}")
+        try:
+            hgmd_alts = hgmd_alternate_residue_hits(
+                effective_gene,
+                c_dot,
+                parsed_data.get("hgvs_p") or "",
+                equivalent=hgmd_candidate_keys,
+            )
+            parsed_data["hgmd_nucleotide_alternates"] = hgmd_alts["nucleotide"]
+            parsed_data["hgmd_amino_acid_alternates"] = hgmd_alts["amino_acid"]
+            parsed_data["hgmd_c_allele_search_link"] = hgmd_alts["nucleotide_search"]
+            parsed_data["hgmd_p_allele_search_link"] = hgmd_alts["amino_acid_search"]
+            _collect_hgmd_ps1_alleles(parsed_data)
+        except Exception as hgmd_alt_err:
+            print(f"HGMD alternate-residue lookup error: {hgmd_alt_err}")
 
         _hgmd_mut_q = c_dot
         for _p in parsed_data.get("refseq_nm_synonyms") or []:

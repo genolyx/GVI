@@ -570,7 +570,7 @@ export default function Home() {
                   <button
                     key={item.id}
                     onClick={() => navigate(`/cases/${item.id}`)}
-                    className="grid w-full grid-cols-[1fr_auto] items-center gap-4 px-5 py-3.5 text-left hover:bg-muted/50 sm:grid-cols-[1.1fr_.8fr_.65fr_auto]"
+                    className="grid w-full grid-cols-[minmax(0,1fr)_8.75rem] items-center gap-4 px-5 py-3.5 text-left hover:bg-muted/50 sm:grid-cols-[minmax(0,1.1fr)_minmax(0,.8fr)_minmax(0,.65fr)_8.75rem]"
                   >
                     <div>
                       <p className="font-mono text-xs font-medium">
@@ -588,7 +588,7 @@ export default function Home() {
                     <span className="hidden text-xs capitalize sm:block">
                       {item.purpose}
                     </span>
-                    <ClinicalStatus status={item.status} />
+                    <ClinicalStatus status={item.status} className="justify-self-end" />
                   </button>
                 ))
               ) : (

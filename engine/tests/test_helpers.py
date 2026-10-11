@@ -607,6 +607,86 @@ def test_classify_same_protein_via_clinvar_when_snpeff_wrong_transcript():
     assert bucket2 == "regional"
 
 
+def test_missing_transcript_uses_mane_select():
+    from vc_engine.analyze import _resolve_user_transcript_base
+
+    parsed = {
+        "transcript": "",
+        "refseq_nm_synonyms": [
+            {"refseq": "NM_000000.1", "canonical": True, "mane_select": ""},
+            {"refseq": "NM_007294.4", "canonical": True, "mane_select": "NM_007294.4"},
+        ],
+    }
+    assert _resolve_user_transcript_base(parsed, "") == "NM_007294"
+    assert parsed["transcript"] == "NM_007294.4"
+
+    typed = {
+        "transcript": "",
+        "refseq_nm_synonyms": [
+            {"refseq": "NM_007294.4", "mane_select": "NM_007294.4"},
+        ],
+    }
+    assert _resolve_user_transcript_base(typed, "NM_000000.2") == "NM_000000"
+    assert typed["transcript"] == ""
+
+
+def test_classify_alternate_allele_without_transcript():
+    """A blank transcript still keeps another allele at the same c. or amino acid."""
+    from vc_engine.analyze import _classify_local_allele_hit
+
+    parsed = {
+        "hgvs_p": "p.Arg178His",
+        "c_dot": "c.532A>G",
+        "consequence": "missense",
+        "transcript": "",
+    }
+    same_base = {
+        "clinvar": {
+            "hgvs": {
+                "coding": ["NM_007294.4(BRCA1):c.532A>T (p.Arg178Ter)"],
+                "protein": ["NP_009225.1:p.Arg178Ter"],
+            },
+            "variant_id": "17664",
+            "rcv": [{"clinical_significance": "Pathogenic"}],
+        },
+        "snpeff": {"ann": []},
+    }
+    bucket, entry = _classify_local_allele_hit(
+        same_base, parsed, "", 178, "532", None, "17"
+    )
+    assert bucket == "true_pathogenic"
+    assert entry["hgvs_c"] == "c.532A>T"
+
+    longer_number = {
+        "clinvar": {
+            "hgvs": {"coding": ["NM_007294.4(BRCA1):c.1532A>G"], "protein": []},
+            "variant_id": "999",
+            "rcv": [{"clinical_significance": "Pathogenic"}],
+        },
+        "snpeff": {"ann": []},
+    }
+    assert _classify_local_allele_hit(
+        longer_number, parsed, "", 178, "532", None, "17"
+    ) is None
+
+    other_codon = {
+        "clinvar": {
+            "hgvs": {
+                "coding": ["NM_007294.4(BRCA1):c.533C>G (p.Arg178Pro)"],
+                "protein": ["NP_009225.1:p.Arg178Pro"],
+            },
+            "variant_id": "17665",
+            "rcv": [{"clinical_significance": "Pathogenic"}],
+        },
+        "snpeff": {"ann": []},
+    }
+    bucket_aa, entry_aa = _classify_local_allele_hit(
+        other_codon, parsed, "", 178, "532", None, "17"
+    )
+    assert bucket_aa == "same_protein"
+    assert entry_aa["hgvs_p"] == "p.Arg178Pro"
+
+
 def test_finalize_local_allele_scan_metadata_hgvs_fallback_note():
     from vc_engine.analyze import (
         _append_allelic_context_logic_sections,
@@ -641,7 +721,7 @@ def test_finalize_local_allele_scan_metadata_hgvs_fallback_note():
     sections = []
     _append_allelic_context_logic_sections(sections, parsed)
     assert sections
-    assert sections[0][0] == 'ClinVar'
+    assert sections[0][0] == 'Allelic context'
     body = sections[0][1]
     assert 'Same nucleotide' not in body
     assert 'Same amino acid change' not in body
@@ -673,9 +753,95 @@ def test_append_clingen_and_allelic_logic_sections():
     _append_allelic_context_logic_sections(sections, pd)
     _finalize_logic_explanation(pd, sections)
     plain = pd.get('logic_explanation_plaintext') or ''
-    assert plain.startswith('ClinVar')
+    assert plain.startswith('Allelic context')
     assert 'This variant is not in ClinVar.' in plain
     assert 'haploinsufficiency score 3' in plain
+
+
+def test_allelic_context_includes_hgmd_same_nucleotide_and_amino_acid():
+    from vc_engine.analyze import _append_allelic_context_logic_sections
+
+    pd = {
+        'alternate_alleles': [],
+        'same_protein_position_alleles': [
+            {
+                'hgvs_c': 'c.4013A>C',
+                'hgvs_p': 'p.Asn1338Thr',
+                'significance': 'Pathogenic',
+                'vid': '208778',
+            }
+        ],
+        'pm5_local_alleles': [],
+        'regional_hotspot': [],
+        'hgmd_nucleotide_alternates': [
+            {
+                'hgvs_c': 'c.4012A>C',
+                'amino': 'p.Asn1338His',
+                'tag': 'DM',
+                'pmids': ['36636894'],
+            }
+        ],
+        'hgmd_amino_acid_alternates': [
+            {
+                'hgvs_c': 'c.4013A>T',
+                'amino': 'p.Asn1338Ile',
+                'tag': 'DM',
+                'pmids': ['35074891'],
+            },
+            {
+                'hgvs_c': 'c.4012A>C',
+                'amino': 'p.Asn1338His',
+                'tag': 'DM',
+                'pmids': ['36636894'],
+            },
+        ],
+    }
+    sections = []
+    _append_allelic_context_logic_sections(sections, pd)
+    assert sections[0][0] == 'Allelic context'
+    body = sections[0][1]
+    assert 'Same nucleotide: c.4012A>C / p.Asn1338His — DM (HGMD; PMID 36636894)' in body
+    assert 'c.4013A>C / p.Asn1338Thr — Pathogenic (ClinVar 208778)' in body
+    assert 'c.4013A>T / p.Asn1338Ile — DM (HGMD; PMID 35074891)' in body
+
+
+def test_hgmd_same_amino_acid_change_sets_ps1():
+    from vc_engine.analyze import _collect_hgmd_ps1_alleles
+    from vc_engine.scoring import apply_acmg
+
+    pd = {
+        "consequence": "missense",
+        "hgvs_p": "p.Asn1338Asp",
+        "identical_pathogenic": False,
+        "hgmd_nucleotide_alternates": [
+            {
+                "hgvs_c": "c.4014T>G",
+                "amino": "p.Asn1338Asp",
+                "tag": "DM",
+                "pmids": ["11111111"],
+            }
+        ],
+        "hgmd_amino_acid_alternates": [
+            {
+                "hgvs_c": "c.4013A>C",
+                "amino": "p.Asn1338Thr",
+                "tag": "DM",
+                "pmids": ["24901346"],
+            }
+        ],
+    }
+    _collect_hgmd_ps1_alleles(pd)
+    assert pd["identical_pathogenic"] is True
+    assert pd["identical_pathogenic_alleles"] == [{
+        "hgvs_c": "c.4014T>G",
+        "hgvs_p": "p.Asn1338Asp",
+        "tag": "DM",
+        "pmids": ["11111111"],
+        "link": "",
+        "source": "HGMD",
+    }]
+    assert "PS1" in {c["code"] for c in apply_acmg(pd)["criteria"]}
+    assert "PM5" not in {c["code"] for c in apply_acmg(pd)["criteria"]}
 
 
 def test_same_aa_line_excludes_regional_hotspot_neighbors():
@@ -896,6 +1062,43 @@ def test_hgmd_gene_mutation_url():
     url = _hgmd_gene_mutation_url("AMT", "c.878-1G>A")
     assert url.startswith("https://www.hgmd.cf.ac.uk/ac/gene.php?gene=AMT")
     assert _hgmd_gene_mutation_url("", "c.1A>G") == ""
+
+
+def test_hgmd_alternate_residue_search_includes_pmid():
+    import vc_engine.hgmd as h
+
+    saved = {gene: list(rows) for gene, rows in h.GLOBAL_HGMD_BY_GENE.items()}
+    h.GLOBAL_HGMD_BY_GENE.clear()
+    try:
+        h.record_hgmd_allele("BRCA1", "c.532A>G", [178], "DM", "Breast cancer", ["11111111"], amino="Arg-His")
+        h.record_hgmd_allele("BRCA1", "532A>T", [178], "DM", "Breast cancer", ["22222222.0"], amino="Arg-Leu")
+        h.record_hgmd_allele("BRCA1", "c.533C>G", [178], "DM?", "Breast cancer", ["33333333"], amino="Arg-Gly")
+        h.record_hgmd_allele("BRCA1", "c.100A>G", [34], "DM", "Other", ["44444444"])
+        h.record_hgmd_allele("BRCA1", "1570_1590del21", [524], "DM", "Other", ["55555555"])
+        found = h.hgmd_alternate_residue_hits(
+            "BRCA1",
+            "c.532A>G",
+            "p.Arg178His",
+            equivalent=["BRCA1_c.532A>G"],
+        )
+        assert found["nucleotide_search"].endswith("mutation=c.532") or "c.532" in found["nucleotide_search"]
+        assert "p.Arg178" in found["amino_acid_search"]
+        nuc = {row["hgvs_c"]: row for row in found["nucleotide"]}
+        assert set(nuc) == {"c.532A>T"}
+        assert nuc["c.532A>T"]["pmids"] == ["22222222"]
+        assert nuc["c.532A>T"]["amino"] == "p.Arg178Leu"
+        amino = {row["hgvs_c"]: row for row in found["amino_acid"]}
+        assert set(amino) == {"c.532A>T", "c.533C>G"}
+        assert amino["c.533C>G"]["pmids"] == ["33333333"]
+        assert amino["c.533C>G"]["amino"] == "p.Arg178Gly"
+        assert h.hgmd_codon_number(1338.0) == 1338
+        assert h.hgmd_codon_number("1338.0") == 1338
+        assert h.hgmd_codon_number("Asn-Thr") is None
+        same = h.hgmd_alternate_residue_hits("BRCA1", "c.1570_1590del", "")
+        assert same["nucleotide"] == []
+    finally:
+        h.GLOBAL_HGMD_BY_GENE.clear()
+        h.GLOBAL_HGMD_BY_GENE.update(saved)
 
 
 # --- util ---

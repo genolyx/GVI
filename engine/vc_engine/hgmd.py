@@ -13,12 +13,22 @@ import urllib.parse
 
 import pandas as pd
 
+from vc_engine.hgvs import (
+    _hgvs_c_dot_alleles_equal,
+    _hgvs_c_dot_clinvar_equivalent,
+    _parse_c_dot_allele,
+    _parse_missense_substitution_hgvs_p,
+    _protein_position_from_hgvs_label,
+)
 from vc_engine.util import _safe_int_or_none
 
 # In-RAM HGMD positional catalogue. Populated by the app_v11 HGMD mount at
 # import time: app_v11 imports THIS list object and appends to it, so the
 # merge helpers below see the same entries (shared mutable module state).
 GLOBAL_HGMD_POSITIONAL_ENTRIES = []
+
+# gene symbol -> rows used to find a different nucleotide or amino-acid change.
+GLOBAL_HGMD_BY_GENE = {}
 
 
 def _hgmd_cell_pubmed_ids(val):
@@ -176,6 +186,172 @@ def _hgmd_ordered_candidate_keys(effective_gene_upper: str, c_dot: str, parsed_d
                 seen_k.add(k)
                 keys_out.append(k)
     return keys_out
+
+
+def _hgmd_display_c(hgvs_raw: str) -> str:
+    """Show an HGMD cell as c./n./r. notation."""
+    s = str(hgvs_raw or "").strip()
+    if not s:
+        return ""
+    if re.match(r"^[cnr]\.", s, re.I):
+        return s
+    if s[0].isdigit() or s[0] in "+-*":
+        return f"c.{s}"
+    return s
+
+
+def _same_hgmd_allele(left: str, right: str) -> bool:
+    """True when two HGVS strings are the same allele, including del/dup spelling."""
+    if _hgvs_c_dot_alleles_equal(left, right) or _hgvs_c_dot_clinvar_equivalent(left, right):
+        return True
+    a = _hgmd_strip_redundant_del_dup_bases(left or "")
+    b = _hgmd_strip_redundant_del_dup_bases(right or "")
+    return bool(a and b and (
+        _hgvs_c_dot_alleles_equal(a, b) or _hgvs_c_dot_clinvar_equivalent(a, b)
+    ))
+
+
+def hgmd_codon_number(value):
+    """HGMD ``codon`` is the amino-acid number, stored as 1338 or 1338.0."""
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, str):
+        text = value.strip()
+        if not text or text.lower() in ("nan", "none", ".", "-"):
+            return None
+        value = text
+    try:
+        number = int(float(value))
+    except (TypeError, ValueError):
+        return None
+    return number if number > 0 else None
+
+
+def hgmd_protein_label(amino, positions) -> str:
+    """Turn HGMD ``Asn-Thr`` plus codon 1338 into ``p.Asn1338Thr``."""
+    text = str(amino or "").strip()
+    if not text or text.lower() in ("nan", "none", ".", "-"):
+        return ""
+    bits = [bit for bit in re.split(r"[\s>/-]+", text) if bit]
+    try:
+        pos = int(positions[0]) if positions else None
+    except (TypeError, ValueError, IndexError):
+        pos = None
+    if pos and len(bits) >= 2 and all(re.fullmatch(r"[A-Za-z*]+", bit) for bit in bits[:2]):
+        return f"p.{bits[0]}{pos}{bits[1]}"
+    return ""
+
+
+def record_hgmd_allele(gene, hgvs_c, protein_positions, tag, disease, pmids, amino="") -> None:
+    """Index one spreadsheet row for alternate-residue lookup. Called at HGMD mount."""
+    gene_u = str(gene or "").strip().upper()
+    shown = _hgmd_display_c(hgvs_c)
+    if not gene_u or not shown:
+        return
+    parsed = _parse_c_dot_allele(shown)
+    clean_pmids = []
+    seen = set()
+    for pid in pmids or []:
+        s = str(pid).replace(".0", "").strip()
+        if s.isdigit() and s not in seen:
+            seen.add(s)
+            clean_pmids.append(s)
+    positions = []
+    for p in protein_positions or []:
+        try:
+            pi = int(p)
+        except (TypeError, ValueError):
+            continue
+        if pi > 0 and pi not in positions:
+            positions.append(pi)
+    GLOBAL_HGMD_BY_GENE.setdefault(gene_u, []).append(
+        {
+            "hgvs_c": shown,
+            "anchor": parsed[0] if parsed else None,
+            "positions": positions,
+            "tag": str(tag or "DM").strip() or "DM",
+            "disease": str(disease or "").strip()[:120],
+            "pmids": clean_pmids,
+            "amino": hgmd_protein_label(amino, positions),
+        }
+    )
+
+
+def hgmd_alternate_residue_hits(gene, c_dot, hgvs_p="", equivalent=None, limit=25):
+    """Other HGMD rows at this nucleotide coordinate or this amino-acid residue.
+
+    The exact allele, including isoform synonyms passed in ``equivalent``, is left
+    out. A different base change at the same c. coordinate is a nucleotide alternate.
+    A different allele at the same amino-acid number, on another coordinate, is an
+    amino-acid alternate. Each hit keeps the spreadsheet PMIDs.
+    """
+    gene_u = str(gene or "").strip().upper()
+    query = _hgmd_display_c(c_dot)
+    tails = []
+    pref = f"{gene_u}_" if gene_u else ""
+    for raw in [query, *(equivalent or [])]:
+        s = str(raw or "").strip()
+        if pref and s.startswith(pref):
+            s = s[len(pref):]
+        shown = _hgmd_display_c(s)
+        if shown and shown not in tails:
+            tails.append(shown)
+    parsed = _parse_c_dot_allele(query)
+    anchor = parsed[0] if parsed else None
+    sub = _parse_missense_substitution_hgvs_p(hgvs_p)
+    aa_pos = sub["pos"] if sub else _protein_position_from_hgvs_label(hgvs_p)
+    nuc_q = f"c.{anchor}" if anchor is not None else ""
+    if sub:
+        aa_q = f"p.{sub['ref_3']}{sub['pos']}"
+    elif aa_pos:
+        aa_q = f"p.{aa_pos}"
+    else:
+        aa_q = ""
+
+    def _pack(rows):
+        ranked = sorted(
+            rows,
+            key=lambda ent: (
+                0 if str(ent.get("tag") or "").upper().startswith("DM") else 1,
+                ent.get("hgvs_c") or "",
+            ),
+        )
+        out = []
+        for ent in ranked[:limit]:
+            out.append(
+                {
+                    "hgvs_c": ent["hgvs_c"],
+                    "tag": ent.get("tag") or "",
+                    "disease": ent.get("disease") or "",
+                    "pmids": list(ent.get("pmids") or []),
+                    "amino": ent.get("amino") or "",
+                    "link": _hgmd_gene_mutation_url(gene_u, ent["hgvs_c"]),
+                }
+            )
+        return out
+
+    nucleotide = []
+    amino = []
+    seen_n = set()
+    seen_a = set()
+    for ent in GLOBAL_HGMD_BY_GENE.get(gene_u, []):
+        hgvs_c = ent.get("hgvs_c") or ""
+        if any(_same_hgmd_allele(hgvs_c, tail) for tail in tails):
+            continue
+        same_anchor = anchor is not None and ent.get("anchor") == anchor
+        same_aa = aa_pos is not None and aa_pos in (ent.get("positions") or [])
+        if same_anchor and hgvs_c not in seen_n:
+            seen_n.add(hgvs_c)
+            nucleotide.append(ent)
+        if same_aa and hgvs_c not in seen_a:
+            seen_a.add(hgvs_c)
+            amino.append(ent)
+    return {
+        "nucleotide": _pack(nucleotide),
+        "amino_acid": _pack(amino),
+        "nucleotide_search": _hgmd_gene_mutation_url(gene_u, nuc_q) if nuc_q else "",
+        "amino_acid_search": _hgmd_gene_mutation_url(gene_u, aa_q) if aa_q else "",
+    }
 
 
 def _hgmd_gene_mutation_url(gene_symbol: str, mutation_c_dot: str) -> str:
