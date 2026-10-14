@@ -15,6 +15,7 @@ from __future__ import annotations
 import importlib
 import os
 
+from vc_engine.regions import _partial_exon_internal_frameshift
 from vc_engine.truncation import is_severe_loss
 
 # Empty placeholder so older imports keep working. Labs can replace this in a
@@ -272,7 +273,45 @@ def apply_acmg(parsed_data, splice_points=None, nmd_points=None):
         _normalize_disease_mechanism(parsed_data.get("disease_mechanism")) == "GOF"
         and _clingen_haplo_score_int(parsed_data) != 3
     )
-    if _is_nullish_consequence(consequence) and not gof_blocks:
+    if _partial_exon_internal_frameshift(parsed_data) and not gof_blocks:
+        # Coding SNV whose splice product is an out-of-frame exon-internal
+        # cryptic site. Score the frameshift (NMD / C-terminal loss / downstream
+        # P/LP). Do not use skipped-exon P/LP.
+        try:
+            nf = float(trunc_frac or 0)
+        except (TypeError, ValueError):
+            nf = 0.0
+        if not nmd_escape:
+            criteria.append({
+                "code": "PVS1",
+                "desc": (
+                    "Exon-internal cryptic splice is out-of-frame and introduces a "
+                    "premature stop — NMD is predicted"
+                ),
+                "type": "pathogenic",
+                "weight": "very_strong",
+            })
+        elif is_severe_loss(nf):
+            criteria.append({
+                "code": "PVS1",
+                "desc": (
+                    "Exon-internal cryptic splice escapes NMD but the frameshift "
+                    f"removes >= 10% of the protein ({nf:.1%})"
+                ),
+                "type": "pathogenic",
+                "weight": "very_strong",
+            })
+        elif has_downstream_pathogenic:
+            criteria.append({
+                "code": "PVS1",
+                "desc": (
+                    "Exon-internal cryptic splice escapes NMD; frameshift removes "
+                    "a C-terminal region that harbors downstream P/LP evidence"
+                ),
+                "type": "pathogenic",
+                "weight": "very_strong",
+            })
+    elif _is_nullish_consequence(consequence) and not gof_blocks:
         if consequence == "start_lost":
             if start_lost_pathogenic:
                 criteria.append({
@@ -301,7 +340,44 @@ def apply_acmg(parsed_data, splice_points=None, nmd_points=None):
         elif _is_canonical_splice(consequence) and "splice_is_in_frame" in parsed_data:
             is_in_frame = parsed_data["splice_is_in_frame"]
             s_frac = parsed_data.get("splice_fraction_lost") or 0.0
-            if not is_in_frame and not nmd_escape:
+            if parsed_data.get("early_oof_exon_skip_next_met"):
+                try:
+                    nf = float(trunc_frac or 0)
+                except (TypeError, ValueError):
+                    nf = 0.0
+                nmet = parsed_data.get("next_methionine_position")
+                nmet_ex = parsed_data.get("next_methionine_exon")
+                nmet_c = parsed_data.get("next_methionine_cdot")
+                if nmet and nmet_ex and nmet_c:
+                    nmet_bit = f" (next Met aa {nmet} in exon {nmet_ex}, c.{nmet_c})"
+                elif nmet and nmet_ex:
+                    nmet_bit = f" (next Met aa {nmet} in exon {nmet_ex})"
+                elif nmet:
+                    nmet_bit = f" (next Met aa {nmet})"
+                else:
+                    nmet_bit = ""
+                if nf >= 0.10:
+                    criteria.append({
+                        "code": "PVS1",
+                        "desc": (
+                            "Early out-of-frame exon skip keeps Met1; next in-frame Met removes "
+                            f">= 10% of the N-terminus{nmet_bit} ({nf:.1%}) — severe; "
+                            "upstream P/LP re-initiation escape does not apply"
+                        ),
+                        "type": "pathogenic",
+                        "weight": "very_strong",
+                    })
+                elif has_upstream_pathogenic or start_lost_pathogenic:
+                    criteria.append({
+                        "code": "PVS1",
+                        "desc": (
+                            "Early out-of-frame exon skip re-initiation "
+                            f"(<10% to next Met{nmet_bit}) bypasses upstream P/LP evidence"
+                        ),
+                        "type": "pathogenic",
+                        "weight": "very_strong",
+                    })
+            elif not is_in_frame and not nmd_escape:
                 criteria.append({
                     "code": "PVS1",
                     "desc": "Canonical splice predicted out-of-frame (presumed NMD)",

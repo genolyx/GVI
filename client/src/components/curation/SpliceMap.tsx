@@ -182,7 +182,11 @@ function ExonBox({ cell, y }: { cell: Extract<TrackCell, { kind: "exon" }>; y: n
 
       {cell.startCodon ? (
         <text x={x + 4} y={y + 8} className="fill-amber-600 text-[6px] font-bold">
-          <title>Start codon (AUG) — original Met</title>
+          <title>
+            {rank > 1
+              ? `Coding starts in exon ${rank}; exon 1 is 5′ UTR`
+              : "Start codon (AUG) — original Met"}
+          </title>
           Met
         </text>
       ) : null}
@@ -539,7 +543,14 @@ function buildRows(sv: SpliceViz, available: number): SpliceRow[] {
       ? { rank: Number(cutRank), fraction: Number(cutFraction), side: cutSide }
       : null;
 
-  const shared = { variantMarker: sv.variant_marker || null, internalCut, variantEnd };
+  const showUtrExon1 = sv.first_mrna_utr === true || sv.pre_atg_utr_pseudoexon === true;
+  const shared = {
+    variantMarker: sv.variant_marker || null,
+    internalCut,
+    variantEnd,
+    startCodonRank: sv.start_codon_exon_rank ?? null,
+    utrRank: showUtrExon1 ? 1 : null,
+  };
   const rows: SpliceRow[] = [];
 
   // ── Reference ────────────────────────────────────────────────────────────────
@@ -556,7 +567,7 @@ function buildRows(sv: SpliceViz, available: number): SpliceRow[] {
     skipRank: null,
     skipAltRank: null,
     anchorRank: null,
-    utrRank: sv.pre_atg_utr_pseudoexon === true ? 1 : null,
+    utrRank: showUtrExon1 ? 1 : null,
     startCodonRank: sv.start_codon_exon_rank ?? null,
     fadeAfterRank: null,
     dimNonAnchor: false,
@@ -812,6 +823,15 @@ function SpliceMapLegend({ spliceViz }: { spliceViz: SpliceViz }) {
           the Pre-mRNA and mRNA rows so the two can be read against each other. Scroll
           horizontally when a row overflows.
         </p>
+        {spliceViz.start_codon_exon_rank ? (
+          <p>
+            <span className="font-semibold text-amber-600">Met</span> marks the start codon on the
+            first coding exon.
+            {spliceViz.first_mrna_utr
+              ? ` Coding starts in exon ${spliceViz.start_codon_exon_rank}; exon 1 is 5′ UTR.`
+              : null}
+          </p>
+        ) : null}
         <p>
           <span className="font-semibold text-amber-600">◆</span> marks the variant locus
           (schematic, from HGVSc). A <span className="font-semibold text-rose-600">striped exon</span>{" "}

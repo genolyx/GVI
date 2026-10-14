@@ -47,6 +47,28 @@ function topSplice(scores: CurationScores): { name: string; value: number } | nu
   return options[0] ?? null;
 }
 
+/** PVS1 for an NMD-escape product under 10% cites the downstream P/LP count. Links stay on the list. */
+function downstreamEvidenceSentence(parsed: Parsed): string | null {
+  if (parsed.nmd_escape !== true) return null;
+  const lost = num(parsed.nmd_escape_truncation_fraction);
+  if (lost == null || lost <= 0 || lost > 0.1) return null;
+  const hits = parsed.downstream_pathogenic_hits;
+  if (!Array.isArray(hits) || hits.length === 0) return null;
+  let clinvar = 0;
+  let hgmd = 0;
+  for (const hit of hits) {
+    if (!hit || typeof hit !== "object") continue;
+    const source = String((hit as Parsed).source || "clinvar").toLowerCase();
+    if (source === "hgmd") hgmd += 1;
+    else clinvar += 1;
+  }
+  const n = clinvar + hgmd;
+  if (!n) return null;
+  const parts = [clinvar ? `${clinvar} ClinVar` : null, hgmd ? `${hgmd} HGMD` : null].filter(Boolean);
+  const split = parts.length ? ` (${parts.join(", ")})` : "";
+  return `NMD is not predicted and ${pct(lost)} of the protein is removed, which is under 10%. PVS1 uses ${n} downstream pathogenic or likely pathogenic variant${n === 1 ? "" : "s"}${split}.`;
+}
+
 function lossOfFunctionSentence(doc: CurationDocument, parsed: Parsed): string | null {
   const site = spliceSite(doc.variant.consequence);
   const where = exonPhrase(doc);
@@ -111,7 +133,7 @@ export function criterionEvidence(doc: CurationDocument, code: string, rationale
   const fallback = rationale.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
 
   if (base === "PVS1" || base === "PM4") {
-    const sentence = lossOfFunctionSentence(doc, parsed) || fallback;
+    const sentence = (base === "PVS1" ? downstreamEvidenceSentence(parsed) : null) || lossOfFunctionSentence(doc, parsed) || fallback;
     const haplo = text(parsed.clingen_haplo_score);
     const clingenReturned = haplo !== "" && haplo.toUpperCase() !== "N/A";
     if (base === "PVS1" && !clingenReturned) {

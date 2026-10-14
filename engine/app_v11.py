@@ -514,6 +514,7 @@ if os.path.exists(hgmd_path):
                         "c_dot_norm": _norm_c_dot_for_upstream_dedupe(hgvs_c_cell),
                         "tag": tag or "DM",
                         "positions": positions,
+                        "pmids": list(pmids_union),
                     }
                 )
             record_hgmd_allele(

@@ -35,6 +35,61 @@ def _downstream_plp_anchor_aa(parsed_data):
     return resolved_ptc_stop_aa(parsed_data or {})
 
 
+def _partial_exon_internal_cryptic(parsed_data):
+    """Exon-internal cryptic product that shortens an exon. Not a whole-exon skip."""
+    if not parsed_data or not parsed_data.get("splice_viz_exon_internal_cryptic"):
+        return False
+    cg = parsed_data.get("cryptic_gain_outcome") or {}
+    if not isinstance(cg, dict) or cg.get("whole_exon_skip"):
+        return False
+    try:
+        return int(cg.get("deleted_nt") or 0) > 0
+    except (TypeError, ValueError):
+        return False
+
+
+def _partial_exon_internal_frameshift(parsed_data):
+    """
+    Out-of-frame exon-internal cryptic splice (frameshift + PTC).
+
+    The lost tail is a frameshift, so P/LP evidence is downstream of the stop.
+    It is not a skipped-exon deletion.
+    """
+    if not _partial_exon_internal_cryptic(parsed_data):
+        return False
+    cg = parsed_data.get("cryptic_gain_outcome") or {}
+    if cg.get("in_frame") is False:
+        return True
+    return (
+        parsed_data.get("is_splice_frameshift") is True
+        and parsed_data.get("splice_is_in_frame") is False
+    )
+
+
+def _suppress_skipped_exon_scan_for_exon_internal_frameshift(parsed_data):
+    """Drop skipped-exon interval fields so a frameshift product is not scanned as a deleted exon."""
+    if not _partial_exon_internal_frameshift(parsed_data):
+        return False
+    for key in (
+        "splice_deleted_coords",
+        "splice_target_start_cds",
+        "splice_target_end_cds",
+        "splice_excised_partial",
+        "skipped_exon_aa_range",
+        "skipped_exon_aa_lo",
+        "skipped_exon_aa_hi",
+        "skipped_exon_pathogenic_hits",
+        "skipped_exon_pathogenic_hit_count",
+        "skipped_exon_plp_checked",
+        "has_pathogenic_in_deleted_exon",
+        "deleted_exon_pathogenic_string",
+        "deleted_exon_pathogenic_link",
+        "deleted_exon_pathogenic_vid",
+    ):
+        parsed_data.pop(key, None)
+    return True
+
+
 def _needs_downstream_clinvar_plp(parsed_data):
     """
     Whether to scan ClinVar for P/LP strictly 3′ of the PTC anchor.
@@ -42,6 +97,8 @@ def _needs_downstream_clinvar_plp(parsed_data):
     Covers short 3′ extensions (<10% lost), marginal fs extensions, and
     structural NMD escape (last-exon / penultimate <50 nt) where a substantial
     C-terminal segment is still lost (e.g. MC4R c.771C>A, p.C257*).
+    Exon-internal out-of-frame cryptic splice uses this scan too: the product
+    is a frameshift, not a skipped exon.
     """
     if not parsed_data:
         return False
@@ -60,8 +117,11 @@ def _needs_downstream_clinvar_plp(parsed_data):
     is_splice_oof_escape = (
         bool(parsed_data.get("is_splice_frameshift"))
         and bool(parsed_data.get("nmd_escape"))
-        and "splice" in csq
         and trunc_frac > 0
+        and (
+            "splice" in csq
+            or _partial_exon_internal_frameshift(parsed_data)
+        )
     )
     return bool(is_short_extension or is_nmd_escape_downstream or is_splice_oof_escape)
 
@@ -260,6 +320,10 @@ def _splice_deleted_coords_complete(parsed_data):
 
 def _whole_exon_skip_modeled(parsed_data):
     """True when a whole-exon skip product is active but coords may still be missing."""
+    # A partial exon-internal cryptic product sets splice_is_in_frame for its own
+    # frame call. That is not a whole-exon skip.
+    if _partial_exon_internal_cryptic(parsed_data):
+        return False
     if _splice_deleted_coords_complete(parsed_data):
         return False
     if parsed_data.get("spliceai_exon_skip_spliceai_primary"):
@@ -299,14 +363,20 @@ def _resolve_skipped_coding_exon_row(parsed_data, coding_exons):
         ve = 0
 
     if m_minus and not m_plus:
-        if ve > 0:
-            for cx in coding_exons:
-                if int(cx.get("anatomical_rank") or 0) == ve:
-                    return cx
+        # Acceptor c.N−k removes the exon that starts at c.N, even when variant_exon
+        # still points at an upstream exon (Met / E2 when the skip is E3).
         try:
             n = int(m_minus.group(1))
         except (TypeError, ValueError):
             n = 0
+        if n:
+            for cx in coding_exons:
+                if int(cx.get("start_cds") or 0) == n:
+                    return cx
+        if ve > 0:
+            for cx in coding_exons:
+                if int(cx.get("anatomical_rank") or 0) == ve:
+                    return cx
         if n:
             c3 = [cx for cx in coding_exons if int(cx.get("start_cds") or 0) >= n]
             if c3:
@@ -340,10 +410,25 @@ def _resolve_skipped_coding_exon_row(parsed_data, coding_exons):
             )
             if ranked:
                 return ranked[0]
-    elif ve > 0:
-        for cx in coding_exons:
-            if int(cx.get("anatomical_rank") or 0) == ve:
-                return cx
+    elif not m_minus and not m_plus:
+        # Exonic c.N (no +/−): the skipped exon is the coding exon that contains N.
+        m_plain = re.search(r"c\.(-?\d+)", c_dot)
+        if m_plain:
+            try:
+                n_ex = int(m_plain.group(1))
+            except (TypeError, ValueError):
+                n_ex = 0
+            if n_ex:
+                spanning = [
+                    cx for cx in coding_exons
+                    if int(cx.get("start_cds") or 0) <= n_ex <= int(cx.get("end_cds") or 0)
+                ]
+                if spanning:
+                    return spanning[0]
+        if ve > 0:
+            for cx in coding_exons:
+                if int(cx.get("anatomical_rank") or 0) == ve:
+                    return cx
     return None
 
 
@@ -425,6 +510,10 @@ def _skipped_exon_plp_scan_banner_html(parsed_data):
 
 def _hydrate_splice_excised_region(parsed_data):
     """Promote cryptic-splice excised CDNA into splice_deleted_coords for P/LP scan."""
+    # Out-of-frame exon-internal products are frameshifts. P/LP is downstream of
+    # the PTC, not a skipped-exon interval over the excised nucleotides.
+    if _partial_exon_internal_frameshift(parsed_data):
+        return False
     if _splice_deleted_coords_complete(parsed_data):
         return True
     if parsed_data.get("splice_deleted_coords"):
@@ -545,6 +634,22 @@ def _skipped_exon_plp_hits_markup(parsed_data):
     return body + (up or "")
 
 
+def _pmid_links_html(pmids, color="#fbbf24"):
+    """PubMed links for PMIDs stored on a P/LP hit."""
+    parts = []
+    seen = set()
+    for raw in pmids or []:
+        s = str(raw).replace(".0", "").strip()
+        if not s.isdigit() or s in seen:
+            continue
+        seen.add(s)
+        parts.append(
+            f'<a href="https://pubmed.ncbi.nlm.nih.gov/{s}/" target="_blank" rel="noopener noreferrer" '
+            f'style="color:{color};text-decoration:underline;">[PMID: {html.escape(s)}]</a>'
+        )
+    return (" " + " ".join(parts)) if parts else ""
+
+
 def _plp_region_hit_item_html(h):
     """
     One semicolon-delimited hit for upstream/downstream P/LP lists.
@@ -559,12 +664,13 @@ def _plp_region_hit_item_html(h):
         if src == "hgmd"
         else ' <span style="color:#94a3b8;font-size:0.85em;">(ClinVar)</span>'
     )
+    papers = _pmid_links_html(h.get("pmids"))
     if src == "hgmd":
         if lk:
             return (
-                f'<a href="{html.escape(lk, quote=True)}" target="_blank" rel="noopener noreferrer">{lab}</a>{badge}'
+                f'<a href="{html.escape(lk, quote=True)}" target="_blank" rel="noopener noreferrer">{lab}</a>{badge}{papers}'
             )
-        return lab + badge
+        return lab + badge + papers
     vid = str(h.get("clinvar_vid") or "").strip()
     vid_html = ""
     if vid.isdigit():
@@ -587,7 +693,7 @@ def _plp_region_hit_item_html(h):
             )
         except (TypeError, ValueError):
             pass
-    return lab + pos_html + vid_html + badge
+    return lab + pos_html + vid_html + badge + papers
 
 
 def _upstream_plp_hits_markup(parsed_data, next_met_pos=None):

@@ -366,6 +366,73 @@ def _hgmd_gene_mutation_url(gene_symbol: str, mutation_c_dot: str) -> str:
     )
 
 
+def _clean_pmid_list(pmids) -> list:
+    """Digit-only PubMed ids, order preserved."""
+    out = []
+    seen = set()
+    for raw in pmids or []:
+        s = str(raw).replace(".0", "").strip()
+        if s.isdigit() and s not in seen:
+            seen.add(s)
+            out.append(s)
+    return out
+
+
+def hgmd_pmids_for_cdot(gene: str, hgvs_c: str) -> list:
+    """PMIDs on the local HGMD row for this gene and c. allele, if one exists."""
+    gene_u = (gene or "").strip().upper()
+    shown = _hgmd_display_c(hgvs_c)
+    if not gene_u or not shown:
+        return []
+    found = []
+    seen = set()
+    for ent in GLOBAL_HGMD_BY_GENE.get(gene_u, []):
+        if not _same_hgmd_allele(ent.get("hgvs_c") or "", shown):
+            continue
+        for pid in _clean_pmid_list(ent.get("pmids")):
+            if pid not in seen:
+                seen.add(pid)
+                found.append(pid)
+    return found
+
+
+def _cdot_from_plp_hit(hit) -> str:
+    for key in ("hgvs_c", "c_dot_norm"):
+        raw = str((hit or {}).get(key) or "").strip()
+        if raw:
+            return _hgmd_display_c(raw) or raw
+    label = str((hit or {}).get("label") or "")
+    match = re.search(r"([cnr]\.[^\s(]+|\d+[ACGTNacgtn]>[ACGTNacgtn])", label, re.I)
+    return match.group(1) if match else ""
+
+
+def annotate_plp_hits_with_hgmd_pmids(hits, gene: str) -> None:
+    """Copy local HGMD PMIDs onto ClinVar and HGMD P/LP rows that lack them."""
+    for hit in hits or []:
+        existing = _clean_pmid_list(hit.get("pmids"))
+        if existing:
+            hit["pmids"] = existing
+            continue
+        pmids = hgmd_pmids_for_cdot(gene, _cdot_from_plp_hit(hit))
+        if pmids:
+            hit["pmids"] = pmids
+
+
+def _hgmd_catalogue_hit(gene_u: str, ent, position: int) -> dict:
+    hgvs_c = _hgmd_display_c(ent.get("hgvs_c") or "") or str(ent.get("hgvs_c") or "").strip()
+    tag = str(ent.get("tag") or "DM").strip() or "DM"
+    pmids = _clean_pmid_list(ent.get("pmids")) or hgmd_pmids_for_cdot(gene_u, hgvs_c)
+    return {
+        "label": f"{hgvs_c} (HGMD {tag})",
+        "link": _hgmd_gene_mutation_url(gene_u, hgvs_c),
+        "position": position,
+        "source": "hgmd",
+        "c_dot_norm": str(ent.get("c_dot_norm") or "").strip(),
+        "hgvs_c": hgvs_c,
+        "pmids": pmids,
+    }
+
+
 def _merge_hgmd_positional_hits(hits, effective_gene: str, pos: int, side: str) -> None:
     """Shared body for the upstream / downstream HGMD positional merges.
 
@@ -375,10 +442,9 @@ def _merge_hgmd_positional_hits(hits, effective_gene: str, pos: int, side: str) 
     positions strictly C-terminal (``pi > pos``). Dedupes against existing hits by
     normalized cDNA. Mutates ``hits`` in place.
     """
-    if pos <= 0 or not GLOBAL_HGMD_POSITIONAL_ENTRIES:
-        return
     gene_u = (effective_gene or "").strip().upper()
-    if not gene_u:
+    if pos <= 0 or not gene_u or not GLOBAL_HGMD_POSITIONAL_ENTRIES:
+        annotate_plp_hits_with_hgmd_pmids(hits, gene_u)
         return
     existing_norm = set()
     for h in hits:
@@ -403,20 +469,10 @@ def _merge_hgmd_positional_hits(hits, effective_gene: str, pos: int, side: str) 
         if not qualifying:
             continue
         sort_pos = min(qualifying)
-        hgvs_c = (ent.get("hgvs_c") or "").strip()
-        tag = (ent.get("tag") or "DM").strip()
-        label = f"{hgvs_c} (HGMD {tag})"
-        hits.append(
-            {
-                "label": label,
-                "link": _hgmd_gene_mutation_url(gene_u, hgvs_c),
-                "position": sort_pos,
-                "source": "hgmd",
-                "c_dot_norm": cnorm,
-            }
-        )
+        hits.append(_hgmd_catalogue_hit(gene_u, ent, sort_pos))
         if cnorm:
             existing_norm.add(cnorm)
+    annotate_plp_hits_with_hgmd_pmids(hits, gene_u)
 
 
 def _merge_hgmd_upstream_hits(hits, effective_gene: str, next_m_pos: int) -> None:
@@ -469,16 +525,7 @@ def _merge_hgmd_skipped_exon_hits(hits, effective_gene, aa_lo, aa_hi):
         ]
         if not qualifying:
             continue
-        hgvs_c = (ent.get("hgvs_c") or "").strip()
-        tag = (ent.get("tag") or "DM").strip()
-        hits.append(
-            {
-                "label": f"{hgvs_c} (HGMD {tag})",
-                "link": _hgmd_gene_mutation_url(gene_u, hgvs_c),
-                "position": min(qualifying),
-                "source": "hgmd",
-                "c_dot_norm": cnorm,
-            }
-        )
+        hits.append(_hgmd_catalogue_hit(gene_u, ent, min(qualifying)))
         if cnorm:
             existing_norm.add(cnorm)
+    annotate_plp_hits_with_hgmd_pmids(hits, gene_u)

@@ -647,6 +647,13 @@ def _resolve_exon_internal_cryptic_outcome(http_session, parsed_data):
         ('donor_loss', dl, 'spliceai_dp_dl', True, 'Donor Loss'),
         ('acceptor_loss', al, 'spliceai_dp_al', False, 'Acceptor Loss'),
     )
+    # Loss-primary exonic SNVs use whole-exon skip, not an exon-internal cryptic label.
+    # Only redirect when SpliceAI loss is primary on an exonic variant; leave all
+    # existing splice-site and cryptic-gain tracks untouched.
+    if _coding_snv_spliceai_loss_site(parsed_data):
+        _apply_coding_snv_loss_exon_skip(parsed_data)
+        return
+
     _eligible = [
         (kind, sc, dp_key, use_donor, label)
         for kind, sc, dp_key, use_donor, label in _signal_slots
@@ -1389,6 +1396,8 @@ def _mark_oof_exon_skip_nmd_provisional(
     Drive NMD Escape / truncation % pills for out-of-frame whole-exon skip even when
     the mutant CDS could not be translated (Ensembl timeout / empty CDS).
     """
+    if parsed_data.get('early_oof_exon_skip_next_met'):
+        return
     parsed_data['splice_is_in_frame'] = False
     parsed_data['is_splice_frameshift'] = True
     if parsed_data.get('nmd_escape') is None or (
@@ -1509,11 +1518,330 @@ def _hydrate_exon_skip_truncation_metrics(parsed_data):
 
 def _whole_exon_skip_primary_resolved(parsed_data):
     """True when whole-exon skip structural math is the primary splice readout."""
+    cg = parsed_data.get('cryptic_gain_outcome') or {}
+    if parsed_data.get('splice_viz_exon_internal_cryptic') and not cg.get('whole_exon_skip'):
+        return False
     if not parsed_data.get('splice_deleted_coords'):
         return False
     if parsed_data.get('spliceai_exon_skip_spliceai_primary'):
         return True
     return bool((parsed_data.get('splice_frame_math') or '').strip())
+
+
+def _next_inframe_met_aa_after_cds(cds_seq, after_cds_1based):
+    """Next original-frame AUG strictly after a 1-based CDS position. Returns the aa index."""
+    seq = re.sub(r'[^ACGT]', '', str(cds_seq or '').upper().replace('U', 'T'))
+    try:
+        after = int(after_cds_1based)
+    except (TypeError, ValueError):
+        return None
+    if after < 1 or len(seq) < 3:
+        return None
+    pos = after + 1
+    rem = (pos - 1) % 3
+    if rem:
+        pos += 3 - rem
+    while pos + 2 <= len(seq):
+        if seq[pos - 1:pos + 2] == 'ATG':
+            return (pos - 1) // 3 + 1
+        pos += 3
+    return None
+
+
+def _early_oof_exon_skip_span(parsed_data):
+    """
+    (start_cds, end_cds, aa_lo, aa_hi) when an OOF whole-exon skip keeps Met1 and
+    only disrupts a small 5′ coding span (the span ends inside the first 10%).
+    """
+    if parsed_data.get('splice_is_in_frame') is not False:
+        return None
+    try:
+        ts = int(parsed_data.get('splice_target_start_cds') or 0)
+        te = int(parsed_data.get('splice_target_end_cds') or 0)
+        pl = int(parsed_data.get('protein_length') or 0)
+    except (TypeError, ValueError):
+        return None
+    # Met1 is c.1–3. A skip that starts after that codon leaves the initiator intact.
+    if te < ts or ts <= 3 or pl <= 0:
+        return None
+    lo = (ts + 2) // 3
+    hi = (te + 2) // 3
+    if lo < 1 or hi < lo:
+        return None
+    if hi / float(pl) >= 0.10:
+        return None
+    return ts, te, lo, hi
+
+
+def _next_met_exon_locus(parsed_data, met_aa):
+    """
+    Map a next-Met amino acid onto the splice-map exon scale.
+
+    Returns display exon, c. position of the codon, and the 1-based nucleotide
+    of that codon inside the exon. None when coding_exons do not cover it.
+    """
+    try:
+        aa = int(met_aa)
+    except (TypeError, ValueError):
+        return None
+    if aa < 1:
+        return None
+    cds_pos = (aa - 1) * 3 + 1
+    rows = parsed_data.get('coding_exons') or []
+    hit = None
+    ranks = []
+    for cx in rows:
+        try:
+            start = int(cx.get('start_cds') or 0)
+            end = int(cx.get('end_cds') or 0)
+            rank = int(cx.get('anatomical_rank') or 0)
+        except (TypeError, ValueError):
+            continue
+        if rank >= 1:
+            ranks.append(rank)
+        if hit is None and rank > 0 and start <= cds_pos <= end:
+            hit = (start, rank)
+    if hit is None:
+        return None
+    start, rank = hit
+    show_utr = bool((parsed_data or {}).get('first_mrna_exon_is_non_coding'))
+    offset = 1 if show_utr and ranks and min(ranks) == 1 else 0
+    if not offset:
+        try:
+            offset = int(_splice_viz_display_rank_offset(parsed_data, rows) or 0)
+        except Exception:
+            offset = 0
+    return {
+        'exon': rank + offset,
+        'cdot': cds_pos,
+        'nt_in_exon': cds_pos - start + 1,
+    }
+
+
+def _next_met_where_phrase(met_aa, locus):
+    """'aa 207 in exon 10 (c.619, nucleotide 34 of that exon)'."""
+    if not locus:
+        return f"aa {met_aa}"
+    nt = locus.get('nt_in_exon')
+    if nt:
+        return (
+            f"aa {met_aa} in exon {locus['exon']} "
+            f"(c.{locus['cdot']}, nucleotide {nt} of that exon)"
+        )
+    return f"aa {met_aa} in exon {locus['exon']} (c.{locus['cdot']})"
+
+
+def _apply_early_oof_exon_skip_next_met(parsed_data, http_session=None):
+    """
+    Early OOF whole-exon skip that keeps Met1: N-terminal loss is the next
+    original-frame Met after the skipped span, divided by protein length.
+
+    ≥10% is the severe / PVS1 path (upstream P/LP is not an escape).
+    <10% is the re-initiation path (upstream P/LP and other 5′ evidence).
+    This percent replaces C-terminal PTC and exon-span truncation math.
+    """
+    span = _early_oof_exon_skip_span(parsed_data)
+    if not span:
+        return False
+    _ts, te, lo, hi = span
+    cds = parsed_data.get('cds_seq') or ''
+    if not cds and http_session is not None:
+        try:
+            cds = _ensure_cds_seq(parsed_data, http_session) or ''
+        except Exception:
+            cds = parsed_data.get('cds_seq') or ''
+    met = _next_inframe_met_aa_after_cds(cds, te)
+    try:
+        pl = int(parsed_data.get('protein_length') or 0)
+    except (TypeError, ValueError):
+        pl = 0
+    if not met or met <= hi or pl <= 0:
+        return False
+    frac = met / float(pl)
+    span_aa = hi - lo + 1
+    span_frac = span_aa / float(pl)
+    severe = frac >= 0.10
+    pct = round(frac * 100, 1)
+    span_pct = round(span_frac * 100, 1)
+    parsed_data['early_oof_exon_skip_next_met'] = True
+    parsed_data['next_methionine_position'] = met
+    locus = _next_met_exon_locus(parsed_data, met)
+    where = _next_met_where_phrase(met, locus)
+    if locus:
+        parsed_data['next_methionine_exon'] = locus['exon']
+        parsed_data['next_methionine_cdot'] = locus['cdot']
+        parsed_data['next_methionine_nt_in_exon'] = locus['nt_in_exon']
+    parsed_data['nmd_escape_truncation_fraction'] = frac
+    parsed_data['splice_fraction_lost'] = span_frac
+    parsed_data['skipped_exon_aa_range'] = [lo, hi]
+    parsed_data['skipped_exon_aa_lo'] = lo
+    parsed_data['skipped_exon_aa_hi'] = hi
+    if severe:
+        parsed_data['nmd_decision_basis'] = (
+            f"Early out-of-frame exon skip removes aa {lo}–{hi} ({span_pct}% of the coding sequence) "
+            f"and keeps Met1. Next in-frame Met is {where} ({pct}% N-terminal loss) — ≥10%, "
+            f"severe N-terminal truncation (PVS1; upstream P/LP re-initiation escape does not apply)."
+        )
+    else:
+        parsed_data['nmd_decision_basis'] = (
+            f"Early out-of-frame exon skip removes aa {lo}–{hi} ({span_pct}% of the coding sequence) "
+            f"and keeps Met1. Next in-frame Met is {where} ({pct}% N-terminal loss) — <10% "
+            f"re-initiation pathway; review upstream P/LP and other 5′ evidence."
+        )
+    return True
+
+
+def _early_oof_next_met_bits(parsed_data):
+    """Next-Met readout for an early OOF skip that keeps Met1. None when that path is off."""
+    if not parsed_data.get('early_oof_exon_skip_next_met'):
+        return None
+    try:
+        met = int(parsed_data.get('next_methionine_position') or 0)
+        frac = float(parsed_data.get('nmd_escape_truncation_fraction') or 0)
+    except (TypeError, ValueError):
+        return None
+    if met <= 0 or frac <= 0:
+        return None
+    lo = parsed_data.get('skipped_exon_aa_lo')
+    hi = parsed_data.get('skipped_exon_aa_hi')
+    try:
+        lo = int(lo) if lo is not None else None
+        hi = int(hi) if hi is not None else None
+    except (TypeError, ValueError):
+        lo, hi = None, None
+    locus = None
+    if parsed_data.get('next_methionine_exon') and parsed_data.get('next_methionine_cdot'):
+        try:
+            locus = {
+                'exon': int(parsed_data.get('next_methionine_exon')),
+                'cdot': int(parsed_data.get('next_methionine_cdot')),
+                'nt_in_exon': int(parsed_data.get('next_methionine_nt_in_exon') or 0) or None,
+            }
+        except (TypeError, ValueError):
+            locus = None
+    if locus is None:
+        locus = _next_met_exon_locus(parsed_data, met)
+    return {
+        'met': met,
+        'where': _next_met_where_phrase(met, locus),
+        'locus': locus,
+        'pct': round(frac * 100.0, 1),
+        'severe': frac >= 0.10,
+        'lo': lo,
+        'hi': hi,
+        'upstream': bool(
+            parsed_data.get('has_upstream_pathogenic')
+            or parsed_data.get('start_lost_5_prime_pathogenic')
+        ),
+    }
+
+
+def _early_oof_next_met_product_line(parsed_data):
+    """Line that follows the novel-stop math on the loss product."""
+    bits = _early_oof_next_met_bits(parsed_data)
+    if not bits:
+        return ''
+    if bits['severe']:
+        thresh = (
+            f"{bits['pct']}% N-terminal loss, &ge;10% — severe; "
+            "upstream P/LP re-initiation escape does not apply"
+        )
+    elif bits['upstream']:
+        thresh = (
+            f"{bits['pct']}% N-terminal loss, &lt;10% re-initiation — "
+            "bypasses upstream P/LP evidence"
+        )
+    else:
+        thresh = (
+            f"{bits['pct']}% N-terminal loss, &lt;10% — re-initiation pathway; "
+            "review upstream P/LP and other 5&prime; evidence"
+        )
+    return (
+        "<b>5&prime; next Met:</b> Met1 is kept after this early out-of-frame skip. "
+        f"Next in-frame Met is {bits['where']} ({thresh})."
+    )
+
+
+def _early_oof_next_met_sop_sentence(parsed_data, span_pct_lbl=''):
+    """
+    SOP sentence after the out-of-frame novel stop: N-terminal loss is the next
+    in-frame Met, which is the percent PVS1 uses.
+    """
+    bits = _early_oof_next_met_bits(parsed_data)
+    if not bits:
+        return ''
+    span = ''
+    if bits['lo'] and bits['hi'] and span_pct_lbl:
+        span = (
+            f" (skipped aa {bits['lo']}–{bits['hi']}, {span_pct_lbl} of the coding sequence)"
+        )
+    elif bits['lo'] and bits['hi']:
+        span = f" (skipped aa {bits['lo']}–{bits['hi']})"
+    elif span_pct_lbl:
+        span = f" ({span_pct_lbl} of the coding sequence removed by the skip)"
+    if bits['severe']:
+        decision = (
+            f"{bits['where']} removes {bits['pct']}% of the N-terminus (&ge;10%) "
+            "&rarr; <b>PVS1</b> (severe; upstream P/LP re-initiation escape does not apply)."
+        )
+    elif bits['upstream']:
+        decision = (
+            f"{bits['where']} removes {bits['pct']}% of the N-terminus "
+            "(&lt;10% re-initiation) &rarr; <b>PVS1</b> (bypasses upstream P/LP evidence)."
+        )
+    else:
+        decision = (
+            f"{bits['where']} removes {bits['pct']}% of the N-terminus "
+            "(&lt;10% re-initiation pathway). Review upstream P/LP and other 5&prime; "
+            "evidence before PVS1."
+        )
+    return (
+        f"<b>SOP logic:</b> out-of-frame skip{span} introduces a novel stop on the re-read ORF, "
+        f"and Met1 is kept. <b>5&prime; next Met:</b> {decision}"
+    )
+
+
+def _sync_early_oof_next_met_splice_logic(parsed_data):
+    """
+    Put the 5' next-Met line on the loss product (after the novel stop) and
+    point the SOP sentence at that N-terminal percent.
+    """
+    if not parsed_data.get('early_oof_exon_skip_next_met'):
+        return
+    try:
+        span_lbl = f"{float(parsed_data.get('splice_fraction_lost')) * 100:.1f}%"
+    except (TypeError, ValueError):
+        span_lbl = ''
+    sentence = _early_oof_next_met_sop_sentence(parsed_data, span_lbl)
+    sfm = parsed_data.get('splice_frame_math') or ''
+    if sentence:
+        if '<b>SOP logic:</b>' in sfm:
+            sfm = re.sub(
+                r'<b>SOP logic:</b>(?:(?!<br)[\s\S])*',
+                sentence,
+                sfm,
+                count=1,
+            )
+        elif sfm:
+            sep = '<br><br>' if not sfm.endswith(('<br>', '<br><br>')) else ''
+            sfm = sfm + sep + sentence
+        else:
+            sfm = sentence
+        parsed_data['splice_pvs1_logic_sentence'] = sentence
+    line = _early_oof_next_met_product_line(parsed_data)
+    mark = 'Met1 is kept after this early out-of-frame skip'
+    if line and mark not in sfm and sfm:
+        needle = 'Computational splice model only — not RNA/minigene evidence.'
+        loss_at = sfm.find('loss / exon skip')
+        if loss_at < 0:
+            loss_at = sfm.lower().find('whole-exon skip')
+        foot = sfm.find(needle, loss_at if loss_at >= 0 else 0)
+        if foot >= 0:
+            sfm = sfm[:foot] + line + '<br>' + sfm[foot:]
+        else:
+            sfm = sfm + '<br>' + line
+    if sfm:
+        parsed_data['splice_frame_math'] = sfm
 
 
 def _suppress_start_loss_nmd_for_exon_skip_primary(parsed_data):
@@ -1523,6 +1851,9 @@ def _suppress_start_loss_nmd_for_exon_skip_primary(parsed_data):
     not be treated as downstream re-initiation sites.
     """
     if not _whole_exon_skip_primary_resolved(parsed_data):
+        return
+    # Early-OOF next Met is the N-terminal readout for this skip; do not clear it.
+    if parsed_data.get('early_oof_exon_skip_next_met'):
         return
     parsed_data.pop('nmd_math', None)
     parsed_data.pop('next_methionine_position', None)
@@ -1549,6 +1880,8 @@ def _apply_exon_skip_truncation_as_primary(parsed_data):
     Mirror whole-exon skip (OOF) PTC into canonical truncation fields when skip is the
     primary splice product — not a stale SnpEff/junction placeholder from pre-splice init.
     """
+    if parsed_data.get('early_oof_exon_skip_next_met'):
+        return
     if parsed_data.get('splice_is_in_frame'):
         return
     competing = bool(parsed_data.get('spliceai_competing_splice_isoforms'))
@@ -2151,9 +2484,10 @@ def _build_splice_variant_intro_short(parsed_data, gene, c_dot):
     vex_s = str(vex) if vex is not None else '?'
     c_dot_s = (c_dot or parsed_data.get('c_dot') or '').strip()
     cons = (parsed_data.get('consequence') or '').strip()
-    if _consequence_is_acceptor_splice(cons, c_dot_s):
+    inferred_site = parsed_data.get('coding_snv_loss_site')
+    if inferred_site == 'acceptor' or _consequence_is_acceptor_splice(cons, c_dot_s):
         site = f"acceptor-side splice variant at exon {vex_s}"
-    elif _consequence_is_donor_splice(cons, c_dot_s):
+    elif inferred_site == 'donor' or _consequence_is_donor_splice(cons, c_dot_s):
         site = f"donor-side splice variant at exon {vex_s}"
     else:
         site = f"splice variant at exon {vex_s}"
@@ -2222,8 +2556,14 @@ def _build_splice_variant_intro_short(parsed_data, gene, c_dot):
         )
 
     if parsed_data.get('splice_is_in_frame') and (parsed_data.get('splice_frame_math') or '').strip():
+        p_bit = ''
+        if parsed_data.get('coding_snv_spliceai_loss_primary'):
+            # Keep synonymous p.K413= / p.= — do not strip the equals sign.
+            p_keep = str(parsed_data.get('hgvs_p') or '').strip()
+            if p_keep:
+                p_bit = f" ({p_keep})"
         return (
-            f"{gene} {c_dot_s} → {site}; predicted <b>in-frame</b> exon skip "
+            f"{gene} {c_dot_s} → {site}; predicted <b>in-frame</b> exon skip{p_bit} "
             f"(internal deletion; no novel PTC)."
         )
 
@@ -4985,6 +5325,208 @@ SPLICEAI_EXON_SKIP_PRIMARY_MIN_LOSS = 0.3
 
 SPLICEAI_EXON_SKIP_PRIMARY_GAP = 0.3
 
+
+def _exonic_coding_cdot(c_dot):
+    """Coding HGVS with no intronic +/− offset (c.1239G>A, not c.1239+1G>A)."""
+    s = re.sub(r'\s+', '', str(c_dot or ''))
+    if not re.match(r'(?i)c\.\-?\d+', s):
+        return False
+    if re.search(r'(?i)c\.\-?\d+[\+\-]', s):
+        return False
+    return True
+
+
+def _coding_snv_spliceai_loss_site(parsed_data):
+    """
+    Donor or acceptor when SpliceAI loss is primary on an exonic coding SNV.
+
+    Only redirect when SpliceAI loss is primary on an exonic variant; leave all
+    existing splice-site and cryptic-gain tracks untouched.
+
+    Gate: exonic HGVS (no +/−), loss ≥ 0.3, and loss − same-site gain ≥ 0.3
+    (scores below the 0.20 reconcile floor never qualify). Returns 'donor',
+    'acceptor', or None.
+    """
+    if not isinstance(parsed_data, dict):
+        return None
+    if parsed_data.get('deep_intronic_splice_products_active'):
+        return None
+    if parsed_data.get('spliceai_competing_splice_isoforms'):
+        return None
+    if parsed_data.get('spliceai_junction_model_preferred'):
+        return None
+    c_dot = parsed_data.get('c_dot') or ''
+    if not _exonic_coding_cdot(c_dot):
+        return None
+    if _canonical_splice_junction_from_hgvs(c_dot):
+        return None
+    cons = (parsed_data.get('consequence') or '').lower()
+    if any(tok in cons for tok in (
+        'splice_donor', 'splice_acceptor', 'splice_polypyrimidine',
+        'intron', 'frameshift', 'stop_gained', 'inframe_deletion', 'inframe_insertion',
+    )):
+        return None
+    coding = any(tok in cons for tok in (
+        'synonymous', 'missense', 'splice_region', 'coding_sequence_variant',
+    ))
+    if cons and not coding:
+        return None
+    ag, al, dg, dl = _spliceai_scores_4(parsed_data)
+    donor_competing = (
+        dg >= SPLICEAI_COMPETING_FLOOR and dl >= SPLICEAI_COMPETING_FLOOR
+    )
+    acc_competing = (
+        ag >= SPLICEAI_COMPETING_FLOOR and al >= SPLICEAI_COMPETING_FLOOR
+    )
+    donor_ok = (
+        not donor_competing
+        and dl >= SPLICEAI_EXON_SKIP_PRIMARY_MIN_LOSS
+        and dl >= SPLICEAI_RECONCILE_MIN
+        and (dl - dg) >= SPLICEAI_EXON_SKIP_PRIMARY_GAP
+    )
+    acc_ok = (
+        not acc_competing
+        and al >= SPLICEAI_EXON_SKIP_PRIMARY_MIN_LOSS
+        and al >= SPLICEAI_RECONCILE_MIN
+        and (al - ag) >= SPLICEAI_EXON_SKIP_PRIMARY_GAP
+    )
+    # A stronger other-site gain stays on the cryptic-gain track.
+    if donor_ok and ag >= SPLICEAI_COMPETING_FLOOR and ag > dl:
+        donor_ok = False
+    if acc_ok and dg >= SPLICEAI_COMPETING_FLOOR and dg > al:
+        acc_ok = False
+    if donor_ok and acc_ok:
+        return 'donor' if dl >= al else 'acceptor'
+    if donor_ok:
+        return 'donor'
+    if acc_ok:
+        return 'acceptor'
+    return None
+
+
+def _coding_snv_loss_skip_baseline(parsed_data, fallback=''):
+    """Plain 'Exon N length …' sentence used to build the loss product block."""
+    for src in (
+        parsed_data.get('splice_frame_math_exon_skip_ref'),
+        parsed_data.get('splice_frame_math'),
+        fallback,
+    ):
+        s = str(src or '')
+        if 'SpliceAI signal:' in s:
+            continue
+        m = re.search(r'Exon\s+\d+\s+length\s+\d+\s*bp:.*', s)
+        if m:
+            return re.sub(r'<[^>]+>', '', m.group(0)).strip()
+    return fallback
+
+
+def _apply_coding_snv_loss_exon_skip(parsed_data):
+    """
+    Put an exonic SNV with primary SpliceAI loss on the whole-exon-skip track.
+
+    Only redirect when SpliceAI loss is primary on an exonic variant; leave all
+    existing splice-site and cryptic-gain tracks untouched.
+    """
+    site = _coding_snv_spliceai_loss_site(parsed_data)
+    if not site and parsed_data.get('coding_snv_loss_site') in ('donor', 'acceptor'):
+        # Precedence may already have stamped the site; don't reopen other tracks.
+        if parsed_data.get('coding_snv_spliceai_loss_primary'):
+            site = parsed_data.get('coding_snv_loss_site')
+    if site not in ('donor', 'acceptor'):
+        return False
+    parsed_data['coding_snv_spliceai_loss_primary'] = True
+    parsed_data['coding_snv_loss_site'] = site
+    parsed_data['spliceai_exon_skip_spliceai_primary'] = True
+    parsed_data['splice_lof_mechanism_established'] = True
+    parsed_data.pop('splice_viz_exon_internal_cryptic', None)
+    parsed_data.pop('cryptic_gain_outcome', None)
+    parsed_data['cryptic_splice_narrative'] = ''
+
+    ag, al, dg, dl = _spliceai_scores_4(parsed_data)
+    gain = dg if site == 'donor' else ag
+    if gain > 0 and gain < SPLICEAI_RECONCILE_MIN:
+        parsed_data['spliceai_secondary_gain_product'] = True
+        parsed_data['spliceai_gain_map_only'] = True
+        parsed_data['spliceai_secondary_mechanism'] = (
+            'donor_gain' if site == 'donor' else 'acceptor_gain'
+        )
+
+    c_dot = parsed_data.get('c_dot') or ''
+    try:
+        cds_pos = int(parsed_data.get('snpeff_cds_pos') or 0)
+    except (TypeError, ValueError):
+        cds_pos = 0
+    if cds_pos <= 0:
+        m_pos = re.search(r'c\.(\d+)', str(c_dot), re.I)
+        if m_pos:
+            cds_pos = int(m_pos.group(1))
+    cx = None
+    for row in parsed_data.get('coding_exons') or []:
+        try:
+            sc = int(row.get('start_cds') or 0)
+            ec = int(row.get('end_cds') or 0)
+        except (TypeError, ValueError):
+            continue
+        if sc <= cds_pos <= ec:
+            cx = row
+            break
+    if cx:
+        parsed_data['variant_exon'] = cx.get('anatomical_rank')
+        parsed_data['splice_target_start_cds'] = cx.get('start_cds')
+        parsed_data['splice_target_end_cds'] = cx.get('end_cds')
+        try:
+            bp = int(cx.get('length_bp') or 0)
+        except (TypeError, ValueError):
+            bp = 0
+        if bp <= 0:
+            try:
+                bp = int(cx.get('end_cds') or 0) - int(cx.get('start_cds') or 0) + 1
+            except (TypeError, ValueError):
+                bp = 0
+        in_frame = (bp % 3 == 0) if bp else None
+        parsed_data['splice_is_in_frame'] = in_frame
+        aa_lost = (bp // 3) if bp else 0
+        try:
+            p_len = int(parsed_data.get('protein_length') or 0)
+        except (TypeError, ValueError):
+            p_len = 0
+        frac = (aa_lost / float(p_len)) if p_len else 0.0
+        parsed_data['splice_fraction_lost'] = frac
+        frame_str = 'In-Frame Skip' if in_frame else 'Out-of-Frame Shift'
+        pct = f'{frac * 100:.1f}%'
+        len3 = 'multiple of 3' if in_frame else 'not a multiple of 3'
+        fallback = (
+            f"Exon {cx.get('anatomical_rank')} length {bp} bp: {len3} — {frame_str} → {aa_lost} "
+            f"amino acids lost ({pct} of protein)."
+        )
+        if cx.get('chr') and cx.get('start') and cx.get('end'):
+            parsed_data['splice_deleted_coords'] = {
+                'chr': cx.get('chr'),
+                'start': cx.get('start'),
+                'end': cx.get('end'),
+            }
+    else:
+        fallback = ''
+
+    existing = parsed_data.get('splice_frame_math') or ''
+    if 'Product 1 (loss / exon skip)' in existing and 'exon-internal' not in existing.lower():
+        return True
+    plain = _coding_snv_loss_skip_baseline(parsed_data, fallback)
+    if not plain:
+        return True
+    parsed_data['splice_frame_math_exon_skip_ref'] = plain
+    parsed_data['splice_frame_math'] = plain
+    loss = dl if site == 'donor' else al
+    loss_html = _build_splice_loss_summary_html(
+        parsed_data,
+        loss_signal=loss,
+        mode='acceptor' if site == 'acceptor' else 'donor',
+        product_role='Product 1 (loss / exon skip)',
+    )
+    parsed_data['splice_frame_math'] = loss_html or plain
+    parsed_data['splice_frame_math_exon_skip_ref'] = plain
+    return True
+
 # Variant-anchored junction: SpliceAI loss at the canonical site (small |Δ|) beats weak
 # same-side gain even when DS_DL/DS_AL is below the strict exon-skip-primary floor.
 SPLICEAI_JUNCTION_PROXIMAL_MAX_BP = 10
@@ -5044,6 +5586,9 @@ def _secondary_cryptic_gain_signal(parsed_data, is_don, is_acc, dg=None, ag=None
 def _format_secondary_cryptic_gain_logic_html(parsed_data):
     """Logic-explanation block for SpliceAI cryptic gain when exon-skip is primary."""
     if not parsed_data.get('spliceai_secondary_gain_product'):
+        return ''
+    # Weak same-site gain on a coding loss-skip stays on the junction map only.
+    if parsed_data.get('spliceai_gain_map_only'):
         return ''
     co = parsed_data.get('spliceai_secondary_cryptic_outcome') or {}
     co_resolved = bool(co and not co.get('minimal_signal'))
@@ -5201,8 +5746,13 @@ def _ensure_splice_secondary_cryptic_gain(http_session, parsed_data):
 def _stash_secondary_cryptic_gain_before_strip(parsed_data, co, is_don, is_acc, ag, al, dg, dl):
     """When exon-skip is primary, keep a resolved cryptic-gain model for secondary maps."""
     gain_ds, _, _ = _secondary_cryptic_gain_signal(parsed_data, is_don, is_acc, dg, ag)
-    if gain_ds < SPLICEAI_RECONCILE_MIN:
+    coding_loss = bool(parsed_data.get('coding_snv_spliceai_loss_primary'))
+    if gain_ds <= 0:
         return
+    if gain_ds < SPLICEAI_RECONCILE_MIN and not coding_loss:
+        return
+    if coding_loss and gain_ds < SPLICEAI_RECONCILE_MIN:
+        parsed_data['spliceai_gain_map_only'] = True
     if co and not co.get('minimal_signal') and (
         co.get('junction_align_ctx')
         or co.get('shift_nt') is not None
@@ -5235,6 +5785,18 @@ def _spliceai_exon_skip_takes_precedence_over_weak_cryptic(parsed_data):
     c_dot = (parsed_data.get('c_dot') or '') or ''
     is_acc = _consequence_is_acceptor_splice(cons, c_dot)
     is_don = _consequence_is_donor_splice(cons, c_dot)
+    # Only redirect when SpliceAI loss is primary on an exonic variant; leave all
+    # existing splice-site and cryptic-gain tracks untouched.
+    if not is_acc and not is_don:
+        inferred = _coding_snv_spliceai_loss_site(parsed_data)
+        if inferred == 'donor':
+            is_don = True
+            parsed_data['coding_snv_spliceai_loss_primary'] = True
+            parsed_data['coding_snv_loss_site'] = 'donor'
+        elif inferred == 'acceptor':
+            is_acc = True
+            parsed_data['coding_snv_spliceai_loss_primary'] = True
+            parsed_data['coding_snv_loss_site'] = 'acceptor'
 
     def _dp_bit(dp_key):
         v = parsed_data.get(dp_key)
@@ -6393,8 +6955,39 @@ def _viz_cds_fraction_in_anatomical_exon(coding_exons, anatomical_rank, cds_pos)
     return None
 
 
+def _acceptor_exon_rank_at_cdot_anchor(parsed_data, coding_rows):
+    """Anatomical rank of the coding exon that starts at acceptor c.N− (N = first base of that exon)."""
+    c_dot = parsed_data.get('c_dot') or ''
+    cons = parsed_data.get('consequence') or ''
+    if not (
+        _consequence_is_acceptor_splice(cons, c_dot)
+        or re.search(r'c\.\d+\s*-', str(c_dot), re.I)
+    ):
+        return None
+    m = re.search(r'c\.(\d+)\s*-', str(c_dot), re.I)
+    if not m:
+        return None
+    try:
+        n = int(m.group(1))
+    except (TypeError, ValueError):
+        return None
+    if n < 1:
+        return None
+    for cx in coding_rows or []:
+        try:
+            if int(cx.get('start_cds') or 0) == n:
+                rank = int(cx.get('anatomical_rank') or 0)
+                return rank or None
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
 def _splice_viz_resolve_target_rank(parsed_data, coding_rows):
     """Resolve anatomical exon rank for map centering / variant marker."""
+    anchored = _acceptor_exon_rank_at_cdot_anchor(parsed_data, coding_rows)
+    if anchored:
+        return anchored
     tr = parsed_data.get('variant_exon')
     try:
         tr = int(tr) if tr is not None else None
@@ -6751,14 +7344,17 @@ def _splice_viz_pre_atg_context(parsed_data, coding_rows, details=None):
 
 def _splice_viz_utr_exon_len_bp(parsed_data, coding_rows):
     """Approximate 5′-UTR exon length for schematic width (nt before first CDS base)."""
-    m = re.search(r'c\.(\d+)-', str(parsed_data.get('c_dot') or ''), re.I)
-    if m:
-        try:
-            anchor = int(m.group(1))
-            if anchor > 1:
-                return max(28, anchor - 1)
-        except (TypeError, ValueError):
-            pass
+    # An internal acceptor (c.45-2) is not the UTR. Only a real pre-AUG intron
+    # may use the c.N− anchor as a stand-in for sequence before the first CDS base.
+    if _splice_viz_pre_atg_context(parsed_data, coding_rows):
+        m = re.search(r'c\.(\d+)-', str(parsed_data.get('c_dot') or ''), re.I)
+        if m:
+            try:
+                anchor = int(m.group(1))
+                if anchor > 1:
+                    return max(28, anchor - 1)
+            except (TypeError, ValueError):
+                pass
     first = _deep_intronic_first_coding_exon(coding_rows or [])
     if first:
         try:
@@ -6796,6 +7392,57 @@ def _splice_viz_exons_full_mrna(parsed_data, coding_rows):
     for e in exons:
         e['w'] = round(max(0.0008, int(e['len_bp']) / float(total)), 6)
     return exons
+
+
+def _splice_viz_display_rank_offset(parsed_data, coding_rows):
+    """
+    +1 when a 5′ UTR exon is prepended and coding exons were numbered 1…N
+    (those ranks are shifted in the display list). 0 when coding ranks are
+    already mRNA numbers (first coding exon ≥ 2) or no UTR box is shown.
+    """
+    exons = _splice_viz_exons_full_from_rows(coding_rows)
+    show_utr = bool(
+        (parsed_data or {}).get('first_mrna_exon_is_non_coding')
+        or _splice_viz_pre_atg_context(parsed_data, coding_rows)
+    )
+    if not exons or not show_utr:
+        return 0
+    ranks = [int(e['rank']) for e in exons if int(e.get('rank') or 0) >= 1]
+    if ranks and min(ranks) == 1:
+        return 1
+    return 0
+
+
+def _splice_viz_shift_rank(rank, offset):
+    if not offset or rank is None:
+        return rank
+    try:
+        r = int(rank)
+    except (TypeError, ValueError):
+        return rank
+    return r + int(offset) if r >= 1 else rank
+
+
+def _splice_viz_shift_marker(marker, offset):
+    if not marker or not offset:
+        return marker
+    out = dict(marker)
+    for key in ('upstream_exon', 'downstream_exon', 'exon_rank'):
+        if out.get(key) is not None:
+            out[key] = _splice_viz_shift_rank(out.get(key), offset)
+    return out
+
+
+def _splice_viz_shift_ptc_markers(markers, offset):
+    if not markers or not offset:
+        return markers
+    out = {}
+    for key, layer in markers.items():
+        if isinstance(layer, dict) and layer.get('exon_rank') is not None:
+            layer = dict(layer)
+            layer['exon_rank'] = _splice_viz_shift_rank(layer.get('exon_rank'), offset)
+        out[key] = layer
+    return out
 
 
 def _splice_viz_focus_window(exons_full, center_rank, neighbor=2):
@@ -9803,8 +10450,16 @@ def _junction_align_payload_exon_skip_loss(parsed_data):
         is_acceptor_side = True
         is_donor_side = False
     else:
-        is_acceptor_side = 'splice_acceptor' in cons
-        is_donor_side = 'splice_donor' in cons or not is_acceptor_side
+        inferred_side = parsed_data.get('coding_snv_loss_site')
+        if inferred_side == 'acceptor':
+            is_acceptor_side = True
+            is_donor_side = False
+        elif inferred_side == 'donor':
+            is_donor_side = True
+            is_acceptor_side = False
+        else:
+            is_acceptor_side = 'splice_acceptor' in cons
+            is_donor_side = 'splice_donor' in cons or not is_acceptor_side
 
     win = 28
     mut_spans = []
@@ -10413,15 +11068,22 @@ def _junction_align_schematic_secondary_gain_tracks(parsed_data):
         return []
     cons = _effective_splice_consequence(parsed_data) or ''
     c_dot = (parsed_data.get('c_dot') or '').lower()
-    is_don = _consequence_is_donor_splice(cons, c_dot)
-    is_acc = _consequence_is_acceptor_splice(cons, c_dot)
+    inferred_side = parsed_data.get('coding_snv_loss_site')
+    if inferred_side == 'donor':
+        is_don, is_acc = True, False
+    elif inferred_side == 'acceptor':
+        is_don, is_acc = False, True
+    else:
+        is_don = _consequence_is_donor_splice(cons, c_dot)
+        is_acc = _consequence_is_acceptor_splice(cons, c_dot)
     try:
         dg = float(parsed_data.get('spliceai_ds_dg') or 0.0)
         ag = float(parsed_data.get('spliceai_ds_ag') or 0.0)
     except (TypeError, ValueError):
         return []
     gain_ds, _, gain_lbl = _secondary_cryptic_gain_signal(parsed_data, is_don, is_acc, dg, ag)
-    if gain_ds < SPLICEAI_RECONCILE_MIN:
+    gain_floor = 0.01 if parsed_data.get('spliceai_gain_map_only') else SPLICEAI_RECONCILE_MIN
+    if gain_ds < gain_floor:
         return []
 
     skip_payload = _junction_align_payload_exon_skip_loss(parsed_data)
@@ -11033,8 +11695,9 @@ def _build_splice_viz_payload(parsed_data):
     c_d_v = parsed_data.get('c_dot') or ''
     exons_full = _splice_viz_exons_full_mrna(parsed_data, rows)
     total_exons_full = len(exons_full)
+    _viz_rank_offset = _splice_viz_display_rank_offset(parsed_data, rows)
     try:
-        last_anat = max(int(e['rank']) for e in exons_full) if exons_full else int(rows[-1].get('anatomical_rank') or 0)
+        last_anat = int(rows[-1].get('anatomical_rank') or 0)
     except (TypeError, ValueError):
         last_anat = 0
     variant_marker = (
@@ -11044,16 +11707,29 @@ def _build_splice_viz_payload(parsed_data):
     )
 
     if not splice_mode:
-        ref_focus = _splice_viz_focus_window(exons_full, tr, 2) if tr is not None else None
-        ptc_markers = _build_splice_viz_ptc_markers(parsed_data, False, False)
+        tr_ref = _splice_viz_shift_rank(tr, _viz_rank_offset)
+        variant_marker = _splice_viz_shift_marker(variant_marker, _viz_rank_offset)
+        ref_focus = _splice_viz_focus_window(exons_full, tr_ref, 2) if tr_ref is not None else None
+        ptc_markers = _splice_viz_shift_ptc_markers(
+            _build_splice_viz_ptc_markers(parsed_data, False, False),
+            _viz_rank_offset,
+        )
+        try:
+            _first_coding = int(rows[0].get('anatomical_rank') or 0)
+        except (TypeError, ValueError):
+            _first_coding = 0
         out = {
             'eligible': True,
             'reference_only': True,
             'gene': (parsed_data.get('gene_symbol') or parsed_data.get('gene') or '') or '',
             'exons_full': exons_full,
             'total_exons_full': total_exons_full,
-            'target_rank': tr,
+            'target_rank': tr_ref,
             'variant_marker': variant_marker,
+            'first_mrna_utr': bool(parsed_data.get('first_mrna_exon_is_non_coding')),
+            'start_codon_exon_rank': (
+                _splice_viz_shift_rank(_first_coding, _viz_rank_offset) if _first_coding >= 1 else None
+            ),
             'hgvs_c_for_viz': (c_d_v or '').strip(),
             'is_donor': _consequence_is_donor_splice(cons, c_d_v),
             'is_acceptor': _consequence_is_acceptor_splice(cons, c_d_v),
@@ -11137,8 +11813,9 @@ def _build_splice_viz_payload(parsed_data):
         _cons_j = _effective_splice_consequence(parsed_data)
         if sh_neg < 0 and _consequence_is_acceptor_splice(_cons_j, _c_d_j):
             deleted = abs(sh_neg)
+            _tr_disp = _splice_viz_shift_rank(tr, _viz_rank_offset)
             ex_row = next(
-                (e for e in exons_full if int(e.get('rank') or 0) == int(tr)),
+                (e for e in exons_full if int(e.get('rank') or 0) == int(_tr_disp)),
                 None,
             )
             if ex_row:
@@ -11149,6 +11826,7 @@ def _build_splice_viz_payload(parsed_data):
                 if ex_len > 0:
                     ei_cut_fraction = max(0.03, min(0.97, deleted / float(ex_len)))
                     ei_cut_side = 'acceptor'
+                    # Anatomical here; the display-rank pass below adds the UTR offset once.
                     ei_cut_exon_rank = int(tr)
 
     _viz_sec_schematic = _splice_viz_secondary_gain_schematic_fields(parsed_data)
@@ -11284,7 +11962,8 @@ def _build_splice_viz_payload(parsed_data):
     elif parsed_data.get("spliceai_secondary_donor_oof") is False:
         sec_in_fr = True
     if sec_in_fr is None and sec_rank is not None:
-        e_sec = next((e for e in exons_full if int(e.get('rank')) == sec_rank), None)
+        _sec_disp = _splice_viz_shift_rank(sec_rank, _viz_rank_offset)
+        e_sec = next((e for e in exons_full if int(e.get('rank')) == _sec_disp), None)
         if e_sec and e_sec.get('len_bp') is not None:
             try:
                 lp = int(e_sec['len_bp'])
@@ -11531,6 +12210,35 @@ def _build_splice_viz_payload(parsed_data):
     if di_viz_alt2:
         di_viz_alt2 = _enrich_alt_viz_ptc(di_viz_alt2, co_alt2_out)
 
+    # One display scale: when UTR E1 is prepended onto coding ranks 1…N, shift
+    # stripe, diamond, and Ter together. Pre-ATG ranks are already mRNA numbers.
+    if _viz_rank_offset and not di_pre_atg_utr:
+        tr = _splice_viz_shift_rank(tr, _viz_rank_offset)
+        sec_rank = _splice_viz_shift_rank(sec_rank, _viz_rank_offset)
+        variant_marker = _splice_viz_shift_marker(variant_marker, _viz_rank_offset)
+        ei_cut_exon_rank = _splice_viz_shift_rank(ei_cut_exon_rank, _viz_rank_offset)
+        anchor_exon_rank = _splice_viz_shift_rank(anchor_exon_rank, _viz_rank_offset)
+        next_exon_rank = _splice_viz_shift_rank(next_exon_rank, _viz_rank_offset)
+        ptc_markers = _splice_viz_shift_ptc_markers(ptc_markers, _viz_rank_offset)
+        focus_primary = _splice_viz_focus_window(exons_full, tr, neigh)
+        focus_junction = focus_primary
+        focus_secondary = (
+            _splice_viz_focus_window(exons_full, sec_rank, neigh) if sec_rank is not None else None
+        )
+    elif _viz_rank_offset and di_pre_atg_utr:
+        sec_rank = _splice_viz_shift_rank(sec_rank, _viz_rank_offset)
+        ei_cut_exon_rank = _splice_viz_shift_rank(ei_cut_exon_rank, _viz_rank_offset)
+        ptc_markers = _splice_viz_shift_ptc_markers(ptc_markers, _viz_rank_offset)
+        if sec_rank is not None:
+            focus_secondary = _splice_viz_focus_window(exons_full, sec_rank, neigh)
+    if start_codon_exon_rank is None and rows:
+        try:
+            _first_coding = int(rows[0].get('anatomical_rank') or 0)
+        except (TypeError, ValueError):
+            _first_coding = 0
+        if _first_coding >= 1:
+            start_codon_exon_rank = _first_coding + (0 if di_pre_atg_utr else _viz_rank_offset)
+
     ptc_loc_kind, ptc_loc_label, ptc_loc_detail = _viz_ptc_loc_from_outcome(co_pri or co)
     skip_ptc_kind, skip_ptc_label, skip_ptc_detail = None, None, None
     sec_skip_ptc_kind, sec_skip_ptc_label, sec_skip_ptc_detail = None, None, None
@@ -11593,7 +12301,7 @@ def _build_splice_viz_payload(parsed_data):
         'deep_intronic_products': di_products,
         'in_frame_exonization': di_exonization,
         'pre_atg_utr_pseudoexon': di_pre_atg_utr,
-        'start_codon_exon_rank': start_codon_exon_rank if di_pre_atg_utr else None,
+        'start_codon_exon_rank': start_codon_exon_rank,
         'pseudoexon_insert_nt': pseudo_insert_nt,
         'use_exonization_schematic': use_exonization_schematic,
         'primary_mechanism': pri_mech or None,
@@ -11997,6 +12705,16 @@ def _deep_intronic_cdot_in_pre_first_coding_intron(c_dot, coding_exons, details)
         start_cds = int(first.get('start_cds') or 1)
     except (TypeError, ValueError):
         return False
+    # A later coding exon that begins at this c.N is an internal acceptor
+    # (COL4A2 c.45-2 → exon at c.45), not the intron before AUG.
+    for cx in coding_exons or []:
+        try:
+            sc = int(cx.get('start_cds') or 0)
+            rk = int(cx.get('anatomical_rank') or 0)
+        except (TypeError, ValueError):
+            continue
+        if sc == anchor and rk > 0 and rk != first_rank:
+            return False
     intron_idx = _deep_intronic_intron_upstream_anatomical_rank(details)
     if intron_idx > 0:
         return intron_idx < first_rank
@@ -15421,6 +16139,7 @@ def _deep_intronic_full_product_html_blocks(parsed_data):
 
 def _build_splice_products_panel_html(parsed_data):
     """UI panel — full splice product detail (coordinates, geometry, frame, PTC, NMD)."""
+    _sync_early_oof_next_met_splice_logic(parsed_data)
     parts = []
     plp_banner = (_skipped_exon_plp_scan_banner_html(parsed_data) or '').strip()
     if plp_banner:

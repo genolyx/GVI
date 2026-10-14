@@ -18,10 +18,10 @@ html:not(.dark) .samvc-review {
   --card-bg: rgb(11 21 32 / 3%);
   --card-border: rgb(11 21 32 / 10%);
   --text-main: #0b1520;
-  --text-muted: #5c6f82;
+  --text-muted: #243044;
   --line: rgb(11 21 32 / 12%);
-  --sv-muted: #5c6f82;
-  --sv-ink: #0b1520;
+  --sv-muted: #243044;
+  --sv-ink: #1a2332;
 }
 /* Review uses full classifier width (wb-main is 1200px by default). */
 body.wb-review-page .wb-main {
@@ -714,6 +714,28 @@ html:not(.dark) .samvc-review .splice-viz-wrap [style*="rgba(20,20,30"] span {
 html:not(.dark) .samvc-review .splice-map-section-label,
 html:not(.dark) .samvc-review .splice-track-tag {
   color: #0b1520 !important;
+}
+
+/* Light review: the map is a light card, and captions use dark ink.
+   Exon letters stay light because they sit on the teal boxes. */
+html:not(.dark) .samvc-review .splice-viz-wrap {
+  background: #f4f7f9 !important;
+  border-color: rgb(11 21 32 / 14%) !important;
+  color: #1a2332 !important;
+}
+html:not(.dark) .samvc-review .splice-viz-note,
+html:not(.dark) body .samvc-review [style*="#94a3b8"],
+html:not(.dark) body .samvc-review [style*="#cbd5e1"],
+html:not(.dark) body .samvc-review [style*="#e2e8f0"],
+html:not(.dark) body .samvc-review [style*="#f8fafc"] {
+  color: #1a2332 !important;
+}
+html:not(.dark) .samvc-review .splice-viz-wrap [style*="background:#1e7386"] span,
+html:not(.dark) .samvc-review .splice-viz-wrap [style*="rgba(20,20,30"] span {
+  color: #f8fafc !important;
+}
+html:not(.dark) .samvc-review .splice-viz-wrap span.splice-met {
+  color: #fde68a !important;
 }
 
 /* Drop the colored left rule. Keep the callout fill and warning colors. */

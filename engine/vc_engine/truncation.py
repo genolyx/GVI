@@ -159,6 +159,36 @@ def sync_truncation_fraction_from_ptc(parsed_data: MutableMapping[str, Any]) -> 
             return float(parsed_data.get("nmd_escape_truncation_fraction") or 0)
         except (TypeError, ValueError):
             return 0.0
+    # Exon-internal out-of-frame cryptic splice: keep the translated product percent.
+    # A later skipped-exon pass must not replace it with whole-exon onset math.
+    if parsed_data.get("splice_viz_exon_internal_cryptic"):
+        cg = parsed_data.get("cryptic_gain_outcome") or {}
+        if isinstance(cg, dict) and not cg.get("whole_exon_skip") and cg.get("in_frame") is False:
+            try:
+                tf = float(cg.get("truncation_fraction"))
+            except (TypeError, ValueError):
+                tf = None
+            if tf is not None and tf > 0:
+                parsed_data["nmd_escape_truncation_fraction"] = tf
+                return tf
+    # Early OOF exon skip that keeps Met1: percent is next in-frame Met / protein length.
+    if parsed_data.get("early_oof_exon_skip_next_met"):
+        try:
+            plen = int(parsed_data.get("protein_length") or 0)
+        except (TypeError, ValueError):
+            plen = 0
+        try:
+            nmet = int(parsed_data.get("next_methionine_position") or 0)
+        except (TypeError, ValueError):
+            nmet = 0
+        if nmet > 0 and plen > 0:
+            frac = start_loss_fraction_from_next_met(nmet, plen)
+            parsed_data["nmd_escape_truncation_fraction"] = frac
+            return frac
+        try:
+            return float(parsed_data.get("nmd_escape_truncation_fraction") or 0)
+        except (TypeError, ValueError):
+            return 0.0
     # In-frame whole-exon skip without a PTC uses splice_fraction_lost (residues removed), not C-term loss.
     if (
         parsed_data.get("splice_is_in_frame")

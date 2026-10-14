@@ -45,8 +45,10 @@ function buildSpliceVizHtml(sv, opts) {
     const metBadgeHtml = (rank, cfg) => {
         const metRank = (cfg && cfg.startCodonExonRank != null) ? parseInt(cfg.startCodonExonRank, 10) : null;
         if (metRank == null || isNaN(metRank) || parseInt(rank, 10) !== metRank) return '';
-        const tip = T('Start codon (AUG) — original Met; UTR pseudo-exon insert is upstream and does not introduce a new Met.');
-        return '<span style="position:absolute;left:6px;top:2px;font-size:0.48rem;font-weight:800;color:#fde68a;line-height:1;'
+        const tip = (metRank > 1)
+            ? T('Coding starts in exon ' + metRank + '; exon 1 is 5\u2032 UTR.')
+            : T('Start codon (AUG) — original Met.');
+        return '<span class="splice-met" style="position:absolute;left:6px;top:2px;font-size:0.48rem;font-weight:800;color:#fde68a;line-height:1;'
             + 'text-shadow:0 0 6px rgba(253,224,106,0.45);z-index:2;" title="' + tip + '">Met</span>';
     };
 
@@ -886,6 +888,8 @@ function buildSpliceVizHtml(sv, opts) {
             preStyleMode: 'skip-pre',
             mrnaStyleMode: 'skip',
             skipRank: target,
+            startCodonExonRank: sv.start_codon_exon_rank,
+            utrExonRank: (sv.first_mrna_utr || sv.pre_atg_utr_pseudoexon) ? 1 : null,
             ptcList: ptcTargetsFromLayer(pm.skip),
         }),
         ptcLocFromSv('skip_ptc_location_kind', 'skip_ptc_location_label', 'skip_ptc_location_detail', (pm.skip && pm.skip.hgvs_p) || '')
@@ -1091,7 +1095,7 @@ function buildSpliceVizHtml(sv, opts) {
                 ptcList: refPtcList,
                 fadeAfterRank: refPtcEr,
                 startCodonExonRank: sv.start_codon_exon_rank,
-                utrExonRank: sv.pre_atg_utr_pseudoexon ? 1 : null,
+                utrExonRank: (sv.first_mrna_utr || sv.pre_atg_utr_pseudoexon) ? 1 : null,
             }),
             refPtcCap
         );
@@ -1109,9 +1113,15 @@ function buildSpliceVizHtml(sv, opts) {
         }
     }
     if (showReference || showIsoforms) {
-        h += '<div style="font-size:0.68rem;color:var(--sv-muted,#94a3b8);margin-top:10px;line-height:1.45;border-top:1px solid var(--line,rgba(255,255,255,0.06));padding-top:8px;">'
+        h += '<div class="splice-viz-note" style="font-size:0.68rem;color:var(--sv-ink,#1a2332);margin-top:10px;line-height:1.45;border-top:1px solid var(--line,rgba(255,255,255,0.12));padding-top:8px;">'
             + '<strong style="color:var(--sv-ink,#cbd5e1);">How to read this map</strong> '
             + (showReference ? '<span style="color:#fbbf24;">\u25C6</span> = variant locus on the reference gene row (exon position is schematic from HGVSc). ' : '')
+            + (sv.start_codon_exon_rank
+                ? '<strong style="color:#fde68a;">Met</strong> marks the start codon on the first coding exon'
+                    + (sv.first_mrna_utr
+                        ? ' (coding starts in exon ' + sv.start_codon_exon_rank + '; exon 1 is 5\u2032 UTR). '
+                        : '. ')
+                : '')
             + (showIsoforms
                 ? '(schematic; exon box width \u221d coding bp — same width in Pre-mRNA and mRNA rows). Each isoform shows a <strong>Pre-mRNA</strong> row (gene with introns) and an <strong>mRNA</strong> row (spliced product). '
                     + 'Striped exon = removed in that isoform\u2019s mRNA product. '

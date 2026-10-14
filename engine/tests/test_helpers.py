@@ -260,6 +260,104 @@ def test_hydrate_splice_excised_region_from_cryptic_gain():
     assert pd["skipped_exon_aa_range"] == [1500, 1504]
 
 
+def test_exon_internal_frameshift_scans_downstream_not_skipped_exon():
+    """ABCD1-style c.2016G>C: exon-internal OOF acceptor loss is a frameshift.
+
+    The splice product percent and NMD escape stay. P/LP is downstream of the
+    PTC, not a skipped-exon scan of the whole last exon.
+    """
+    from vc_engine.analyze import _ensure_skipped_exon_interval_and_plp_scan
+    from vc_engine.regions import (
+        _needs_downstream_clinvar_plp,
+        _suppress_skipped_exon_scan_for_exon_internal_frameshift,
+        _whole_exon_skip_modeled,
+        _hydrate_splice_excised_region,
+    )
+    from vc_engine.scoring import apply_acmg
+    from vc_engine.splice import _whole_exon_skip_primary_resolved
+    from vc_engine.truncation import sync_truncation_fraction_from_ptc
+
+    pd = {
+        "gene_symbol": "ABCD1",
+        "c_dot": "c.2016G>C",
+        "consequence": "missense",
+        "variant_exon": 10,
+        "protein_length": 745,
+        "splice_is_in_frame": False,
+        "is_splice_frameshift": True,
+        "nmd_escape": True,
+        "nmd_escape_truncation_fraction": 0.11,
+        "protein_start": 663,
+        "downstream_aas": 0,
+        "novel_stop_aa": 682,
+        "splice_viz_exon_internal_cryptic": True,
+        "splice_frame_math": "<b>Product 1 (primary) — exon-internal acceptor loss:</b>",
+        "splice_fraction_lost": 0.85,
+        "cryptic_gain_outcome": {
+            "deleted_nt": 25,
+            "whole_exon_skip": False,
+            "in_frame": False,
+            "truncation_fraction": 0.085,
+            "new_stop_aa": 682,
+            "excised_cdna_lo": 2013,
+            "excised_cdna_hi": 2037,
+            "exon_cds_start": 1930,
+            "exon_cds_end": 2235,
+        },
+        "coding_exons": [{
+            "anatomical_rank": 10,
+            "start_cds": 1930,
+            "end_cds": 2235,
+            "length_bp": 306,
+            "chr": "X",
+            "start": 153000000,
+            "end": 153000305,
+        }],
+        "splice_deleted_coords": {"chr": "X", "start": 153000000, "end": 153000305},
+        "splice_target_start_cds": 1930,
+        "splice_target_end_cds": 2235,
+        "skipped_exon_aa_range": [644, 746],
+        "skipped_exon_plp_checked": True,
+        "has_pathogenic_in_deleted_exon": True,
+        "disease_mechanism": "LOF",
+    }
+    assert not _whole_exon_skip_modeled(pd)
+    assert not _whole_exon_skip_primary_resolved(pd)
+    assert _needs_downstream_clinvar_plp(pd)
+    assert abs(sync_truncation_fraction_from_ptc(pd) - 0.085) < 1e-9
+    assert _suppress_skipped_exon_scan_for_exon_internal_frameshift(pd)
+    assert "splice_deleted_coords" not in pd
+    assert "skipped_exon_aa_range" not in pd
+    assert not pd.get("has_pathogenic_in_deleted_exon")
+    assert _ensure_skipped_exon_interval_and_plp_scan(pd, "ABCD1") is False
+    assert "splice_deleted_coords" not in pd
+    assert not _hydrate_splice_excised_region(pd)
+
+    quiet = apply_acmg(dict(pd))["criteria"]
+    assert not any(c.get("code") == "PVS1" for c in quiet)
+    assert not any("skipped" in (c.get("desc") or "").lower() for c in quiet)
+
+    with_down = dict(pd)
+    with_down["has_downstream_pathogenic"] = True
+    hit = [c for c in apply_acmg(with_down)["criteria"] if c.get("code") == "PVS1"]
+    assert len(hit) == 1
+    assert "downstream P/LP" in hit[0]["desc"]
+    assert "skipped" not in hit[0]["desc"].lower()
+
+    severe = dict(pd)
+    severe["cryptic_gain_outcome"] = dict(pd["cryptic_gain_outcome"], truncation_fraction=0.11)
+    severe["nmd_escape_truncation_fraction"] = 0.11
+    sev = [c for c in apply_acmg(severe)["criteria"] if c.get("code") == "PVS1"]
+    assert len(sev) == 1
+    assert "11.0%" in sev[0]["desc"]
+
+    nmd = dict(pd)
+    nmd["nmd_escape"] = False
+    nmd_hit = [c for c in apply_acmg(nmd)["criteria"] if c.get("code") == "PVS1"]
+    assert len(nmd_hit) == 1
+    assert "NMD is predicted" in nmd_hit[0]["desc"]
+
+
 def test_hydrate_whole_exon_skip_deleted_coords_from_variant_exon():
     from vc_engine.regions import _hydrate_whole_exon_skip_deleted_coords
 
@@ -1205,6 +1303,7 @@ def test_merge_hgmd_downstream_and_skipped_exon():
     import vc_engine.hgmd as h
 
     saved = list(h.GLOBAL_HGMD_POSITIONAL_ENTRIES)
+    saved_gene = list(h.GLOBAL_HGMD_BY_GENE.get("AMT") or [])
     try:
         h.GLOBAL_HGMD_POSITIONAL_ENTRIES.clear()
         h.GLOBAL_HGMD_POSITIONAL_ENTRIES.append(
@@ -1214,13 +1313,30 @@ def test_merge_hgmd_downstream_and_skipped_exon():
                 "hgvs_c": "c.878-1G>A",
                 "tag": "DM",
                 "positions": [293],
+                "pmids": ["36636894"],
             }
         )
-        downstream = []
+        h.GLOBAL_HGMD_BY_GENE.setdefault("AMT", []).append(
+            {
+                "hgvs_c": "c.2051T>C",
+                "pmids": ["11112222"],
+            }
+        )
+        downstream = [
+            {
+                "label": "c.2051T>C (Pathogenic)",
+                "source": "clinvar",
+                "c_dot_norm": "c.2051t>c",
+                "position": 200,
+            }
+        ]
         h._merge_hgmd_downstream_hits(downstream, "AMT", 100)
-        assert len(downstream) == 1
-        assert downstream[0]["source"] == "hgmd"
-        assert downstream[0]["position"] == 293
+        assert len(downstream) == 2
+        assert downstream[1]["source"] == "hgmd"
+        assert downstream[1]["position"] == 293
+        assert downstream[1]["pmids"] == ["36636894"]
+        assert downstream[1]["label"].startswith("c.878-1G>A")
+        assert downstream[0]["pmids"] == ["11112222"]
 
         # outside the residue range -> no hit
         none_hits = []
@@ -1234,6 +1350,10 @@ def test_merge_hgmd_downstream_and_skipped_exon():
     finally:
         h.GLOBAL_HGMD_POSITIONAL_ENTRIES.clear()
         h.GLOBAL_HGMD_POSITIONAL_ENTRIES.extend(saved)
+        if saved_gene:
+            h.GLOBAL_HGMD_BY_GENE["AMT"] = saved_gene
+        else:
+            h.GLOBAL_HGMD_BY_GENE.pop("AMT", None)
 
 
 def test_canonical_splice_junction_pre_atg_acceptor():
@@ -1931,12 +2051,16 @@ def test_exon_boundary_donor_loss_whole_exon_skip_cdk13():
         'cds_seq': cds_seq,
     }
     sp._resolve_exon_internal_cryptic_outcome(None, pd)
-    cg = pd.get('cryptic_gain_outcome') or {}
-    assert cg.get('whole_exon_skip') is True
-    assert cg.get('deleted_nt') == 190
-    assert cg.get('in_frame') is False
-    assert (pd.get('splice_frame_math') or '').strip()
-    assert 'whole-exon skip' in (cg.get('narrative') or '').lower()
+    math = pd.get('splice_frame_math') or ''
+    assert pd.get('splice_viz_exon_internal_cryptic') is not True
+    assert not pd.get('cryptic_gain_outcome')
+    assert 'Product 1 (loss / exon skip)' in math
+    assert 'exon-internal' not in math.lower()
+    assert 'DS_DL' in math
+    assert '190' in math
+    assert pd.get('splice_is_in_frame') is False
+    assert pd.get('spliceai_exon_skip_spliceai_primary') is True
+    assert 'whole-exon skip' in math.lower()
 
 
     import vc_engine.splice as sp
@@ -1953,6 +2077,103 @@ def test_exon_boundary_donor_loss_whole_exon_skip_cdk13():
     assert any(m.get('kind') == 'start_codon' for m in markers)
     met_idx = next(m['index'] for m in markers if m.get('kind') == 'start_codon')
     assert ''.join(b['nt'] for b in bases[met_idx:met_idx + 3]) == 'ATG'
+
+
+def test_coding_snv_spliceai_loss_whole_exon_skip_nbea(monkeypatch):
+    """Exonic synonymous SNV with dominant donor loss uses whole-exon skip."""
+    import vc_engine.splice as sp
+    from vc_engine.analyze import _run_skipped_exon_clinvar_plp_scan
+    from vc_engine.regions import (
+        _resolve_skipped_coding_exon_row,
+        _skipped_exon_plp_scan_banner_html,
+    )
+
+    monkeypatch.setattr(sp, '_junction_align_donor_intron_flank', lambda *a, **k: (None, None))
+    cds = ['A'] * 1500
+    cds[1238] = 'G'
+    coding_exons = [
+        {
+            'start_cds': 1099, 'end_cds': 1239, 'anatomical_rank': 9, 'length_bp': 141,
+            'chr': '13', 'start': 35000000, 'end': 35000140,
+        },
+        {
+            'start_cds': 1240, 'end_cds': 1400, 'anatomical_rank': 10, 'length_bp': 161,
+            'chr': '13', 'start': 35010000, 'end': 35010160,
+        },
+    ]
+    pd = {
+        'consequence': 'synonymous_variant',
+        'c_dot': 'c.1239G>A',
+        'hgvs_p': 'p.=',
+        'snpeff_cds_pos': 1239,
+        'ref': 'G',
+        'alt': 'A',
+        'protein_length': 500,
+        'transcript_strand': 1,
+        'spliceai_fetched': True,
+        'spliceai_ds_ag': 0.0,
+        'spliceai_ds_al': 0.02,
+        'spliceai_ds_dg': 0.16,
+        'spliceai_ds_dl': 0.89,
+        'spliceai_dp_dg': 4,
+        'spliceai_dp_dl': 0,
+        'coding_exons': coding_exons,
+        'cds_seq': ''.join(cds),
+        'variant_exon': 9,
+    }
+    skipped = _resolve_skipped_coding_exon_row(pd, coding_exons)
+    assert skipped and skipped['anatomical_rank'] == 9
+    sp._resolve_exon_internal_cryptic_outcome(None, pd)
+    math = pd.get('splice_frame_math') or ''
+    intro = sp._build_splice_variant_intro_short(pd, 'NBEA', 'c.1239G>A')
+    assert 'donor-side' in intro
+    assert 'p.=' in intro
+    assert 'in-frame' in intro
+    assert pd.get('hgvs_p') == 'p.='
+    assert 'Product 1 (loss / exon skip)' in math
+    assert 'DS_DL' in math
+    assert 'exon-internal' not in math.lower()
+    assert 'Product 1 (gain' not in math
+    assert pd.get('spliceai_gain_map_only') is True
+    assert sp._format_secondary_cryptic_gain_logic_html(pd) == ''
+    payload = sp._build_junction_align_payload(pd)
+    assert payload.get('eligible') is True
+    assert pd.get('splice_deleted_coords', {}).get('chr') == '13'
+    _run_skipped_exon_clinvar_plp_scan(pd, 'NBEA')
+    banner = _skipped_exon_plp_scan_banner_html(pd)
+    assert 'Not run' not in banner
+    assert pd.get('skipped_exon_plp_checked') or pd.get('skipped_exon_plp_vcf_unavailable')
+
+    kept = dict(pd)
+    kept['hgvs_p'] = 'p.K413='
+    kept['splice_frame_math'] = ''
+    sp._apply_coding_snv_loss_exon_skip(kept)
+    intro_k = sp._build_splice_variant_intro_short(kept, 'NBEA', 'c.1239G>A')
+    assert 'p.K413=' in intro_k
+    assert kept.get('hgvs_p') == 'p.K413='
+
+    canonical = dict(pd)
+    canonical['c_dot'] = 'c.1239+1G>A'
+    canonical['consequence'] = 'splice_donor_variant'
+    assert sp._coding_snv_spliceai_loss_site(canonical) is None
+
+    cryptic_gain = dict(pd)
+    cryptic_gain['spliceai_ds_dg'] = 0.90
+    cryptic_gain['spliceai_ds_dl'] = 0.10
+    cryptic_gain['splice_frame_math'] = ''
+    cryptic_gain.pop('coding_snv_spliceai_loss_primary', None)
+    cryptic_gain.pop('coding_snv_loss_site', None)
+    assert sp._coding_snv_spliceai_loss_site(cryptic_gain) is None
+
+    competing = dict(pd)
+    competing['spliceai_ds_dg'] = 0.85
+    competing['spliceai_ds_dl'] = 0.99
+    assert sp._coding_snv_spliceai_loss_site(competing) is None
+
+    deep = dict(pd)
+    deep['c_dot'] = 'c.1239+189C>T'
+    deep['deep_intronic_splice_products_active'] = True
+    assert sp._coding_snv_spliceai_loss_site(deep) is None
 
 
 def test_literature_filter_drops_hallucinated_c_dot():
@@ -2615,6 +2836,188 @@ def test_suppress_start_loss_nmd_for_in_frame_exon_skip():
     assert pd.get('next_methionine_position') is None
     assert pd.get('nmd_escape') is True
     assert 'In-frame whole-exon skip' in (pd.get('nmd_decision_basis') or '')
+
+
+def _cds_with_met_at(met_aa):
+    """Reference CDS of AAA codons with ATG at aa 1 and at met_aa (original frame)."""
+    n = int(met_aa) * 3
+    seq = ['A'] * n
+    seq[0:3] = list('ATG')
+    start = (int(met_aa) - 1) * 3
+    seq[start:start + 3] = list('ATG')
+    return ''.join(seq)
+
+
+def test_col4a2_early_oof_skip_next_met_and_map():
+    """COL4A2 c.45-2: small 5′ OOF skip keeps Met1; map uses one display rank scale."""
+    import pytest
+    import vc_engine.splice as sp
+    from vc_engine.regions import _resolve_skipped_coding_exon_row
+    from vc_engine.scoring import apply_acmg
+    from vc_engine.truncation import sync_truncation_fraction_from_ptc
+
+    coding = [
+        {
+            'anatomical_rank': 1, 'start_cds': 1, 'end_cds': 44, 'length_bp': 44,
+            'chr': '13', 'start': 110000, 'end': 110043,
+        },
+        {
+            'anatomical_rank': 2, 'start_cds': 45, 'end_cds': 99, 'length_bp': 55,
+            'chr': '13', 'start': 110200, 'end': 110254,
+        },
+        {
+            'anatomical_rank': 3, 'start_cds': 100, 'end_cds': 250, 'length_bp': 151,
+            'chr': '13', 'start': 110400, 'end': 110550,
+        },
+        # NM_001846 mRNA exon 10 is coding rank 9 when exon 1 is UTR: c.586–648 holds aa 207.
+        {
+            'anatomical_rank': 9, 'start_cds': 586, 'end_cds': 648, 'length_bp': 63,
+            'chr': '13', 'start': 111000, 'end': 111062,
+        },
+    ]
+    # Stale variant_exon points at the Met exon; c.45-2 must select the exon that starts at c.45.
+    skipped = _resolve_skipped_coding_exon_row(
+        {'c_dot': 'c.45-2A>C', 'variant_exon': 1, 'consequence': 'splice_acceptor_variant'},
+        coding,
+    )
+    assert skipped and int(skipped['start_cds']) == 45
+
+    assert not sp._deep_intronic_cdot_in_pre_first_coding_intron('c.45-2A>C', coding, {})
+    assert sp._deep_intronic_cdot_in_pre_first_coding_intron(
+        'c.29-890C>T',
+        [{'anatomical_rank': 2, 'start_cds': 1, 'end_cds': 100}],
+        {'intron_index_1based': 1},
+    )
+    # Missing intron index still treats INTS11-style c.29-890 as pre-AUG.
+    assert sp._deep_intronic_cdot_in_pre_first_coding_intron(
+        'c.29-890C>T',
+        [{'anatomical_rank': 2, 'start_cds': 1, 'end_cds': 100}],
+        {},
+    )
+
+    protein_len = 1712
+    pd = {
+        'gene_symbol': 'COL4A2',
+        'c_dot': 'c.45-2A>C',
+        'consequence': 'splice_acceptor_variant',
+        'variant_exon': 1,
+        'first_mrna_exon_is_non_coding': True,
+        'coding_exons': coding,
+        'splice_is_in_frame': False,
+        'splice_target_start_cds': 45,
+        'splice_target_end_cds': 99,
+        'protein_length': protein_len,
+        'cds_seq': _cds_with_met_at(207),
+        'splice_frame_math': 'Exon length 55 bp: out-of-frame skip.',
+        'splice_deleted_coords': {'chr': '13', 'start': 110200, 'end': 110254},
+        'exon_skip_oof_ptc_exon_rank': 3,
+        'exon_skip_oof_ptc_aa': 400,
+        'exon_skip_oof_ptc_fraction_in_exon': 0.4,
+        'novel_stop_aa': 400,
+        'disease_mechanism': 'LOF',
+    }
+    assert sp._apply_early_oof_exon_skip_next_met(pd)
+    assert pd['next_methionine_position'] == 207
+    assert pd['next_methionine_exon'] == 10
+    assert pd['next_methionine_cdot'] == 619
+    assert pd['next_methionine_nt_in_exon'] == 34
+    assert pd['nmd_escape_truncation_fraction'] == pytest.approx(207 / protein_len)
+    assert pd['nmd_escape_truncation_fraction'] >= 0.10
+    assert pd['skipped_exon_aa_range'] == [15, 33]
+    assert pd['splice_fraction_lost'] == pytest.approx(19 / protein_len)
+    assert 'unresolved' not in (pd.get('nmd_decision_basis') or '').lower()
+    assert pd.get('early_oof_exon_skip_next_met') is True
+
+    # C-terminal PTC sync and exon-skip truncation must not replace the next-Met %.
+    sync_truncation_fraction_from_ptc(pd)
+    sp._apply_exon_skip_truncation_as_primary(pd)
+    assert pd['nmd_escape_truncation_fraction'] == pytest.approx(207 / protein_len)
+    assert pd['next_methionine_position'] == 207
+
+    scored = apply_acmg(dict(pd))['criteria']
+    pvs1 = [c for c in scored if c.get('code') == 'PVS1']
+    assert len(pvs1) == 1
+    desc = pvs1[0]['desc']
+    assert 'N-terminus' in desc
+    assert '207' in desc
+    assert 'exon 10' in desc
+    assert 'c.619' in desc
+    assert 'presumed NMD' not in desc
+    assert 'upstream P/LP re-initiation escape does not apply' in desc
+
+    pd['splice_frame_math'] = (
+        '<b>Product 1 (loss / exon skip) — canonical acceptor loss → whole-exon skip:</b><br>'
+        '<b>NMD:</b> predicted (frameshift → PTC in an internal coding exon).<br>'
+        '<span style="color:#94a3b8;font-size:0.88em">'
+        'Computational splice model only — not RNA/minigene evidence.</span><br><br>'
+        '<b>SOP logic:</b> out-of-frame shift (1.1% of protein lost in the spliced product) '
+        '&rarr; <b>PVS1</b> by default (NMD-predicted unless the variant escapes NMD).'
+    )
+    panel = sp._build_splice_products_panel_html(pd)
+    assert 'Met1 is kept after this early out-of-frame skip' in panel
+    assert 'aa 207 in exon 10' in panel
+    assert 'c.619' in panel
+    assert 'nucleotide 34 of that exon' in panel
+    assert '12.1%' in panel
+    assert panel.index('Met1 is kept after this early') < panel.index('Computational splice model only')
+    assert 'PVS1</b> by default' not in panel
+    assert 'severe' in (pd.get('splice_pvs1_logic_sentence') or '')
+    assert 'novel stop' in (pd.get('splice_pvs1_logic_sentence') or '')
+
+    sv = sp._build_splice_viz_payload(pd)
+    assert sv.get('eligible'), sv.get('reason')
+    assert sv.get('pre_atg_utr_pseudoexon') is not True
+    assert sv.get('first_mrna_utr') is True
+    assert sv.get('target_rank') == 3
+    marker = sv.get('variant_marker') or {}
+    assert marker.get('mode') == 'intron'
+    assert marker.get('upstream_exon') == 2
+    assert marker.get('downstream_exon') == 3
+    assert sv.get('start_codon_exon_rank') == 2
+    by_rank = {int(e['rank']): int(e['len_bp']) for e in sv['exons_full']}
+    assert by_rank[1] != 44  # UTR box is not the coding sequence before c.45
+    assert by_rank[2] == 44  # Met exon
+    assert by_rank[3] == 55  # skipped exon at c.45
+    skip_ptc = (sv.get('ptc_markers') or {}).get('skip') or {}
+    assert skip_ptc.get('exon_rank') == 4  # anatomical 3, same +1 display scale
+
+    # Coding ranks already mRNA numbers (Met = E2): no extra shift, still not pre-ATG.
+    coding_mrna = [
+        {'anatomical_rank': 2, 'start_cds': 1, 'end_cds': 44, 'length_bp': 44},
+        {'anatomical_rank': 3, 'start_cds': 45, 'end_cds': 99, 'length_bp': 55},
+    ]
+    assert not sp._deep_intronic_cdot_in_pre_first_coding_intron('c.45-2A>C', coding_mrna, {})
+    pd_mrna = dict(pd)
+    pd_mrna['coding_exons'] = coding_mrna
+    pd_mrna['variant_exon'] = 2
+    pd_mrna.pop('exon_skip_oof_ptc_exon_rank', None)
+    sv2 = sp._build_splice_viz_payload(pd_mrna)
+    assert sv2.get('target_rank') == 3
+    m2 = sv2.get('variant_marker') or {}
+    assert m2.get('upstream_exon') == 2 and m2.get('downstream_exon') == 3
+    assert sv2.get('start_codon_exon_rank') == 2
+    assert sv2.get('pre_atg_utr_pseudoexon') is not True
+
+    # <10% next Met is the re-initiation path: no presumed-NMD PVS1 without upstream P/LP.
+    small = dict(pd)
+    small['protein_length'] = 1000
+    small['cds_seq'] = _cds_with_met_at(50)
+    small.pop('early_oof_exon_skip_next_met', None)
+    small.pop('next_methionine_position', None)
+    assert sp._apply_early_oof_exon_skip_next_met(small)
+    assert small['next_methionine_position'] == 50
+    assert small['nmd_escape_truncation_fraction'] == pytest.approx(0.05)
+    sop_small = sp._early_oof_next_met_sop_sentence(small, '1.9%')
+    assert 're-initiation' in sop_small
+    assert '<b>PVS1</b>' not in sop_small
+    quiet = apply_acmg(dict(small))['criteria']
+    assert not any(c.get('code') == 'PVS1' for c in quiet)
+    small['has_upstream_pathogenic'] = True
+    upstream = apply_acmg(dict(small))['criteria']
+    up = [c for c in upstream if c.get('code') == 'PVS1']
+    assert len(up) == 1
+    assert 'upstream P/LP' in up[0]['desc']
+    assert 'presumed NMD' not in up[0]['desc']
 
 
 def test_secondary_cryptic_gain_logic_block_not_parallel_skip():

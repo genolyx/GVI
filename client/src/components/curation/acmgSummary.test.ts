@@ -84,6 +84,28 @@ describe("criterion evidence sentences", () => {
     expect(lof).toContain("NMD is expected");
   });
 
+  it("cites downstream P/LP and PMIDs when an NMD-escape product removes under 10%", () => {
+    const sentence = criterionEvidence(
+      doc({
+        consequence: "missense_variant",
+        parsed: {
+          nmd_escape: true,
+          nmd_escape_truncation_fraction: 0.0846,
+          clingen_haplo_score: "3",
+          downstream_pathogenic_hits: [
+            { label: "c.2051T>C (Pathogenic)", source: "clinvar", pmids: ["9712540"] },
+            { label: "c.2056T>G (HGMD DM)", source: "hgmd", pmids: ["20859061", "33920672"] },
+          ],
+        },
+      }),
+      "PVS1",
+      "Exon-internal cryptic splice escapes NMD; frameshift removes a C-terminal region that harbors downstream P/LP evidence"
+    );
+    expect(sentence).toBe(
+      "NMD is not predicted and 8.5% of the protein is removed, which is under 10%. PVS1 uses 2 downstream pathogenic or likely pathogenic variants (1 ClinVar, 1 HGMD)."
+    );
+  });
+
   it("cites the gnomAD frequency for PM2", () => {
     const sentence = criterionEvidence(doc({ consequence: "splice_donor_variant", gnomadAf: 0 }), "PM2", "rare");
     expect(sentence).toBe("gnomAD allele frequency is 0, so the variant is absent or extremely rare.");

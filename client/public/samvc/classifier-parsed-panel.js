@@ -6,6 +6,101 @@
     return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;');
   }
 
+  function nextMetLocus(pd) {
+    const met = Number(pd && pd.next_methionine_position);
+    if (!met || met < 1) return null;
+    let exon = Number(pd.next_methionine_exon);
+    let cdot = Number(pd.next_methionine_cdot);
+    let nt = Number(pd.next_methionine_nt_in_exon);
+    if (!(exon > 0 && cdot > 0)) {
+      const rows = Array.isArray(pd.coding_exons) ? pd.coding_exons : [];
+      const cdsPos = (met - 1) * 3 + 1;
+      let hit = null;
+      let minRank = Infinity;
+      rows.forEach(function (cx) {
+        const s = Number(cx && cx.start_cds);
+        const e = Number(cx && cx.end_cds);
+        const r = Number(cx && cx.anatomical_rank);
+        if (r >= 1 && r < minRank) minRank = r;
+        if (!hit && r > 0 && s <= cdsPos && cdsPos <= e) hit = { s: s, r: r };
+      });
+      if (hit) {
+        const showUtr = pd.first_mrna_exon_is_non_coding === true;
+        const offset = (showUtr && minRank === 1) ? 1 : 0;
+        exon = hit.r + offset;
+        cdot = cdsPos;
+        nt = cdsPos - hit.s + 1;
+      }
+    }
+    return { met: met, exon: exon > 0 ? exon : null, cdot: cdot > 0 ? cdot : null, nt: nt > 0 ? nt : null };
+  }
+
+  function nextMetWhere(pd) {
+    const loc = nextMetLocus(pd);
+    if (!loc) return '';
+    if (loc.exon && loc.cdot && loc.nt) {
+      return 'aa ' + loc.met + ' in exon ' + loc.exon + ' (c.' + loc.cdot + ', nucleotide ' + loc.nt + ' of that exon)';
+    }
+    if (loc.exon && loc.cdot) return 'aa ' + loc.met + ' in exon ' + loc.exon + ' (c.' + loc.cdot + ')';
+    if (loc.exon) return 'aa ' + loc.met + ' in exon ' + loc.exon;
+    return 'aa ' + loc.met;
+  }
+
+  function earlyOofNextMetNarrative(html, pd) {
+    if (!pd || pd.early_oof_exon_skip_next_met !== true) return html || '';
+    const met = Number(pd.next_methionine_position);
+    const frac = Number(pd.nmd_escape_truncation_fraction);
+    if (!met || !Number.isFinite(frac) || frac <= 0) return html || '';
+    const where = nextMetWhere(pd) || ('aa ' + met);
+    const pct = (frac * 100).toFixed(1);
+    const severe = frac >= 0.10;
+    const upstream = pd.has_upstream_pathogenic === true || pd.start_lost_5_prime_pathogenic === true;
+    let thresh;
+    let decision;
+    if (severe) {
+      thresh = pct + '% N-terminal loss, &ge;10% — severe; upstream P/LP re-initiation escape does not apply';
+      decision = where + ' removes ' + pct + '% of the N-terminus (&ge;10%) &rarr; <b>PVS1</b> (severe; upstream P/LP re-initiation escape does not apply).';
+    } else if (upstream) {
+      thresh = pct + '% N-terminal loss, &lt;10% re-initiation — bypasses upstream P/LP evidence';
+      decision = where + ' removes ' + pct + '% of the N-terminus (&lt;10% re-initiation) &rarr; <b>PVS1</b> (bypasses upstream P/LP evidence).';
+    } else {
+      thresh = pct + '% N-terminal loss, &lt;10% — re-initiation pathway; review upstream P/LP and other 5&prime; evidence';
+      decision = where + ' removes ' + pct + '% of the N-terminus (&lt;10% re-initiation pathway). Review upstream P/LP and other 5&prime; evidence before PVS1.';
+    }
+    const productMark = 'Met1 is kept after this early out-of-frame skip';
+    const line = '<b>5&prime; next Met:</b> Met1 is kept after this early out-of-frame skip. Next in-frame Met is ' + where + ' (' + thresh + ').';
+    const lo = Number(pd.skipped_exon_aa_lo);
+    const hi = Number(pd.skipped_exon_aa_hi);
+    const span = Number(pd.splice_fraction_lost);
+    let spanBit = '';
+    if (lo && hi && Number.isFinite(span)) {
+      spanBit = ' (skipped aa ' + lo + '–' + hi + ', ' + (span * 100).toFixed(1) + '% of the coding sequence)';
+    } else if (lo && hi) {
+      spanBit = ' (skipped aa ' + lo + '–' + hi + ')';
+    } else if (Number.isFinite(span)) {
+      spanBit = ' (' + (span * 100).toFixed(1) + '% of the coding sequence removed by the skip)';
+    }
+    const sop = '<b>SOP logic:</b> out-of-frame skip' + spanBit + ' introduces a novel stop on the re-read ORF, and Met1 is kept. <b>5&prime; next Met:</b> ' + decision;
+    let out = html || '';
+    if (out.indexOf(productMark) < 0) {
+      const needle = 'Computational splice model only';
+      const lossAt = out.search(/loss\s*\/\s*exon skip|whole-exon skip/i);
+      const foot = out.indexOf(needle, lossAt >= 0 ? lossAt : 0);
+      if (foot >= 0) out = out.slice(0, foot) + line + '<br>' + out.slice(foot);
+      else out = out ? (out + '<br>' + line) : line;
+    }
+    const sopAt = out.search(/<b>SOP logic:<\/b>/i);
+    if (sopAt >= 0) {
+      const sopTail = out.slice(sopAt, sopAt + 500);
+      if (sopTail.indexOf('next Met') < 0) {
+        out = out.replace(/<b>SOP logic:<\/b>(?:(?!<br)[\s\S])*/i, sop);
+      }
+    } else if (out.indexOf(productMark) >= 0) {
+      out += '<br><br>' + sop;
+    }
+    return out;
+  }
+
   function evidenceText(html) {
     return String(html || '')
       .replace(/<br\s*\/?>/gi, '\n')
@@ -823,13 +918,12 @@ if (_isFsExtension) {
     if ((!pStart || pStart <= 0) && Number.isFinite(cryptTL) && cryptTL > 0) {
         pStart = cryptTL + 1;
     }
-    if (res.parsed_data.consequence === 'start_lost') {
-        // For 5' Start Loss, the missing portion is the distance to the next Met
+    if (res.parsed_data.consequence === 'start_lost' || res.parsed_data.early_oof_exon_skip_next_met) {
+        // Start-loss, or an early OOF exon skip that keeps Met1: missing N-terminus to the next Met.
         const nextMetPos = res.parsed_data.next_methionine_position || Math.round(res.parsed_data.nmd_escape_truncation_fraction * pLen) + 1;
         if (nextMetPos !== -1) {
-            const metExon = res.parsed_data.next_methionine_exon;
-            const exonStr = metExon ? ` / Exon ${metExon}` : '';
-            truncPill = `<span class="data-pill" style="border-color: #fca5a5; color: #fca5a5; background: rgba(239, 68, 68, 0.1);">5' Missing: <strong style="color: #fca5a5;">${pct}% (Next Met: ${nextMetPos}${exonStr})</strong></span>`;
+            const metWhere = nextMetWhere(res.parsed_data) || String(nextMetPos);
+            truncPill = `<span class="data-pill" style="border-color: #fca5a5; color: #fca5a5; background: rgba(239, 68, 68, 0.1);">5' Missing: <strong style="color: #fca5a5;">${pct}% (Next Met: ${metWhere})</strong></span>`;
         } else {
             truncPill = `<span class="data-pill" style="border-color: #fca5a5; color: #fca5a5; background: rgba(239, 68, 68, 0.1);">5' Missing: <strong style="color: #fca5a5;">100.0% (No Viable Next Met)</strong></span>`;
         }
@@ -893,16 +987,24 @@ if (!res.parsed_data.cryptic_natural_stop_preserved && truncFracVal < 0 && trunc
 } else if (
     !res.parsed_data.cryptic_natural_stop_preserved
     && truncFracVal > 0
-    && _csqForTrunc === 'start_lost'
+    && (_csqForTrunc === 'start_lost' || res.parsed_data.early_oof_exon_skip_next_met)
 ) {
-    // Start-loss % is N-terminal (to next Met), not C-terminal truncation.
+    // N-terminal % is distance to the next Met, not C-terminal PTC math.
+    const earlyNextMet = res.parsed_data.early_oof_exon_skip_next_met === true;
     const isUnder10Start = truncFracVal < TRUNC_SEVERE_THRESHOLD;
-    const threshLbl = isUnder10Start ? '<10% start-loss' : '≥10% start-loss';
+    const threshLbl = isUnder10Start
+        ? (earlyNextMet ? '<10% next-Met' : '<10% start-loss')
+        : (earlyNextMet ? '≥10% next-Met' : '≥10% start-loss');
     const nextMet = res.parsed_data.next_methionine_position;
-    const metBit = (nextMet && nextMet !== -1) ? ` · next Met aa ${nextMet}` : '';
+    const metWhere = (nextMet && nextMet !== -1) ? nextMetWhere(res.parsed_data) : '';
+    const metBit = metWhere ? ` · next Met ${metWhere}` : '';
     const threshTip = isUnder10Start
-        ? 'Next in-frame Met is close enough that <10% of the N-terminus is skipped (re-initiation pathway).'
-        : 'Next in-frame Met is far enough that ≥10% of the N-terminus is skipped — severe start-loss.';
+        ? (earlyNextMet
+            ? 'Early out-of-frame exon skip keeps Met1. Next in-frame Met removes <10% of the N-terminus (re-initiation pathway; review upstream P/LP).'
+            : 'Next in-frame Met is close enough that <10% of the N-terminus is skipped (re-initiation pathway).')
+        : (earlyNextMet
+            ? 'Early out-of-frame exon skip keeps Met1. Next in-frame Met removes ≥10% of the N-terminus — severe (PVS1; upstream P/LP does not rescue).'
+            : 'Next in-frame Met is far enough that ≥10% of the N-terminus is skipped — severe start-loss.');
     const threshColor = isUnder10Start ? '#fcd34d' : '#fca5a5';
     truncThresholdPill = `<span class="data-pill" title="${esc(threshTip)}" style="border-color: ${threshColor}; color: ${threshColor}; background: rgba(239, 68, 68, 0.08);">N-terminal: <strong>${threshLbl}</strong> (${(truncFracVal * 100).toFixed(1)}%${metBit})</span>`;
 } else if (!res.parsed_data.cryptic_natural_stop_preserved && truncFracVal > 0 && isTruncatingConsequence(res.parsed_data)) {
@@ -1000,6 +1102,56 @@ const showTruncEvidencePills = isUnder10 || (
 const downstreamScanDone = !!res.parsed_data.downstream_plp_scan_performed;
 const upstreamScanDone = !!res.parsed_data.upstream_plp_scan_performed;
 
+function pubmedLinks(list, color) {
+    const ids = [];
+    (list || []).forEach((raw) => {
+        const id = String(raw).replace(/\.0$/, '').trim();
+        if (/^\d+$/.test(id) && ids.indexOf(id) < 0) ids.push(id);
+    });
+    return ids.map((id) => (
+        `<a href="https://pubmed.ncbi.nlm.nih.gov/${id}/" target="_blank" style="color:${color}; text-decoration:underline;">[PMID: ${id}]</a>`
+    )).join(' ');
+}
+
+function hgvsDisplayLabel(label) {
+    const text = String(label || '').trim();
+    if (/^\d/.test(text)) return `c.${text}`;
+    return text;
+}
+
+function downstreamHitLine(h) {
+    const label = esc(hgvsDisplayLabel(h.label || h.hgvs_c || ''));
+    const hgmd = String(h.source || 'clinvar').toLowerCase() === 'hgmd';
+    const aa = h.position != null && h.position !== '' ? ` · aa ${esc(h.position)}` : '';
+    const papers = pubmedLinks(h.pmids, '#fca5a5');
+    const paperBit = papers ? ` ${papers}` : '';
+    if (hgmd) {
+        const href = String(h.link || '').trim();
+        const name = href
+            ? `<a href="${esc(href)}" target="_blank" style="color:#fca5a5; text-decoration:underline;">${label}</a>`
+            : label;
+        return `${name}${aa}${paperBit}`;
+    }
+    const vid = String(h.clinvar_vid || h.vid || '').replace(/\.0$/, '').trim();
+    let record = '';
+    if (/^\d+$/.test(vid)) {
+        record = ` <a href="https://www.ncbi.nlm.nih.gov/clinvar/variation/${vid}/" target="_blank" style="color:#fca5a5; text-decoration:underline;">[VID: ${esc(vid)}]</a>`;
+    } else if (String(h.link || '').trim()) {
+        record = ` <a href="${esc(String(h.link).trim())}" target="_blank" style="color:#fca5a5; text-decoration:underline;">ClinVar</a>`;
+    }
+    return `${label}${aa}${record}${paperBit}`;
+}
+
+function downstreamHitsBlock(hits) {
+    if (!hits || !hits.length) return '';
+    const ordered = hits.slice().sort((a, b) => (Number(a.position) || 0) - (Number(b.position) || 0));
+    const hgmdN = ordered.filter((h) => String(h.source || '').toLowerCase() === 'hgmd').length;
+    const clinvarN = ordered.length - hgmdN;
+    const split = clinvarN && hgmdN ? ` (${clinvarN} ClinVar, ${hgmdN} HGMD)` : '';
+    const lines = ordered.map(downstreamHitLine).join('<br>');
+    return `<div class="eval-allele-wide"><span class="data-pill" style="border-color: #fca5a5; background: rgba(239, 68, 68, 0.1); color:#fca5a5; display: block; max-width: fit-content;">Downstream P/LP: <strong>${ordered.length} matched</strong>${split}<br><span style="font-size:12px; font-weight:normal; opacity:0.95; margin-top:4px; display:inline-block; line-height:1.6;">${lines}</span></span></div>`;
+}
+
 function downstreamPlpNotFoundPill(dir) {
     const dsSearch = res.parsed_data.downstream_pathogenic_clinvar_search_link;
     if (dsSearch) {
@@ -1025,7 +1177,8 @@ if (showTruncEvidencePills) {
 
     // P/LP Badge — matched ClinVar hits only (<10% requires explicit scan result)
     if (isUnder10 && res.parsed_data.auto_downstream_pathogenic && dir === 'Downstream') {
-        const dsN = res.parsed_data.downstream_pathogenic_clinvar_count || res.parsed_data.downstream_pathogenic_hit_count || 0;
+        const dsHits = res.parsed_data.downstream_pathogenic_hits || [];
+        const dsN = dsHits.length || res.parsed_data.downstream_pathogenic_hit_count || res.parsed_data.downstream_pathogenic_clinvar_count || 0;
         const dsLink = res.parsed_data.downstream_pathogenic_clinvar_list_link || res.parsed_data.auto_downstream_pathogenic_link;
         const dsLbl = dsN > 1 ? `${dir} P/LP: ${dsN} matched` : `${dir} P/LP: matched`;
         if (dsLink) {
@@ -1061,7 +1214,8 @@ if (showTruncEvidencePills) {
 } else if (res.parsed_data.auto_downstream_pathogenic || res.parsed_data.auto_upstream_pathogenic) {
     const dsLinkFb = res.parsed_data.downstream_pathogenic_clinvar_list_link || res.parsed_data.auto_downstream_pathogenic_link;
     const usLinkFb = res.parsed_data.upstream_pathogenic_clinvar_list_link || res.parsed_data.auto_upstream_pathogenic_link;
-    const dsNFb = res.parsed_data.downstream_pathogenic_clinvar_count || 0;
+    const dsHitsFb = res.parsed_data.downstream_pathogenic_hits || [];
+    const dsNFb = dsHitsFb.length || res.parsed_data.downstream_pathogenic_hit_count || res.parsed_data.downstream_pathogenic_clinvar_count || 0;
     const usNFb = res.parsed_data.upstream_pathogenic_clinvar_count || 0;
     if (dsLinkFb) {
         const dsLblFb = dsNFb > 1 ? `Downstream P/LP: ${dsNFb} matched` : 'Downstream P/LP: matched';
@@ -1072,6 +1226,11 @@ if (showTruncEvidencePills) {
     } else {
         autoPill = `<span class="data-pill" style="border-color: #fca5a5; color: #fca5a5; background: rgba(239, 68, 68, 0.1);">Found Pathogenic Variant Nearby</span>`;
     }
+}
+
+const downstreamHitsHtml = downstreamHitsBlock(res.parsed_data.downstream_pathogenic_hits);
+if (downstreamHitsHtml && /Downstream P\/LP:/i.test(autoPill)) {
+    autoPill = '';
 }
 
 if (skippedExonPill && autoPill && /Skipped exon P\/LP/i.test(autoPill) && /Skipped exon P\/LP/i.test(skippedExonPill)) {
@@ -1311,7 +1470,10 @@ if (res.parsed_data.c_allele_search_link || res.parsed_data.p_allele_search_link
     if (res.parsed_data.regional_hotspot && res.parsed_data.regional_hotspot.length > 0) {
         let totalHS = res.parsed_data.regional_hotspot.length;
         let hsText = res.parsed_data.regional_hotspot.map(a => `${_alleleLabel(a)} (${a.significance}) [ClinVar Variation ID: ${a.vid || '?'}]`).join(', ');
-        let uiHsText = res.parsed_data.regional_hotspot.map(a => `${_alleleLabel(a)} (${a.significance}) <a href="https://www.ncbi.nlm.nih.gov/clinvar/variation/${a.vid}/" target="_blank" style="color:#f43f5e; text-decoration:underline;">[VID: ${a.vid || '?'}]</a>`).join('<br>');
+        let uiHsText = res.parsed_data.regional_hotspot.map(a => {
+            const papers = pubmedLinks(a.pmids, '#f43f5e');
+            return `${_alleleLabel(a)} (${a.significance}) <a href="https://www.ncbi.nlm.nih.gov/clinvar/variation/${a.vid}/" target="_blank" style="color:#f43f5e; text-decoration:underline;">[VID: ${a.vid || '?'}]</a>${papers ? ` ${papers}` : ''}`;
+        }).join('<br>');
         
         if (fullTheoretical === "None found.") fullTheoretical = `Regional hotspot (your NM ±5 aa): ${hsText}`;
         else fullTheoretical += ` | Regional hotspot (your NM): ${hsText}`;
@@ -1504,7 +1666,7 @@ ${res.parsed_data.spliceai_narrative ? `<div style="padding: 10px 12px; backgrou
 ${((res.parsed_data.spliceai_junction_model_preferred || res.parsed_data.spliceai_competing_splice_isoforms) && res.parsed_data.splice_model_interpretation) ? `<div style="padding: 10px 12px; background: rgba(16, 185, 129, 0.08); border-radius: 4px; font-size: 0.88em; color: #d1fae5; line-height: 1.45;"><strong style="color:#6ee7b7;">Splice model:</strong> ${String(res.parsed_data.splice_model_interpretation).replace(/</g, '&lt;')}</div>` : ''}
 ${junctionInsertHtml}
 ${(res.parsed_data.nmd_junction_model_truncation_fraction != null && res.parsed_data.nmd_junction_model_truncation_fraction !== undefined && !res.parsed_data.splice_suppress_parallel_junction_ui) ? `<div style="padding: 8px 12px; background: rgba(59, 130, 246, 0.08); border-radius: 4px; font-size: 0.85em; color: #dbeafe; line-height: 1.4;"><strong style="color:#93c5fd;">Cryptic junction isoform</strong> (acceptor/donor gain product): &approx; <strong>${(100 * res.parsed_data.nmd_junction_model_truncation_fraction).toFixed(1)}%</strong> C-term lost${res.parsed_data.junction_model_hgvs_p ? ` — ${res.parsed_data.junction_model_hgvs_p}` : ''}. <span style="color:#94a3b8;">Parallel to whole-exon skip when SpliceAI shows competing gain vs loss.</span></div>` : ''}
-${res.parsed_data.splice_products_panel_html ? `<div style="padding: 10px 12px; background: rgba(255, 255, 255, 0.05); border-radius: 4px; font-size: 0.9em; color: #e2e8f0; line-height: 1.5;"><strong style="color:#93c5fd;">Splice products</strong> <span style="color:#94a3b8;font-size:0.82em;display:block;margin:4px 0 10px;">Each product uses the same field order: SpliceAI signal → geometry → frame → protein → PTC → length → NMD.</span>${res.parsed_data.splice_products_panel_html}</div>` : ''}
+${res.parsed_data.splice_products_panel_html ? `<div class="splice-products-panel" style="padding: 10px 12px; background: rgba(255, 255, 255, 0.05); border-radius: 4px; font-size: 0.9em; color: var(--sv-ink, #e2e8f0); line-height: 1.5;"><strong style="color:#93c5fd;">Splice products</strong> <span style="color:var(--sv-muted,#94a3b8);font-size:0.82em;display:block;margin:4px 0 10px;">Each product uses the same field order: SpliceAI signal → geometry → frame → protein → PTC → length → NMD${res.parsed_data.early_oof_exon_skip_next_met ? ' → 5′ next Met' : ''}.</span>${earlyOofNextMetNarrative(res.parsed_data.splice_products_panel_html, res.parsed_data)}</div>` : ''}
 ${!res.parsed_data.splice_products_panel_html && res.parsed_data.splice_frame_math ? `<div style="padding: 10px; background: rgba(255, 255, 255, 0.05); border-radius: 4px; font-size: 0.9em; color: #e2e8f0; line-height: 1.4;"><strong>Splice products:</strong> ${res.parsed_data.splice_frame_math}</div>` : ''}
 ${!res.parsed_data.splice_products_panel_html && res.parsed_data.spliceai_secondary_splice_frame_math ? `<div style="padding: 10px; background: rgba(251, 191, 36, 0.07); border-radius: 4px; font-size: 0.9em; color: #fef3c7; line-height: 1.45;"><strong style="color:#fcd34d;">Parallel whole-exon skip (second splice-site hypothesis)</strong>${res.parsed_data.spliceai_secondary_splice_frame_math}</div>` : ''}
 ${!res.parsed_data.splice_products_panel_html && res.parsed_data.deep_intronic_primary_splice_math ? `<div style="padding: 10px; background: rgba(16, 185, 129, 0.08); border-radius: 4px; font-size: 0.9em; color: #d1fae5; line-height: 1.45;"><strong style="color:#6ee7b7;">Splice products — primary</strong><div style="margin-top:8px;">${res.parsed_data.deep_intronic_primary_splice_math}</div></div>` : ''}
@@ -1572,6 +1734,7 @@ ${ps1Pill}
 ${pm5LocalPill}
 ${hotspotPill}
 ${autoPill}
+${downstreamHitsHtml}
 ${skippedExonPill}
 ${domainPill}
 ${litPill}${mechanismAlertPill}

@@ -22,7 +22,7 @@ from google.genai import types
 from vc_engine.allele_norm import align_query_allele
 from vc_engine.clinvar import _clinvar_cdot_label_from_esummary, _clinvar_coding_hgvs_from_hit, _clinvar_display_sig_from_rcv, _clinvar_geneinfo_matches, _clinvar_genomic_hgvs_from_hit, _clinvar_name_change_class, _clinvar_plp_sig_for_deleted_exon, _clinvar_rcv_any_pathogenic_or_likely, _clinvar_rcv_list_from_hit, _clinvar_sig_from_esummary_obj, _clinvar_variant_id_from_hit, _clinvar_variation_uid_for_pubmed_elink, _fetch_clinvar_aliases, _fetch_clinvar_esummary_map, _fetch_myvariant_clinvar_variant_hit, clinvar_allele_search_term, clinvar_allele_search_url, clinvar_portal_url
 from vc_engine.gnomad_local import apply_local_gnomad, homozygote_count, homozygote_total, local_gnomad_configured
-from vc_engine.hgmd import _hgmd_ordered_candidate_keys, _merge_hgmd_downstream_hits, _merge_hgmd_skipped_exon_hits, _merge_hgmd_upstream_hits, hgmd_alternate_residue_hits
+from vc_engine.hgmd import _hgmd_ordered_candidate_keys, _merge_hgmd_downstream_hits, _merge_hgmd_skipped_exon_hits, _merge_hgmd_upstream_hits, annotate_plp_hits_with_hgmd_pmids, hgmd_alternate_residue_hits
 from vc_engine.lit_index import search_lit_index
 from vc_engine.noncoding import (
     append_noncoding_curation_logic_section,
@@ -55,7 +55,7 @@ from vc_engine.myvariant import (
     _resolve_effective_gene_from_vep_symbols,
     revel_score_from_dbnsfp,
 )
-from vc_engine.regions import _downstream_plp_anchor_aa, _downstream_plp_hits_markup, _finalize_downstream_plp_scan_metadata, _finalize_plp_region_links, _finalize_skipped_exon_plp_links, _hydrate_skipped_exon_aa_bounds, _hydrate_splice_excised_region, _hydrate_whole_exon_skip_deleted_coords, _needs_downstream_clinvar_plp, _skipped_exon_aa_range_label, _skipped_exon_region_context_html, _splice_deleted_coords_complete, _upstream_plp_hits_markup, _whole_exon_skip_modeled
+from vc_engine.regions import _downstream_plp_anchor_aa, _downstream_plp_hits_markup, _finalize_downstream_plp_scan_metadata, _finalize_plp_region_links, _finalize_skipped_exon_plp_links, _hydrate_skipped_exon_aa_bounds, _hydrate_splice_excised_region, _hydrate_whole_exon_skip_deleted_coords, _needs_downstream_clinvar_plp, _partial_exon_internal_frameshift, _skipped_exon_aa_range_label, _suppress_skipped_exon_scan_for_exon_internal_frameshift, _skipped_exon_region_context_html, _splice_deleted_coords_complete, _upstream_plp_hits_markup, _whole_exon_skip_modeled
 from vc_engine.truncation import (
     TRUNC_SEVERE_THRESHOLD,
     apply_nmd_escape_from_coding_exons,
@@ -72,7 +72,7 @@ from vc_engine.truncation import (
     start_loss_fraction_from_next_met,
 )
 from vc_engine.scoring import apply_acmg, apply_clingen_disease_mechanism, apply_rubric
-from vc_engine.splice import SPLICEAI_RECONCILE_MIN, _append_deep_intronic_splice_logic_sections, _append_nmd_escape_clinical_context, _append_splice_product_logic_sections, _append_splice_support_sections, _append_truncation_nmd_sections, _apply_canonical_splice_hgvs_override, _apply_near_splice_region_context, _apply_exon_skip_truncation_as_primary, _apply_pre_atg_splice_acceptor_context, _build_junction_align_payload, _build_splice_products_panel_html, _build_splice_variant_intro_short, _build_splice_viz_payload, _canonical_splice_junction_from_hgvs, _consequence_is_acceptor_splice, _consequence_is_donor_splice, _deep_intronic_signal_label, _defer_whole_exon_skip_to_deep_intronic, _ensure_cds_seq, _ensure_coding_exons_for_splice_viz, _ensure_protein_length_from_coding_exons, _ensure_splice_secondary_cryptic_gain, _finalize_splice_report_narratives, _format_whole_exon_skip_hgvs_p, _hit_at_user_splice_junction_locus, _hydrate_exon_skip_truncation_metrics, _junction_align_ruler_ticks, _logic_csq_is_splice_context, _logic_lines_block, _mark_oof_exon_skip_nmd_provisional, _logic_section_text_plain, _logic_should_show_deep_intronic_context, _lookup_clinvar_plp_downstream_of_ptc, _met_reinitiation_applies, _missense_same_codon_different_change, _normalize_to_forward_strand, _oofs_exon_skip_ptc_cds_and_cdna, _reconcile_splice_model_precedence, refresh_pre_atg_deep_intronic_readouts, _resolve_cryptic_splice_outcome, _resolve_exon_internal_cryptic_outcome, _resolve_splice_junction_locus, _same_canonical_splice_junction_locus, _select_splice_coding_exon, _set_spliceai_narrative_sentence, _should_show_spliceai_narrative_in_logic, _splice_cdna_anchor_from_hgvs, _splice_variant_intro_is_complete, _spliceai_exon_skip_takes_precedence_over_weak_cryptic, _refresh_secondary_gain_at_spliceai_dp, _spliceai_scores_4, _spliceai_secondary_acceptor_parallel_exon_skip_math, _spliceai_secondary_donor_parallel_exon_skip_math, _spliceai_variant_locus_string, _stash_transcript_mrna_exon_metadata, _suppress_start_loss_nmd_for_exon_skip_primary, _translate_cds_aas, _whole_exon_skip_primary_resolved, compute_deep_intronic_splice_math, compute_deep_intronic_spliceai_products
+from vc_engine.splice import SPLICEAI_RECONCILE_MIN, _append_deep_intronic_splice_logic_sections, _append_nmd_escape_clinical_context, _append_splice_product_logic_sections, _append_splice_support_sections, _append_truncation_nmd_sections, _apply_canonical_splice_hgvs_override, _apply_coding_snv_loss_exon_skip, _apply_near_splice_region_context, _apply_early_oof_exon_skip_next_met, _early_oof_next_met_sop_sentence, _apply_exon_skip_truncation_as_primary, _apply_pre_atg_splice_acceptor_context, _build_junction_align_payload, _build_splice_products_panel_html, _build_splice_variant_intro_short, _build_splice_viz_payload, _canonical_splice_junction_from_hgvs, _coding_snv_spliceai_loss_site, _consequence_is_acceptor_splice, _consequence_is_donor_splice, _deep_intronic_signal_label, _defer_whole_exon_skip_to_deep_intronic, _ensure_cds_seq, _ensure_coding_exons_for_splice_viz, _ensure_protein_length_from_coding_exons, _ensure_splice_secondary_cryptic_gain, _finalize_splice_report_narratives, _format_whole_exon_skip_hgvs_p, _hit_at_user_splice_junction_locus, _hydrate_exon_skip_truncation_metrics, _junction_align_ruler_ticks, _logic_csq_is_splice_context, _logic_lines_block, _mark_oof_exon_skip_nmd_provisional, _logic_section_text_plain, _logic_should_show_deep_intronic_context, _lookup_clinvar_plp_downstream_of_ptc, _met_reinitiation_applies, _missense_same_codon_different_change, _normalize_to_forward_strand, _oofs_exon_skip_ptc_cds_and_cdna, _reconcile_splice_model_precedence, refresh_pre_atg_deep_intronic_readouts, _resolve_cryptic_splice_outcome, _resolve_exon_internal_cryptic_outcome, _resolve_splice_junction_locus, _same_canonical_splice_junction_locus, _select_splice_coding_exon, _set_spliceai_narrative_sentence, _should_show_spliceai_narrative_in_logic, _splice_cdna_anchor_from_hgvs, _splice_variant_intro_is_complete, _spliceai_exon_skip_takes_precedence_over_weak_cryptic, _refresh_secondary_gain_at_spliceai_dp, _spliceai_scores_4, _spliceai_secondary_acceptor_parallel_exon_skip_math, _spliceai_secondary_donor_parallel_exon_skip_math, _spliceai_variant_locus_string, _stash_transcript_mrna_exon_metadata, _suppress_start_loss_nmd_for_exon_skip_primary, _translate_cds_aas, _whole_exon_skip_primary_resolved, compute_deep_intronic_splice_math, compute_deep_intronic_spliceai_products
 from vc_engine.spliceai import _apply_emg_spliceai_ds_only, _apply_emg_spliceai_if_broad_unavailable, _emg_spliceai_ds_snapshot, _ingest_spliceai_broad_json, _refresh_spliceai_in_silico_source
 from vc_engine.state import clingen_db, clingen_gene_lookup
 from vc_engine.uniprot import (
@@ -550,6 +550,8 @@ def _run_skipped_exon_clinvar_plp_scan(parsed_data, effective_gene):
 
 def _ensure_skipped_exon_interval_and_plp_scan(parsed_data, effective_gene, session=None):
     """Fetch coding_exons if needed, hydrate skipped-exon coords, then run P/LP scan."""
+    if _suppress_skipped_exon_scan_for_exon_internal_frameshift(parsed_data):
+        return False
     needs_skip_interval = (
         _whole_exon_skip_modeled(parsed_data)
         or bool(parsed_data.get("spliceai_exon_skip_spliceai_primary"))
@@ -5595,6 +5597,9 @@ def analyze_variant():
         # Evaluate Structural Splicing Frame Impact
         current_cons_splice = parsed_data.get('consequence', '')
         _intron_splice_hgvs = bool(re.search(r'c\.(-?\d+)([\+\-])(\d+)', c_dot or '', re.I))
+        # Only redirect when SpliceAI loss is primary on an exonic variant; leave all
+        # existing splice-site and cryptic-gain tracks untouched.
+        _coding_loss_skip = bool(_coding_snv_spliceai_loss_site(parsed_data))
         _splice_structural_ctx = (
             'splice_acceptor' in current_cons_splice
             or 'splice_donor' in current_cons_splice
@@ -5602,6 +5607,7 @@ def analyze_variant():
             or _consequence_is_acceptor_splice(current_cons_splice, c_dot)
             or _consequence_is_donor_splice(current_cons_splice, c_dot)
             or ('intron' in current_cons_splice and _intron_splice_hgvs)
+            or _coding_loss_skip
         )
         if _splice_structural_ctx:
             enst_id = parsed_data.get('ensembl_transcript_id')
@@ -6218,6 +6224,8 @@ def analyze_variant():
         # When DS_AL (or DS_DL) clearly dwarves gain, do not let a weak cryptic / native-stop
         # resolver story override exon-skip in the Logic Explanation (e.g. KITLG c.715-2A>C).
         _spliceai_exon_skip_takes_precedence_over_weak_cryptic(parsed_data)
+        _apply_coding_snv_loss_exon_skip(parsed_data)
+        _hydrate_whole_exon_skip_deleted_coords(parsed_data)
         _refresh_secondary_gain_at_spliceai_dp(http_session, parsed_data)
         # Parallel exon-skip (e.g. strong DS_DL 5&prime; of same intron): secondary whole-exon-skip of exon N-1
         _cdot_sec = (parsed_data.get("c_dot") or "") or ""
@@ -6337,6 +6345,11 @@ def analyze_variant():
                             parsed_data['protein_start'] = 1
                 except Exception as e:
                     print(f"5' Logic Error: {e}")
+
+        # Early OOF whole-exon skip that keeps Met1: N-terminal % is the next
+        # original-frame Met. Runs after start-loss suppression so that pop does
+        # not erase this Met, and before the upstream P/LP scan.
+        _apply_early_oof_exon_skip_next_met(parsed_data, http_session)
 
         # --- NCBI E-Utilities Rescue Hooks (ClinVar) ---
         _ensure_derived_hgvs_p_for_inframe(parsed_data, http_session, c_dot)
@@ -6477,7 +6490,10 @@ def analyze_variant():
         trunc_frac = parsed_data.get('nmd_escape_truncation_fraction', 0.0)
         is_short_extension = is_core_nmd_csq and is_short_3prime_extension(trunc_frac)
         is_start_loss_escape = (
-            current_csq_nmd == 'start_lost'
+            (
+                current_csq_nmd == 'start_lost'
+                or parsed_data.get('early_oof_exon_skip_next_met')
+            )
             and is_start_loss_reinit_viable(trunc_frac)
         )
         needs_downstream_plp = _needs_downstream_clinvar_plp(parsed_data)
@@ -6780,7 +6796,13 @@ def analyze_variant():
         _spfm = (parsed_data.get('splice_frame_math') or '')
         _sif = parsed_data.get('splice_is_in_frame')
         _sfl = parsed_data.get('splice_fraction_lost')
-        if _sif is not None and _sfl is not None:
+        # Exon-internal frameshift keeps its product sentence. Do not append
+        # whole-exon-skip SOP logic on top of it.
+        if (
+            not _partial_exon_internal_frameshift(parsed_data)
+            and _sif is not None
+            and _sfl is not None
+        ):
             try:
                 _frac = float(_sfl)
             except (TypeError, ValueError):
@@ -6792,20 +6814,23 @@ def analyze_variant():
                 _aa_rng = _skipped_exon_aa_range_label(parsed_data)
                 _aa_clause = f" (protein {_aa_rng})" if _aa_rng else ""
                 if not bool(_sif):
-                    if parsed_data.get('exon_skip_oof_no_inframe_stop'):
-                        nmd_bit = (
-                            "no in-frame stop on the loss product (last-exon skip) — "
-                            "<b>NMD escape</b>; still severe LoF from the skipped exon"
-                        )
-                    elif parsed_data.get('nmd_escape'):
-                        nmd_bit = "<b>NMD escape</b> on the resolved skip product"
+                    if parsed_data.get('early_oof_exon_skip_next_met'):
+                        logic_sentence = _early_oof_next_met_sop_sentence(parsed_data, pct_lbl)
                     else:
-                        nmd_bit = "NMD-predicted unless the variant escapes NMD"
-                    logic_sentence = (
-                        f"<b>SOP logic:</b> out-of-frame shift "
-                        f"({pct_lbl} of protein lost in the spliced product) &rarr; "
-                        f"<b>PVS1</b> by default ({nmd_bit})."
-                    )
+                        if parsed_data.get('exon_skip_oof_no_inframe_stop'):
+                            nmd_bit = (
+                                "no in-frame stop on the loss product (last-exon skip) — "
+                                "<b>NMD escape</b>; still severe LoF from the skipped exon"
+                            )
+                        elif parsed_data.get('nmd_escape'):
+                            nmd_bit = "<b>NMD escape</b> on the resolved skip product"
+                        else:
+                            nmd_bit = "NMD-predicted unless the variant escapes NMD"
+                        logic_sentence = (
+                            f"<b>SOP logic:</b> out-of-frame shift "
+                            f"({pct_lbl} of protein lost in the spliced product) &rarr; "
+                            f"<b>PVS1</b> by default ({nmd_bit})."
+                        )
                 elif _frac >= 0.10:
                     logic_sentence = (
                         f"<b>SOP logic:</b> in-frame skip removes {pct_lbl} of the protein "
@@ -7377,6 +7402,7 @@ def analyze_variant():
                 parsed_data['different_pathogenic_rcv'] = str(best.get('vid'))
         parsed_data['pm5_local_alleles'] = pm5_local_alleles
         parsed_data['same_protein_position_alleles'] = same_protein_position_alleles
+        annotate_plp_hits_with_hgmd_pmids(regional_hotspot, effective_gene)
         parsed_data['regional_hotspot'] = regional_hotspot
         _finalize_local_allele_scan_metadata(
             parsed_data, effective_gene, strict_tx_base, combined_hits, target_p_anchor
@@ -7665,6 +7691,8 @@ def analyze_variant():
                         )
                 _apply_exon_skip_truncation_as_primary(parsed_data)
             sync_truncation_fraction_from_ptc(parsed_data)
+            # Wins over the C-terminal PTC / exon-span sync just above.
+            _apply_early_oof_exon_skip_next_met(parsed_data, http_session)
         except Exception as _nmd_backfill_err:
             print(f"[nmd/ptc backfill] {_nmd_backfill_err}")
 
