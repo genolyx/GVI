@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { isPlainPathogenicCall } from "./frequencyPolicy";
-import { clinvarSignificanceFromVcfLines, clinvarVariationIdFromLines, formatClnsig } from "./clinvarAllele";
+import {
+  clinvarRecordFromLines,
+  clinvarSignificanceFromVcfLines,
+  clinvarVariationIdFromLines,
+  formatClnsig,
+  reverseComplementAllele,
+} from "./clinvarAllele";
 
 describe("allele-matched ClinVar", () => {
   it("does not copy a pathogenic call from the opposite allele", () => {
@@ -17,6 +23,17 @@ describe("allele-matched ClinVar", () => {
     expect(found.get("11:5227002:T:C")).toBe("Pathogenic");
     expect(isPlainPathogenicCall(formatClnsig("Conflicting_classifications_of_pathogenicity"))).toBe(false);
     expect(formatClnsig("Pathogenic/Likely_pathogenic")).toBe("Pathogenic/Likely pathogenic");
+  });
+
+  it("reads conflicting calls on the forward allele of a minus-strand coding change", () => {
+    const line = "T\tC\t1699344\tConflicting_classifications_of_pathogenicity\tLikely_pathogenic_(1)|Uncertain_significance_(1)";
+    expect(reverseComplementAllele("A")).toBe("T");
+    expect(reverseComplementAllele("G")).toBe("C");
+    expect(clinvarRecordFromLines(line, "A", "G")).toBeNull();
+    expect(clinvarRecordFromLines(line, "T", "C")).toEqual({
+      id: "1699344",
+      significance: "Likely pathogenic / Uncertain significance",
+    });
   });
 
   it("reads a variation id only for the same ref and alt", () => {

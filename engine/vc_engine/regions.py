@@ -318,10 +318,20 @@ def _splice_deleted_coords_complete(parsed_data):
     return bool(del_c.get("chr") and del_c.get("start") and del_c.get("end"))
 
 
+def _utr_donor_blocks_coding_skip(parsed_data):
+    """Pre-ATG UTR donor: do not hydrate a coding-exon skip from geometry."""
+    return bool(
+        (parsed_data or {}).get("pre_atg_splice_donor")
+        or (parsed_data or {}).get("utr_coding_skip_sop_suppressed")
+    )
+
+
 def _whole_exon_skip_modeled(parsed_data):
     """True when a whole-exon skip product is active but coords may still be missing."""
     # A partial exon-internal cryptic product sets splice_is_in_frame for its own
     # frame call. That is not a whole-exon skip.
+    if _utr_donor_blocks_coding_skip(parsed_data):
+        return False
     if _partial_exon_internal_cryptic(parsed_data):
         return False
     if _splice_deleted_coords_complete(parsed_data):
@@ -344,6 +354,15 @@ def _resolve_skipped_coding_exon_row(parsed_data, coding_exons):
     """Pick the coding-exon row removed by whole-exon skip when coords are not set yet."""
     if not coding_exons:
         return None
+    c_dot_early = (parsed_data.get("c_dot") or "").replace(" ", "")
+    m_plus_early = re.search(r"c\.(-?\d+)\s*\+", c_dot_early, re.I)
+    m_minus_early = re.search(r"c\.(-?\d+)\s*-\s*", c_dot_early, re.I)
+    if m_plus_early and not m_minus_early:
+        try:
+            if int(m_plus_early.group(1)) < 1:
+                return None
+        except (TypeError, ValueError):
+            pass
     try:
         sc = int(parsed_data.get("splice_target_start_cds") or 0)
         ec = int(parsed_data.get("splice_target_end_cds") or 0)
@@ -388,6 +407,13 @@ def _resolve_skipped_coding_exon_row(parsed_data, coding_exons):
                 )
                 return c3[0]
     elif m_plus and not m_minus:
+        try:
+            n_donor = int(m_plus.group(1))
+        except (TypeError, ValueError):
+            n_donor = 0
+        # c.-N+ (N < 1) is a 5′ UTR intron donor. Do not snap to the nearest CDS exon.
+        if n_donor < 1:
+            return None
         if ve > 0:
             for cx in coding_exons:
                 if int(cx.get("anatomical_rank") or 0) == ve:
@@ -437,6 +463,11 @@ def _hydrate_whole_exon_skip_deleted_coords(parsed_data):
     Fill splice_deleted_coords when exon skip is modeled (SpliceAI or structural math)
     but the classic splice-frame block did not run (e.g. intron_variant + c.N± only).
     """
+    if _utr_donor_blocks_coding_skip(parsed_data):
+        parsed_data.pop("splice_deleted_coords", None)
+        parsed_data.pop("splice_target_start_cds", None)
+        parsed_data.pop("splice_target_end_cds", None)
+        return False
     if _splice_deleted_coords_complete(parsed_data):
         return True
     # Drop incomplete placeholders so a later coding_exons fetch can refill.

@@ -7,6 +7,7 @@ import { buildCurationSummary, curationDocumentSchema } from "../shared/curation
 import { ENV } from "./_core/env";
 import { writeAuditEvent } from "./domain/audit";
 import { mergeCurationDocument } from "./domain/curationMerge";
+import { alignClinvarClaim } from "./domain/clinvarClaim";
 import {
   ENGINE_LLM_PURPOSES,
   invokeEngineLlm,
@@ -284,7 +285,7 @@ export function registerEngineApiRoutes(app: Express) {
         });
         return;
       }
-      const document = parsed.data;
+      const document = await alignClinvarClaim(parsed.data);
 
       const db = await requireDb();
       await db.transaction(async tx => {

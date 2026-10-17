@@ -254,6 +254,16 @@ def combine_acmg_criteria(criteria):
     return {"label": "VUS", "class": "vus"}
 
 
+def _utr_donor_geometry_blocks_pvs1(parsed_data) -> bool:
+    """UTR-only donor skip is not coding LoF. A first-coding-exon acceptor start-loss still scores."""
+    if parsed_data.get("pre_atg_first_coding_acceptor_start_loss"):
+        return False
+    return bool(
+        parsed_data.get("pre_atg_splice_donor")
+        or parsed_data.get("utr_coding_skip_sop_suppressed")
+    )
+
+
 def apply_acmg(parsed_data, splice_points=None, nmd_points=None):
     """Automatic ACMG/AMP criteria and Richards 2015 combining rules."""
     criteria = []
@@ -273,7 +283,11 @@ def apply_acmg(parsed_data, splice_points=None, nmd_points=None):
         _normalize_disease_mechanism(parsed_data.get("disease_mechanism")) == "GOF"
         and _clingen_haplo_score_int(parsed_data) != 3
     )
-    if _partial_exon_internal_frameshift(parsed_data) and not gof_blocks:
+    if _utr_donor_geometry_blocks_pvs1(parsed_data):
+        # Skipping a non-coding 5′ UTR exon is not a coding null. Do not fall
+        # through to structural PVS1/PM4 or the generic splice-donor PVS1.
+        pass
+    elif _partial_exon_internal_frameshift(parsed_data) and not gof_blocks:
         # Coding SNV whose splice product is an out-of-frame exon-internal
         # cryptic site. Score the frameshift (NMD / C-terminal loss / downstream
         # P/LP). Do not use skipped-exon P/LP.

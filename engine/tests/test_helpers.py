@@ -903,6 +903,52 @@ def test_allelic_context_includes_hgmd_same_nucleotide_and_amino_acid():
     assert 'c.4013A>T / p.Asn1338Ile — DM (HGMD; PMID 35074891)' in body
 
 
+def test_same_clinvar_variant_is_not_ps1():
+    """KIF21B C.4625A>G is ClinVar VID 1699344 itself, not a different same-amino-acid allele."""
+    from vc_engine.analyze import _clinvar_hit_is_this_variant, _collect_hgmd_ps1_alleles
+
+    parsed = {
+        "c_dot": "C.4625A>G",
+        "clinvar_rcv": "1699344",
+        "hgvs_p": "p.Asn1542Ser",
+    }
+    same = {
+        "clinvar": {
+            "variant_id": "1699344",
+            "hgvs": {"coding": ["NM_001252102.3:c.4625A>G"]},
+            "rcv": [{"accession": "RCV002273201", "clinical_significance": "Pathogenic"}],
+        }
+    }
+    assert _clinvar_hit_is_this_variant(parsed, same, "RCV002273201") is True
+    other = {
+        "clinvar": {
+            "variant_id": "999",
+            "hgvs": {"coding": ["NM_001252102.3:c.4624A>T"]},
+            "rcv": [{"accession": "RCV000000001"}],
+        }
+    }
+    assert _clinvar_hit_is_this_variant(parsed, other, "RCV000000001") is False
+
+    hgmd = {
+        "consequence": "missense",
+        "c_dot": "c.4625A>G",
+        "hgvs_p": "p.Asn1542Ser",
+        "hgmd_nucleotide_alternates": [{
+            "hgvs_c": "c.4625A>G",
+            "amino": "p.Asn1542Ser",
+            "tag": "DM",
+            "pmids": ["1"],
+        }],
+        "hgmd_amino_acid_alternates": [{
+            "hgvs_c": "c.4624A>T",
+            "amino": "p.Asn1542Tyr",
+            "tag": "DM",
+        }],
+    }
+    _collect_hgmd_ps1_alleles(hgmd)
+    assert hgmd.get("identical_pathogenic") is not True
+
+
 def test_hgmd_same_amino_acid_change_sets_ps1():
     from vc_engine.analyze import _collect_hgmd_ps1_alleles
     from vc_engine.scoring import apply_acmg
@@ -1354,6 +1400,137 @@ def test_merge_hgmd_downstream_and_skipped_exon():
             h.GLOBAL_HGMD_BY_GENE["AMT"] = saved_gene
         else:
             h.GLOBAL_HGMD_BY_GENE.pop("AMT", None)
+
+
+def test_pre_atg_utr_donor_does_not_score_as_coding_null():
+    """AHDC1-like c.-451+1G>A: UTR exon 4 skip, not first-coding-exon 8, and no PVS1."""
+    from vc_engine.splice import (
+        _apply_pre_atg_splice_donor_context,
+        _apply_pre_atg_splice_acceptor_context,
+        _select_splice_coding_exon,
+        _spliceai_secondary_acceptor_parallel_exon_skip_math,
+    )
+    from vc_engine.regions import (
+        _hydrate_whole_exon_skip_deleted_coords,
+        _resolve_skipped_coding_exon_row,
+        _whole_exon_skip_modeled,
+    )
+    from vc_engine.scoring import apply_acmg
+
+    coding = [{
+        "anatomical_rank": 8,
+        "start_cds": 1,
+        "end_cds": 180,
+        "length_bp": 180,
+        "chr": "1",
+        "start": 5000,
+        "end": 5179,
+    }]
+    assert _select_splice_coding_exon(
+        "splice_donor_variant", -451, coding, "c.-451+1G>A"
+    ) is None
+    kept = _select_splice_coding_exon(
+        "splice_donor_variant", 180, coding, "c.180+1G>A"
+    )
+    assert kept and kept["anatomical_rank"] == 8
+    assert _select_splice_coding_exon(
+        "splice_acceptor_variant", -37, coding, "c.-37-1G>T"
+    ) is None
+
+    stale = {
+        "c_dot": "c.-451+1G>A",
+        "consequence": "splice_donor_variant",
+        "variant_exon": 8,
+        "snpeff_exon_rank": 4,
+        "coding_exons": coding,
+        "splice_target_start_cds": 1,
+        "splice_target_end_cds": 180,
+        "splice_deleted_coords": {"chr": "1", "start": 5000, "end": 5179},
+        "splice_is_in_frame": False,
+        "splice_fraction_lost": 0.4,
+        "disease_mechanism": "LOF",
+    }
+    assert _resolve_skipped_coding_exon_row(stale, coding) is None
+    assert _apply_pre_atg_splice_donor_context(stale, "c.-451+1G>A", "splice_donor_variant")
+    assert stale["variant_exon"] == 4
+    assert stale["first_coding_exon_rank"] == 8
+    assert stale["pre_atg_splice_donor"] is True
+    assert stale["utr_coding_skip_sop_suppressed"] is True
+    assert "splice_target_start_cds" not in stale
+    assert "splice_deleted_coords" not in stale
+    assert "splice_is_in_frame" not in stale
+    assert "UTR donor" in stale["splice_frame_math"]
+    assert "mRNA exon 4" in stale["splice_frame_math"]
+    assert "not a coding-exon skip" in stale["splice_frame_math"]
+    assert not _whole_exon_skip_modeled(stale)
+    assert _hydrate_whole_exon_skip_deleted_coords(stale) is False
+    assert "splice_deleted_coords" not in stale
+
+    acceptor = {"c_dot": "c.-37-1G>T", "consequence": "splice_acceptor_variant", "variant_exon": 8}
+    assert _apply_pre_atg_splice_donor_context(acceptor, "c.-37-1G>T", "splice_acceptor_variant") is False
+    assert "pre_atg_splice_donor" not in acceptor
+    _apply_pre_atg_splice_acceptor_context(acceptor, "c.-37-1G>T", "splice_acceptor_variant")
+    assert acceptor.get("pre_atg_splice_acceptor") is True
+
+    class _NoCds:
+        def get(self, *args, **kwargs):
+            raise AssertionError("UTR secondary must not fetch CDS")
+
+    secondary = {
+        "pre_atg_splice_donor": True,
+        "utr_coding_skip_sop_suppressed": True,
+        "variant_exon": 4,
+        "first_coding_exon_rank": 8,
+        "consequence": "splice_donor_variant",
+        "c_dot": "c.-451+1G>A",
+        "spliceai_ds_al": 0.62,
+        "spliceai_dp_al": 3,
+        "spliceai_ds_dl": 0.9,
+        "splice_frame_math": "primary UTR",
+    }
+    _spliceai_secondary_acceptor_parallel_exon_skip_math(
+        _NoCds(), secondary, coding, "ENST0001", False, True,
+    )
+    assert secondary["spliceai_secondary_exon_rank"] == 5
+    assert secondary["spliceai_secondary_utr_exon"] is True
+    assert "exon 5" in secondary["spliceai_secondary_splice_frame_math"]
+    assert "No coding-sequence" in secondary["spliceai_secondary_splice_frame_math"]
+    assert secondary.get("spliceai_secondary_exon_rank") != 8
+
+    corroborates = dict(secondary)
+    corroborates.pop("spliceai_secondary_exon_rank", None)
+    corroborates.pop("spliceai_secondary_utr_exon", None)
+    corroborates["spliceai_dp_al"] = -4
+    _spliceai_secondary_acceptor_parallel_exon_skip_math(
+        _NoCds(), corroborates, coding, "ENST0001", False, True,
+    )
+    assert corroborates.get("spliceai_al_corroborates_primary") is True
+    assert "spliceai_secondary_exon_rank" not in corroborates
+
+    too_close = dict(secondary, variant_exon=7, first_coding_exon_rank=8)
+    too_close.pop("spliceai_secondary_exon_rank", None)
+    too_close.pop("spliceai_secondary_utr_exon", None)
+    _spliceai_secondary_acceptor_parallel_exon_skip_math(
+        _NoCds(), too_close, coding, "ENST0001", False, True,
+    )
+    assert too_close.get("spliceai_secondary_utr_dropped") is True
+    assert too_close.get("spliceai_secondary_exon_rank") != 8
+
+    scored = apply_acmg({
+        "consequence": "splice_donor_variant",
+        "disease_mechanism": "LOF",
+        "pre_atg_splice_donor": True,
+        "utr_coding_skip_sop_suppressed": True,
+        "splice_is_in_frame": False,
+        "splice_fraction_lost": 0.4,
+        "nmd_escape": False,
+    })["criteria"]
+    assert not any(c.get("code") in ("PVS1", "PVS1_Strong", "PM4") for c in scored)
+    plain = apply_acmg({
+        "consequence": "splice_donor_variant",
+        "disease_mechanism": "LOF",
+    })["criteria"]
+    assert any(c.get("code") == "PVS1" for c in plain)
 
 
 def test_canonical_splice_junction_pre_atg_acceptor():
@@ -2174,6 +2351,66 @@ def test_coding_snv_spliceai_loss_whole_exon_skip_nbea(monkeypatch):
     deep['c_dot'] = 'c.1239+189C>T'
     deep['deep_intronic_splice_products_active'] = True
     assert sp._coding_snv_spliceai_loss_site(deep) is None
+
+
+def test_coding_snv_spliceai_loss_floor_is_displayed_0_20():
+    """Exonic missense loss at the displayed 0.20 floor uses whole-exon skip."""
+    import vc_engine.splice as sp
+
+    base = {
+        'consequence': 'missense',
+        'c_dot': 'c.4625A>G',
+        'snpeff_cds_pos': 4625,
+        'protein_length': 1623,
+        'spliceai_ds_ag': 0.0,
+        'spliceai_ds_dg': 0.0,
+        'spliceai_ds_dl': 0.0,
+        'coding_exons': [{
+            'start_cds': 4500, 'end_cds': 4700, 'anatomical_rank': 34, 'length_bp': 201,
+            'chr': '1', 'start': 200970000, 'end': 200970200,
+        }],
+    }
+    shown = dict(base, spliceai_ds_al=0.199)
+    assert sp._coding_snv_spliceai_loss_site(shown) == 'acceptor'
+    sp._apply_coding_snv_loss_exon_skip(shown)
+    assert 'Product 1 (loss / exon skip)' in (shown.get('splice_frame_math') or '')
+    assert sp._coding_snv_spliceai_loss_site(dict(base, spliceai_ds_al=0.19)) is None
+
+
+def test_displayed_0_20_acceptor_gain_builds_exon_internal_math():
+    """KIF21B-style DS_AG 0.199 (shown as 0.20) at Δ -1 builds the cryptic product."""
+    import vc_engine.splice as sp
+
+    cds = "ATG" + ("GCT" * 40) + "TAA"
+    pd = {
+        "consequence": "missense",
+        "c_dot": "c.30A>G",
+        "snpeff_cds_pos": 30,
+        "ref": "A",
+        "alt": "G",
+        "transcript_strand": -1,
+        "protein_length": 42,
+        "spliceai_ds_ag": 0.199,
+        "spliceai_ds_al": 0.0,
+        "spliceai_ds_dg": 0.0,
+        "spliceai_ds_dl": 0.0,
+        "spliceai_dp_ag": -1,
+        "coding_exons": [{
+            "start_cds": 20,
+            "end_cds": 80,
+            "anatomical_rank": 2,
+            "length_bp": 61,
+            "chr": "1",
+            "start": 1000,
+            "end": 1060,
+        }],
+        "cds_seq": cds,
+    }
+    sp._resolve_exon_internal_cryptic_outcome(None, pd)
+    math = pd.get("splice_frame_math") or ""
+    assert pd.get("splice_viz_exon_internal_cryptic") is True
+    assert "exon-internal" in math.lower()
+    assert pd.get("cryptic_gain_outcome", {}).get("deleted_nt") == 11
 
 
 def test_literature_filter_drops_hallucinated_c_dot():

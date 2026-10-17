@@ -657,7 +657,7 @@ def _resolve_exon_internal_cryptic_outcome(http_session, parsed_data):
     _eligible = [
         (kind, sc, dp_key, use_donor, label)
         for kind, sc, dp_key, use_donor, label in _signal_slots
-        if sc >= GAIN_THRESH
+        if _spliceai_two_decimal_meets(sc, GAIN_THRESH)
     ]
     if not _eligible:
         return
@@ -3155,6 +3155,137 @@ def _splice_cdna_anchor_from_hgvs(c_dot, cons_splice):
     return int(m0.group(1)) if m0 else 0
 
 
+def _pre_atg_utr_donor_anchor(c_dot, cons):
+    """c.-N+… (N < 1) canonical donor in a 5′ UTR intron. None for coding donors and acceptors."""
+    if not _consequence_is_donor_splice(cons, c_dot):
+        return None
+    if not re.search(r"c\.-\d+\s*\+", (c_dot or "").replace(" ", ""), re.I):
+        return None
+    try:
+        anc = int(_splice_cdna_anchor_from_hgvs(c_dot, cons) or 0)
+    except (TypeError, ValueError):
+        return None
+    return anc if anc < 1 else None
+
+
+def _first_coding_mrna_exon_rank_from_rows(coding_exons):
+    first = _deep_intronic_first_coding_exon(coding_exons or [])
+    if not first:
+        return None
+    try:
+        rank = int(first.get("anatomical_rank") or 0)
+    except (TypeError, ValueError):
+        return None
+    return rank if rank > 0 else None
+
+
+_UTR_DONOR_CODING_SKIP_KEYS = (
+    "splice_target_start_cds",
+    "splice_target_end_cds",
+    "splice_deleted_coords",
+    "splice_excised_partial",
+    "splice_is_in_frame",
+    "splice_fraction_lost",
+    "exon_skip_predicted_hgvs_p",
+    "exon_skip_oof_ptc_aa",
+    "exon_skip_oof_fs_ter",
+    "exon_skip_oof_ptc_exon_rank",
+    "exon_skip_oof_no_inframe_stop",
+    "exon_skip_model_truncation_fraction",
+    "exon_skip_model_protein_start",
+    "exon_skip_model_downstream_aas",
+    "is_splice_frameshift",
+    "nmd_escape",
+    "nmd_escape_truncation_fraction",
+    "novel_stop_aa",
+    "skipped_exon_aa_range",
+    "skipped_exon_aa_lo",
+    "skipped_exon_aa_hi",
+    "skipped_exon_pathogenic_hits",
+    "skipped_exon_pathogenic_hit_count",
+    "skipped_exon_plp_checked",
+    "has_pathogenic_in_deleted_exon",
+    "deleted_exon_pathogenic_link",
+    "early_oof_exon_skip_next_met",
+    "next_methionine_position",
+)
+
+
+def _apply_pre_atg_splice_donor_context(parsed_data, c_dot, cons):
+    """
+    5′ UTR intron donor (c.-N+…, N < 1). Skip stays on the non-coding mRNA exon.
+    Do not map the anchor onto the first coding exon or score it as coding LoF.
+    """
+    anc = _pre_atg_utr_donor_anchor(c_dot, cons)
+    if anc is None:
+        return False
+    parsed_data["pre_atg_splice_donor"] = True
+    parsed_data["utr_coding_skip_sop_suppressed"] = True
+    first_rank = _first_coding_mrna_exon_rank_from_rows(parsed_data.get("coding_exons") or [])
+    if first_rank:
+        parsed_data["first_coding_exon_rank"] = first_rank
+    try:
+        snp = int(parsed_data.get("snpeff_exon_rank") or 0)
+    except (TypeError, ValueError):
+        snp = 0
+    try:
+        ve = int(parsed_data.get("variant_exon") or 0)
+    except (TypeError, ValueError):
+        ve = 0
+    if snp > 0 and (not first_rank or snp < first_rank):
+        parsed_data["variant_exon"] = snp
+    elif first_rank and ve >= first_rank:
+        parsed_data.pop("variant_exon", None)
+    for key in _UTR_DONOR_CODING_SKIP_KEYS:
+        parsed_data.pop(key, None)
+    shown = parsed_data.get("variant_exon") or snp or "?"
+    first_bit = (
+        f" First coding exon is mRNA exon {first_rank}; that exon and the ORF stay intact."
+        if first_rank
+        else " The open reading frame stays intact."
+    )
+    parsed_data["splice_frame_math"] = (
+        f"<b>5&prime; UTR donor:</b> canonical donor c.{anc}+ in a 5&prime; UTR intron "
+        f"(mRNA exon {shown}). Predicted product is a skip of this non-coding exon "
+        f"(altered 5&prime; UTR splicing), not a coding-exon skip.{first_bit} "
+        "Coding PTC/NMD, start-loss, and in-frame protein-percent models do not apply."
+    )
+    parsed_data["splice_utr_exon_skip"] = True
+    parsed_data["nmd_decision_basis"] = (
+        "5′ UTR exon skip does not introduce a coding premature stop; "
+        "NMD and start-loss models do not apply."
+    )
+    return True
+
+
+def _utr_donor_secondary_exon_skip(parsed_data, ve, al):
+    """AG loss 3′ of a UTR donor: next UTR exon only, never the first coding exon."""
+    try:
+        first_rank = int(parsed_data.get("first_coding_exon_rank") or 0)
+    except (TypeError, ValueError):
+        first_rank = 0
+    sec_rank = int(ve) + 1 if ve else 0
+    if sec_rank < 1 or not first_rank or sec_rank >= first_rank:
+        parsed_data["spliceai_secondary_utr_dropped"] = True
+        return False
+    parsed_data["spliceai_secondary_exon_rank"] = sec_rank
+    parsed_data["spliceai_secondary_mechanism"] = "3prime_acceptor_loss"
+    parsed_data["spliceai_secondary_utr_exon"] = True
+    parsed_data.pop("spliceai_secondary_donor_oof", None)
+    try:
+        al_f = float(al or 0)
+    except (TypeError, ValueError):
+        al_f = 0.0
+    parsed_data["spliceai_secondary_splice_frame_math"] = (
+        "<div style='color:#bae6fd;border-left:3px solid #38bdf8;padding:6px 8px;margin-bottom:8px;'>"
+        "<b>SpliceAI secondary (3&prime; AG loss, same UTR intron):</b> "
+        f"skip of non-coding mRNA exon {sec_rank}, the next exon 3&prime; of this intron. "
+        f"DS_AL={al_f:.2f}. Exon {sec_rank} is upstream of the first coding exon (exon {first_rank}). "
+        "No coding-sequence, PTC, or NMD math.</div>"
+    )
+    return True
+
+
 def _apply_pre_atg_splice_acceptor_context(parsed_data, c_dot, cons):
     """5′-UTR / pre-ATG canonical acceptor (e.g. c.-37-1G>T): splice impact, not coding PTC/NMD."""
     if not _consequence_is_acceptor_splice(cons, c_dot):
@@ -3240,6 +3371,13 @@ def _select_splice_coding_exon(cons, cds_pos, coding_exons, c_dot=""):
                 return cands[0][3]
         return None
     if _consequence_is_donor_splice(cons, c_dot):
+        if _pre_atg_utr_donor_anchor(c_dot, cons) is not None:
+            return None
+        try:
+            if int(cds_pos) < 1:
+                return None
+        except (TypeError, ValueError):
+            return None
         cands = []
         for cx in coding_exons:
             d = abs(cx['end_cds'] - cds_pos)
@@ -5320,10 +5458,20 @@ def _reconcile_competing_splice(parsed_data, ag, al, mode, dg, dl):
     return
 
 
-SPLICEAI_EXON_SKIP_PRIMARY_MIN_LOSS = 0.3
+# Same high-recall floor as SPLICEAI_RECONCILE_MIN. Compared at two decimals,
+# so a stored 0.199 (shown as 0.20) qualifies.
+SPLICEAI_EXON_SKIP_PRIMARY_MIN_LOSS = SPLICEAI_RECONCILE_MIN
 
 
-SPLICEAI_EXON_SKIP_PRIMARY_GAP = 0.3
+SPLICEAI_EXON_SKIP_PRIMARY_GAP = SPLICEAI_RECONCILE_MIN
+
+
+def _spliceai_two_decimal_meets(score, minimum) -> bool:
+    """True when the score meets the cutoff the way the review displays it."""
+    try:
+        return round(float(score or 0.0), 2) >= round(float(minimum), 2)
+    except (TypeError, ValueError):
+        return False
 
 
 def _exonic_coding_cdot(c_dot):
@@ -5343,8 +5491,8 @@ def _coding_snv_spliceai_loss_site(parsed_data):
     Only redirect when SpliceAI loss is primary on an exonic variant; leave all
     existing splice-site and cryptic-gain tracks untouched.
 
-    Gate: exonic HGVS (no +/−), loss ≥ 0.3, and loss − same-site gain ≥ 0.3
-    (scores below the 0.20 reconcile floor never qualify). Returns 'donor',
+    Gate: exonic HGVS (no +/−), loss ≥ 0.20, and loss − same-site gain ≥ 0.20,
+    both at the two-decimal score shown on the review. Returns 'donor',
     'acceptor', or None.
     """
     if not isinstance(parsed_data, dict):
@@ -5380,15 +5528,15 @@ def _coding_snv_spliceai_loss_site(parsed_data):
     )
     donor_ok = (
         not donor_competing
-        and dl >= SPLICEAI_EXON_SKIP_PRIMARY_MIN_LOSS
-        and dl >= SPLICEAI_RECONCILE_MIN
-        and (dl - dg) >= SPLICEAI_EXON_SKIP_PRIMARY_GAP
+        and _spliceai_two_decimal_meets(dl, SPLICEAI_EXON_SKIP_PRIMARY_MIN_LOSS)
+        and _spliceai_two_decimal_meets(dl, SPLICEAI_RECONCILE_MIN)
+        and _spliceai_two_decimal_meets(dl - dg, SPLICEAI_EXON_SKIP_PRIMARY_GAP)
     )
     acc_ok = (
         not acc_competing
-        and al >= SPLICEAI_EXON_SKIP_PRIMARY_MIN_LOSS
-        and al >= SPLICEAI_RECONCILE_MIN
-        and (al - ag) >= SPLICEAI_EXON_SKIP_PRIMARY_GAP
+        and _spliceai_two_decimal_meets(al, SPLICEAI_EXON_SKIP_PRIMARY_MIN_LOSS)
+        and _spliceai_two_decimal_meets(al, SPLICEAI_RECONCILE_MIN)
+        and _spliceai_two_decimal_meets(al - ag, SPLICEAI_EXON_SKIP_PRIMARY_GAP)
     )
     # A stronger other-site gain stays on the cryptic-gain track.
     if donor_ok and ag >= SPLICEAI_COMPETING_FLOOR and ag > dl:
@@ -5807,7 +5955,7 @@ def _spliceai_exon_skip_takes_precedence_over_weak_cryptic(parsed_data):
     do_strip = False
     sec_lines = []
     if is_acc and not is_don:
-        if al >= SPLICEAI_EXON_SKIP_PRIMARY_MIN_LOSS and (al - ag) >= SPLICEAI_EXON_SKIP_PRIMARY_GAP:
+        if _spliceai_two_decimal_meets(al, SPLICEAI_EXON_SKIP_PRIMARY_MIN_LOSS) and _spliceai_two_decimal_meets(al - ag, SPLICEAI_EXON_SKIP_PRIMARY_GAP):
             do_strip = True
         elif _spliceai_junction_proximal_loss_wins(parsed_data, al, ag, 'spliceai_dp_al'):
             do_strip = True
@@ -5815,7 +5963,7 @@ def _spliceai_exon_skip_takes_precedence_over_weak_cryptic(parsed_data):
             b = f"5' side of same intron (GT: donor): donor gain DS_DG={dg:.2f}{_dp_bit('spliceai_dp_dg')}, donor loss DS_DL={dl:.2f}{_dp_bit('spliceai_dp_dl')} — <b>secondary</b> (different site; not the variant-anchored acceptor)"
             sec_lines.append(b)
     elif is_don and not is_acc:
-        if dl >= SPLICEAI_EXON_SKIP_PRIMARY_MIN_LOSS and (dl - dg) >= SPLICEAI_EXON_SKIP_PRIMARY_GAP:
+        if _spliceai_two_decimal_meets(dl, SPLICEAI_EXON_SKIP_PRIMARY_MIN_LOSS) and _spliceai_two_decimal_meets(dl - dg, SPLICEAI_EXON_SKIP_PRIMARY_GAP):
             do_strip = True
         elif _spliceai_junction_proximal_loss_wins(parsed_data, dl, dg, 'spliceai_dp_dl'):
             do_strip = True
@@ -6389,10 +6537,15 @@ def _spliceai_secondary_acceptor_parallel_exon_skip_math(
     When a 5&prime; donor variant is SpliceAI-primary (donor site loss) and 3&prime; acceptor loss is
     clearly secondary, model a parallel whole-exon-skip of the <b>downstream</b> mRNA exon in that
     intron (the exon 3&prime; of the AG) — mirror of _spliceai_secondary_donor_parallel_exon_skip_math.
+    A pre-ATG UTR donor stays on UTR exon ve+1 and never the first coding exon.
     """
-    if not (coding_exons and enst_id and http_session):
-        return
     if parsed_data.get('spliceai_secondary_gain_product'):
+        return
+    utr_donor = bool(
+        parsed_data.get("pre_atg_splice_donor")
+        or parsed_data.get("utr_coding_skip_sop_suppressed")
+    )
+    if not utr_donor and not (coding_exons and enst_id and http_session):
         return
     _ds_al = float(parsed_data.get("spliceai_ds_al", 0) or 0)
     if not (
@@ -6423,6 +6576,11 @@ def _spliceai_secondary_acceptor_parallel_exon_skip_math(
         sfm = (parsed_data.get("splice_frame_math") or "").strip()
         parsed_data["splice_frame_math"] = (sfm + "<br><br>" + note) if sfm else note
         parsed_data["spliceai_al_corroborates_primary"] = True
+        return
+    if parsed_data.get("pre_atg_splice_donor") or parsed_data.get("utr_coding_skip_sop_suppressed"):
+        _utr_donor_secondary_exon_skip(parsed_data, ve, al)
+        return
+    if not (coding_exons and enst_id and http_session):
         return
     c_sorted = sorted(
         coding_exons,
@@ -6853,6 +7011,22 @@ def _infer_viz_target_exon_rank(parsed_data, coding_exons):
     mRNA exon to highlight for whole-exon skip / junction rows when variant_exon was not
     set by the canonical splice pipeline (intronic HGVS, synonymous/missense + cryptic, etc.).
     """
+    c_dot_early = parsed_data.get('c_dot') or ''
+    cons_early = parsed_data.get('consequence') or ''
+    if (
+        parsed_data.get('pre_atg_splice_donor')
+        or parsed_data.get('utr_coding_skip_sop_suppressed')
+        or _pre_atg_utr_donor_anchor(c_dot_early, cons_early) is not None
+    ):
+        first_rank = parsed_data.get('first_coding_exon_rank') or _first_coding_mrna_exon_rank_from_rows(coding_exons)
+        for key in ('snpeff_exon_rank', 'variant_exon'):
+            try:
+                rank = int(parsed_data.get(key) or 0)
+            except (TypeError, ValueError):
+                rank = 0
+            if rank > 0 and (not first_rank or rank < int(first_rank)):
+                return rank
+        return None
     if not coding_exons:
         return None
     ve = parsed_data.get('variant_exon')

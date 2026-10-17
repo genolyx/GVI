@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { CurationDocument } from "../../shared/curation/document";
-import { clinvarAlleleSearchUrl, withoutUnmatchedClinvar } from "./clinvarClaim";
+import { clinvarAlleleSearchUrl, complementAllele, replaceThisVariantSignificance, withoutUnmatchedClinvar } from "./clinvarClaim";
 
 function document(): CurationDocument {
   return {
@@ -74,6 +74,23 @@ describe("saved ClinVar claims", () => {
   it("keeps a variation that is this allele", () => {
     const source = document();
     expect(withoutUnmatchedClinvar(source, "1493140")).toBe(source);
+  });
+
+  it("writes both conflicting calls into the evidence sentence", () => {
+    const html = "This variant — Likely pathogenic (<a href='https://www.ncbi.nlm.nih.gov/clinvar/variation/1699344/' target='_blank' rel='noopener'>ClinVar 1699344</a>).";
+    const plain = "This variant — Likely pathogenic (ClinVar 1699344).";
+    const sig = "Likely pathogenic / Uncertain significance";
+    expect(replaceThisVariantSignificance(html, "1699344", sig)).toBe(
+      "This variant — Likely pathogenic / Uncertain significance (<a href='https://www.ncbi.nlm.nih.gov/clinvar/variation/1699344/' target='_blank' rel='noopener'>ClinVar 1699344</a>)."
+    );
+    expect(replaceThisVariantSignificance(plain, "1699344", sig)).toBe(
+      "This variant — Likely pathogenic / Uncertain significance (ClinVar 1699344)."
+    );
+  });
+
+  it("complements a minus-strand coding SNV onto the ClinVar forward allele", () => {
+    expect(complementAllele("A", "G")).toEqual({ ref: "T", alt: "C" });
+    expect(complementAllele("T", "C")).toEqual({ ref: "A", alt: "G" });
   });
 
   it("builds a transcript-qualified search", () => {

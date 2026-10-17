@@ -5,7 +5,7 @@ describe("ClinVar short labels", () => {
   it("maps a single call", () => {
     expect(clinvarShortLabels("uncertain significance")).toEqual(["VUS"]);
     expect(clinvarShortLabels("Pathogenic")).toEqual(["P"]);
-    expect(clinvarShortLabels("Likely pathogenic")).toEqual(["LP"]);
+    expect(clinvarShortLabels("Likely pathogenic / Uncertain significance")).toEqual(["LP", "VUS"]);
     expect(clinvarShortLabels("Benign")).toEqual(["B"]);
     expect(clinvarShortLabels("Likely benign")).toEqual(["LB"]);
   });

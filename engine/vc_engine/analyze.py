@@ -72,7 +72,7 @@ from vc_engine.truncation import (
     start_loss_fraction_from_next_met,
 )
 from vc_engine.scoring import apply_acmg, apply_clingen_disease_mechanism, apply_rubric
-from vc_engine.splice import SPLICEAI_RECONCILE_MIN, _append_deep_intronic_splice_logic_sections, _append_nmd_escape_clinical_context, _append_splice_product_logic_sections, _append_splice_support_sections, _append_truncation_nmd_sections, _apply_canonical_splice_hgvs_override, _apply_coding_snv_loss_exon_skip, _apply_near_splice_region_context, _apply_early_oof_exon_skip_next_met, _early_oof_next_met_sop_sentence, _apply_exon_skip_truncation_as_primary, _apply_pre_atg_splice_acceptor_context, _build_junction_align_payload, _build_splice_products_panel_html, _build_splice_variant_intro_short, _build_splice_viz_payload, _canonical_splice_junction_from_hgvs, _coding_snv_spliceai_loss_site, _consequence_is_acceptor_splice, _consequence_is_donor_splice, _deep_intronic_signal_label, _defer_whole_exon_skip_to_deep_intronic, _ensure_cds_seq, _ensure_coding_exons_for_splice_viz, _ensure_protein_length_from_coding_exons, _ensure_splice_secondary_cryptic_gain, _finalize_splice_report_narratives, _format_whole_exon_skip_hgvs_p, _hit_at_user_splice_junction_locus, _hydrate_exon_skip_truncation_metrics, _junction_align_ruler_ticks, _logic_csq_is_splice_context, _logic_lines_block, _mark_oof_exon_skip_nmd_provisional, _logic_section_text_plain, _logic_should_show_deep_intronic_context, _lookup_clinvar_plp_downstream_of_ptc, _met_reinitiation_applies, _missense_same_codon_different_change, _normalize_to_forward_strand, _oofs_exon_skip_ptc_cds_and_cdna, _reconcile_splice_model_precedence, refresh_pre_atg_deep_intronic_readouts, _resolve_cryptic_splice_outcome, _resolve_exon_internal_cryptic_outcome, _resolve_splice_junction_locus, _same_canonical_splice_junction_locus, _select_splice_coding_exon, _set_spliceai_narrative_sentence, _should_show_spliceai_narrative_in_logic, _splice_cdna_anchor_from_hgvs, _splice_variant_intro_is_complete, _spliceai_exon_skip_takes_precedence_over_weak_cryptic, _refresh_secondary_gain_at_spliceai_dp, _spliceai_scores_4, _spliceai_secondary_acceptor_parallel_exon_skip_math, _spliceai_secondary_donor_parallel_exon_skip_math, _spliceai_variant_locus_string, _stash_transcript_mrna_exon_metadata, _suppress_start_loss_nmd_for_exon_skip_primary, _translate_cds_aas, _whole_exon_skip_primary_resolved, compute_deep_intronic_splice_math, compute_deep_intronic_spliceai_products
+from vc_engine.splice import SPLICEAI_RECONCILE_MIN, _append_deep_intronic_splice_logic_sections, _append_nmd_escape_clinical_context, _append_splice_product_logic_sections, _append_splice_support_sections, _append_truncation_nmd_sections, _apply_canonical_splice_hgvs_override, _apply_coding_snv_loss_exon_skip, _apply_near_splice_region_context, _apply_early_oof_exon_skip_next_met, _early_oof_next_met_sop_sentence, _apply_exon_skip_truncation_as_primary, _apply_pre_atg_splice_acceptor_context, _apply_pre_atg_splice_donor_context, _build_junction_align_payload, _build_splice_products_panel_html, _build_splice_variant_intro_short, _build_splice_viz_payload, _canonical_splice_junction_from_hgvs, _coding_snv_spliceai_loss_site, _consequence_is_acceptor_splice, _consequence_is_donor_splice, _deep_intronic_signal_label, _defer_whole_exon_skip_to_deep_intronic, _ensure_cds_seq, _ensure_coding_exons_for_splice_viz, _ensure_protein_length_from_coding_exons, _ensure_splice_secondary_cryptic_gain, _finalize_splice_report_narratives, _format_whole_exon_skip_hgvs_p, _hit_at_user_splice_junction_locus, _hydrate_exon_skip_truncation_metrics, _junction_align_ruler_ticks, _logic_csq_is_splice_context, _logic_lines_block, _mark_oof_exon_skip_nmd_provisional, _logic_section_text_plain, _logic_should_show_deep_intronic_context, _lookup_clinvar_plp_downstream_of_ptc, _met_reinitiation_applies, _missense_same_codon_different_change, _normalize_to_forward_strand, _oofs_exon_skip_ptc_cds_and_cdna, _reconcile_splice_model_precedence, refresh_pre_atg_deep_intronic_readouts, _resolve_cryptic_splice_outcome, _resolve_exon_internal_cryptic_outcome, _resolve_splice_junction_locus, _same_canonical_splice_junction_locus, _select_splice_coding_exon, _set_spliceai_narrative_sentence, _should_show_spliceai_narrative_in_logic, _splice_cdna_anchor_from_hgvs, _splice_variant_intro_is_complete, _spliceai_exon_skip_takes_precedence_over_weak_cryptic, _refresh_secondary_gain_at_spliceai_dp, _spliceai_scores_4, _spliceai_secondary_acceptor_parallel_exon_skip_math, _spliceai_secondary_donor_parallel_exon_skip_math, _spliceai_variant_locus_string, _stash_transcript_mrna_exon_metadata, _suppress_start_loss_nmd_for_exon_skip_primary, _translate_cds_aas, _whole_exon_skip_primary_resolved, compute_deep_intronic_splice_math, compute_deep_intronic_spliceai_products
 from vc_engine.spliceai import _apply_emg_spliceai_ds_only, _apply_emg_spliceai_if_broad_unavailable, _emg_spliceai_ds_snapshot, _ingest_spliceai_broad_json, _refresh_spliceai_in_silico_source
 from vc_engine.state import clingen_db, clingen_gene_lookup
 from vc_engine.uniprot import (
@@ -551,6 +551,8 @@ def _run_skipped_exon_clinvar_plp_scan(parsed_data, effective_gene):
 def _ensure_skipped_exon_interval_and_plp_scan(parsed_data, effective_gene, session=None):
     """Fetch coding_exons if needed, hydrate skipped-exon coords, then run P/LP scan."""
     if _suppress_skipped_exon_scan_for_exon_internal_frameshift(parsed_data):
+        return False
+    if parsed_data.get("pre_atg_splice_donor") or parsed_data.get("utr_coding_skip_sop_suppressed"):
         return False
     needs_skip_interval = (
         _whole_exon_skip_modeled(parsed_data)
@@ -2507,6 +2509,43 @@ def _missense_same_aa_change(hgvs_p_a, hgvs_p_b):
     return a["ref_1"] == b["ref_1"] and a["alt_1"] == b["alt_1"]
 
 
+def _cdot_token(raw):
+    """c./n./r. token from a bare HGVS or a transcript-qualified ClinVar name."""
+    match = re.search(r"([cnr]\.[^\s:;]+)", str(raw or ""), re.I)
+    return match.group(1) if match else ""
+
+
+def _same_queried_cdot(user_c, other):
+    left = _cdot_token(user_c)
+    right = _cdot_token(other)
+    if not left or not right:
+        return False
+    if left.lower() == right.lower():
+        return True
+    return _hgvs_c_dot_alleles_equal(left, right)
+
+
+def _clinvar_hit_is_this_variant(parsed_data, cv_hit, rcv_acc=""):
+    """True when this ClinVar row is the variant under review, not another same-residue allele."""
+    own = str(parsed_data.get("clinvar_rcv") or "").strip()
+    if rcv_acc and own and str(rcv_acc).strip().upper() == own.upper():
+        return True
+    vid = (cv_hit.get("clinvar") or {}).get("variant_id", "")
+    if isinstance(vid, list):
+        vid = vid[0] if vid else ""
+    vid = str(vid or cv_hit.get("_id") or "").strip()
+    if vid and own and vid == own:
+        return True
+    coding = (cv_hit.get("clinvar") or {}).get("hgvs", {}).get("coding", [])
+    if isinstance(coding, str):
+        coding = [coding]
+    user_c = parsed_data.get("c_dot") or ""
+    for item in coding or []:
+        if _same_queried_cdot(user_c, item):
+            return True
+    return False
+
+
 def _append_identical_protein_allele(parsed_data, allele):
     """Remember one other variant with this exact amino-acid change (PS1)."""
     alleles = parsed_data.get("identical_pathogenic_alleles")
@@ -2545,6 +2584,8 @@ def _collect_hgmd_ps1_alleles(parsed_data):
             if not tag.upper().startswith("DM"):
                 continue
             if not _missense_same_aa_change(user_p, amino):
+                continue
+            if _same_queried_cdot(parsed_data.get("c_dot"), hit.get("hgvs_c")):
                 continue
             _append_identical_protein_allele(parsed_data, {
                 "hgvs_c": hit.get("hgvs_c") or "",
@@ -3070,7 +3111,12 @@ def _finalize_local_allele_scan_metadata(
         f" Used for context: {len(same_pos)} same-aa, {len(regional)} regional ±5 aa "
         f"(center aa {anchor}), {len(pm5)} PM5 P/LP."
     )
-    if on_tx_coding > 0 and matched_ctx == 0:
+    other_on_tx = sum(
+        1 for h in hits
+        if _clinvar_hit_coding_on_user_transcript(h, strict_tx_base)
+        and not _clinvar_hit_is_this_variant(parsed_data, h)
+    )
+    if other_on_tx > 0 and matched_ctx == 0:
         note_parts.append(
             " Transcript-named P/LP entries were found but none classified for this variant — "
             "please flag for engine review."
@@ -6226,6 +6272,9 @@ def analyze_variant():
         _spliceai_exon_skip_takes_precedence_over_weak_cryptic(parsed_data)
         _apply_coding_snv_loss_exon_skip(parsed_data)
         _hydrate_whole_exon_skip_deleted_coords(parsed_data)
+        _apply_pre_atg_splice_donor_context(
+            parsed_data, c_dot, parsed_data.get('consequence', ''),
+        )
         _refresh_secondary_gain_at_spliceai_dp(http_session, parsed_data)
         # Parallel exon-skip (e.g. strong DS_DL 5&prime; of same intron): secondary whole-exon-skip of exon N-1
         _cdot_sec = (parsed_data.get("c_dot") or "") or ""
@@ -7045,26 +7094,13 @@ def analyze_variant():
                                     if len(rcv_data) > 0:
                                         rcv_acc = rcv_data[0].get('accession', '')
 
+                                    cv_coding = cv_hit.get('clinvar', {}).get('hgvs', {}).get('coding', [])
+                                    if isinstance(cv_coding, str):
+                                        cv_coding = [cv_coding]
                                     if same_change or diff_change:
-                                        is_self_variant = False
-                                        if rcv_acc and rcv_acc == parsed_data.get('clinvar_rcv'):
-                                            is_self_variant = True
-                                        if not is_self_variant:
-                                            cv_coding = cv_hit.get('clinvar', {}).get('hgvs', {}).get('coding', [])
-                                            if isinstance(cv_coding, str):
-                                                cv_coding = [cv_coding]
-                                            c_dot_raw = parsed_data.get('c_dot', '')
-                                            c_match = re.search(
-                                                r'c\.\d+[-+*]?\d*[a-zA-Z]>[a-zA-Z]', c_dot_raw
-                                            )
-                                            if c_match:
-                                                c_dot_core = c_match.group(0).replace('c.', '')
-                                            else:
-                                                c_dot_core = c_dot_raw.replace('c.', '')
-                                            for coding_str in cv_coding:
-                                                if c_dot_core in coding_str:
-                                                    is_self_variant = True
-                                                    break
+                                        is_self_variant = _clinvar_hit_is_this_variant(
+                                            parsed_data, cv_hit, rcv_acc
+                                        )
 
                                     if (same_change or diff_change) and not is_self_variant:
                                         if same_change:

@@ -45,20 +45,57 @@ export function clinvarSignificanceFromVcfLines(
   return found;
 }
 
-/** Variation ID when this exact ref/alt is the ClinVar row at the position. */
-export function clinvarVariationIdFromLines(text: string, ref: string, alt: string): string | null {
+const COMPLEMENT: Record<string, string> = { A: "T", T: "A", G: "C", C: "G", N: "N" };
+
+/** Reverse complement of a genomic allele. Empty when a base is not ACGTN. */
+export function reverseComplementAllele(sequence: string): string {
+  const bases = sequence.trim().toUpperCase();
+  if (!bases || [...bases].some(base => !COMPLEMENT[base])) return "";
+  return [...bases].reverse().map(base => COMPLEMENT[base]).join("");
+}
+
+/** Calls inside CLNSIGCONF, without the submission counts. */
+export function clinvarCallsFromConf(value: string | null | undefined): string[] {
+  if (!value || value === ".") return [];
+  const calls: string[] = [];
+  for (const part of value.split("|")) {
+    const formatted = formatClnsig(part.replace(/\(\d+\)$/, ""));
+    if (formatted && !calls.includes(formatted)) calls.push(formatted);
+  }
+  return calls;
+}
+
+/** Allele-matched label. Conflicting records list each call, such as LP and VUS. */
+export function clinvarDisplaySignificance(clnsig: string | null | undefined, conf: string | null | undefined): string | null {
+  const calls = clinvarCallsFromConf(conf);
+  if (calls.length) return calls.join(" / ");
+  return formatClnsig(clnsig);
+}
+
+export type ClinvarAlleleRecord = {
+  id: string;
+  significance: string | null;
+};
+
+/** Variation ID and calls when this exact ref/alt is the ClinVar row. */
+export function clinvarRecordFromLines(text: string, ref: string, alt: string): ClinvarAlleleRecord | null {
   const wantRef = ref.trim().toUpperCase();
   const wantAlt = alt.trim().toUpperCase();
   if (!wantRef || !wantAlt || wantAlt.includes(",")) return null;
   for (const line of text.split("\n")) {
     if (!line.trim()) continue;
-    const [rowRef = "", rowAlt = "", id = ""] = line.split("\t");
+    const [rowRef = "", rowAlt = "", id = "", clnsig = "", conf = ""] = line.split("\t");
     if (rowAlt.includes(",")) continue;
     if (rowRef.toUpperCase() !== wantRef || rowAlt.toUpperCase() !== wantAlt) continue;
     if (!/^\d+$/.test(id.trim())) continue;
-    return id.trim();
+    return { id: id.trim(), significance: clinvarDisplaySignificance(clnsig, conf) };
   }
   return null;
+}
+
+/** Variation ID when this exact ref/alt is the ClinVar row at the position. */
+export function clinvarVariationIdFromLines(text: string, ref: string, alt: string): string | null {
+  return clinvarRecordFromLines(text, ref, alt)?.id ?? null;
 }
 
 export type ClinvarVariationLookup = {
@@ -68,6 +105,40 @@ export type ClinvarVariationLookup = {
   id: string | null;
 };
 
+export type ClinvarRecordLookup = {
+  available: boolean;
+  id: string | null;
+  significance: string | null;
+};
+
+/** The ClinVar variation and its calls at this genomic allele. */
+export async function clinvarRecordAt(
+  chromosome: string,
+  position: number,
+  ref: string,
+  alt: string
+): Promise<ClinvarRecordLookup> {
+  const contig = clinvarContig(chromosome);
+  if (!contig || !Number.isInteger(position)) return { available: false, id: null, significance: null };
+  const file = clinvarVcfPath();
+  try {
+    await access(file);
+  } catch {
+    return { available: false, id: null, significance: null };
+  }
+  try {
+    const { stdout } = await execFileAsync(
+      "bcftools",
+      ["query", "-f", "%REF\t%ALT\t%ID\t%INFO/CLNSIG\t%INFO/CLNSIGCONF\n", "-r", `${contig}:${position}-${position}`, file],
+      { timeout: 8000 }
+    );
+    const record = clinvarRecordFromLines(stdout, ref, alt);
+    return { available: true, id: record?.id ?? null, significance: record?.significance ?? null };
+  } catch {
+    return { available: false, id: null, significance: null };
+  }
+}
+
 /** The ClinVar variation at this genomic allele. */
 export async function clinvarVariationIdAt(
   chromosome: string,
@@ -75,24 +146,8 @@ export async function clinvarVariationIdAt(
   ref: string,
   alt: string
 ): Promise<ClinvarVariationLookup> {
-  const contig = clinvarContig(chromosome);
-  if (!contig || !Number.isInteger(position)) return { available: false, id: null };
-  const file = clinvarVcfPath();
-  try {
-    await access(file);
-  } catch {
-    return { available: false, id: null };
-  }
-  try {
-    const { stdout } = await execFileAsync(
-      "bcftools",
-      ["query", "-f", "%REF\t%ALT\t%ID\n", "-r", `${contig}:${position}-${position}`, file],
-      { timeout: 8000 }
-    );
-    return { available: true, id: clinvarVariationIdFromLines(stdout, ref, alt) };
-  } catch {
-    return { available: false, id: null };
-  }
+  const record = await clinvarRecordAt(chromosome, position, ref, alt);
+  return { available: record.available, id: record.id };
 }
 
 /** Null when the local ClinVar VCF is not installed. */

@@ -275,7 +275,11 @@
     const kept = [];
     lines.forEach((line) => {
       if (/^This variant/i.test(line)) {
-        const clean = line
+        const liveSig = String((pd && pd.clinvar_sig) || '').trim();
+        const withLiveSig = (liveSig && !/not found/i.test(liveSig))
+          ? line.replace(/^(This variant\s*[—–-]\s*)[\s\S]*?(?=\s*\(ClinVar\s+\d+)/i, '$1' + liveSig + ' ')
+          : line;
+        const clean = withLiveSig
           .replace(/^This variant\s*[—–-]\s*/i, (variantName ? variantName + ': ' : ''))
           .replace(/\s+/g, ' ')
           .replace(/\(\s+/g, '(')
@@ -651,6 +655,9 @@
     const note = esc(pd.local_clinvar_scan_note || '');
     const titleAttr = note ? ' title="' + note + '"' : '';
 
+    const ownVariation = String((pd && pd.clinvar_rcv) || '').trim();
+    const ownSig = String((pd && pd.clinvar_sig) || '').trim();
+    if (/^\d+$/.test(ownVariation) && ownSig && !/not found/i.test(ownSig)) return '';
     if (pd.local_clinvar_hits_on_transcript > 0 && pd.local_clinvar_context_count === 0) {
       return (
         '<div class="eval-allele-wide"><span class="data-pill" style="border-color: #fbbf24; background: rgba(251, 191, 36, 0.15); color: #fcd34d; display: block; max-width: fit-content;"' +
@@ -1635,6 +1642,19 @@ const noncodingCurationHtml = buildNoncodingCurationHtml(res.parsed_data);
 const noncodingTrackPill = res.parsed_data.noncoding_track
     ? `<span class="data-pill" style="border-color:#38bdf8;background:rgba(14,165,233,0.12);color:#7dd3fc;">Track: <strong>Noncoding RNA (${esc((res.parsed_data.hgvs_dna_kind || 'n').toUpperCase())}.)</strong></span>`
     : '';
+function clinvarPillText(sig) {
+  const text = String(sig || '');
+  const low = text.toLowerCase();
+  const found = [];
+  if (/\blikely pathogenic\b/.test(low)) found.push('LP');
+  if (/\bpathogenic\b/.test(low.replace(/\blikely pathogenic\b/g, ' '))) found.push('P');
+  if (/\buncertain significance\b/.test(low)) found.push('VUS');
+  if (/\blikely benign\b/.test(low)) found.push('LB');
+  if (/\bbenign\b/.test(low.replace(/\blikely benign\b/g, ' '))) found.push('B');
+  const labels = ['P', 'LP', 'VUS', 'LB', 'B'].filter((label) => found.indexOf(label) >= 0);
+  if (labels.length) return labels.join(' / ');
+  return text || 'Link';
+}
 const panelHtml = `
 <section class="eval-section">
   <h3 class="eval-section-title">Variant annotation</h3>
@@ -1691,7 +1711,7 @@ ${noncodingCurationHtml}
   <h3 class="eval-section-title">ClinVar, HGMD & external links</h3>
   <div class="eval-pill-row">
 <span class="data-pill">ClinVar: <strong>
-    ${res.parsed_data.clinvar_rcv ? `<a href="https://www.ncbi.nlm.nih.gov/clinvar/variation/${res.parsed_data.clinvar_rcv}/" target="_blank" style="color:var(--primary); text-decoration:underline;">${res.parsed_data.clinvar_sig || 'Link'}</a>` : `<a href="${res.parsed_data.clinvar_search_link || res.parsed_data.c_allele_search_link || '#'}" target="_blank" style="color:var(--text-muted); text-decoration:underline;">Search</a>`}
+    ${res.parsed_data.clinvar_rcv ? `<a href="https://www.ncbi.nlm.nih.gov/clinvar/variation/${res.parsed_data.clinvar_rcv}/" target="_blank" style="color:var(--primary); text-decoration:underline;">${clinvarPillText(res.parsed_data.clinvar_sig)}</a>` : `<a href="${res.parsed_data.clinvar_search_link || res.parsed_data.c_allele_search_link || '#'}" target="_blank" style="color:var(--text-muted); text-decoration:underline;">Search</a>`}
 </strong></span>
 ${hgmdBadge}
 ${(() => {
