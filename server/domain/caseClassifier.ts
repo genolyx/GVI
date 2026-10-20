@@ -13,6 +13,35 @@ import { requireDb } from "./tenant";
 
 /** Default when Settings and CLASSIFIER_CASE_LIMIT are unset. The engine runs one variant at a time. */
 export const CASE_CLASSIFIER_LIMIT = 200;
+
+/** Intronic changes farther than this from the exon are not auto-classified. */
+export const INTRON_AUTOCLASSIFY_BP = 20;
+
+/**
+ * Closest intron offset in an HGVSc, in base pairs.
+ * Null when the change is not written as an intronic offset (`c.123+5`).
+ */
+export function intronOffsetBp(hgvsC: string | null | undefined): number | null {
+  const text = (hgvsC || "").trim();
+  if (!text) return null;
+  let closest: number | null = null;
+  for (const match of text.matchAll(/[+-](\d+)/g)) {
+    const offset = Number(match[1]);
+    if (!Number.isFinite(offset)) continue;
+    closest = closest === null ? offset : Math.min(closest, offset);
+  }
+  return closest;
+}
+
+/** True when an intronic change is outside the ±20 bp window and must not take a queue slot. */
+export function isBeyondIntronAutoWindow(
+  hgvsC: string | null | undefined,
+  consequence?: string | null
+): boolean {
+  const offset = intronOffsetBp(hgvsC);
+  if (offset !== null) return offset > INTRON_AUTOCLASSIFY_BP;
+  return (consequence || "").toLowerCase().includes("intron");
+}
 const BULK_PRIORITY = 10;
 
 export type CaseClassifierSkip = { variantId: number; reason: string };
@@ -134,7 +163,12 @@ export async function enqueueFilteredCaseVariants(args: {
   const db = await requireDb();
   const reusedQueued = await reuseQueuedClassifications(args.organizationId, args.caseId);
   const rows = await db
-    .select({ id: variants.id, gene: variants.gene, hgvsC: variants.hgvsC })
+    .select({
+      id: variants.id,
+      gene: variants.gene,
+      hgvsC: variants.hgvsC,
+      consequence: variants.consequence,
+    })
     .from(variants)
     .where(
       and(
@@ -167,6 +201,13 @@ export async function enqueueFilteredCaseVariants(args: {
   for (const row of rows) {
     if (!row.gene || !row.hgvsC) {
       skipped.push({ variantId: row.id, reason: "Needs a gene symbol and HGVSc" });
+      continue;
+    }
+    if (isBeyondIntronAutoWindow(row.hgvsC, row.consequence)) {
+      skipped.push({
+        variantId: row.id,
+        reason: `Intronic variant is more than ${INTRON_AUTOCLASSIFY_BP} bp from the exon`,
+      });
       continue;
     }
     if (classified.has(row.id)) {

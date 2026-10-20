@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { caseCurationBatchName, classifierQueueMessage, type CaseClassifierQueue } from "./caseClassifier";
+import {
+  caseCurationBatchName,
+  classifierQueueMessage,
+  isBeyondIntronAutoWindow,
+  type CaseClassifierQueue,
+} from "./caseClassifier";
 
 function result(partial: Partial<CaseClassifierQueue>): CaseClassifierQueue {
   return {
@@ -15,6 +20,30 @@ function result(partial: Partial<CaseClassifierQueue>): CaseClassifierQueue {
 describe("case curation batch name", () => {
   it("names the batch after the case and keeps the case id", () => {
     expect(caseCurationBatchName("GVI-2026-0930", 57)).toBe("Case GVI-2026-0930 (#57)");
+  });
+});
+
+describe("intron auto-classification window", () => {
+  it("keeps intronic changes within 20 bp of the exon", () => {
+    expect(isBeyondIntronAutoWindow("c.444+1G>A", "splice_donor_variant")).toBe(false);
+    expect(isBeyondIntronAutoWindow("c.100-20A>G", "intron_variant")).toBe(false);
+    expect(isBeyondIntronAutoWindow("c.100-30_100-10del", "intron_variant")).toBe(false);
+  });
+
+  it("excludes intronic changes farther than 20 bp so they do not take a queue slot", () => {
+    expect(isBeyondIntronAutoWindow("c.61-620G>A", "intron_variant")).toBe(true);
+    expect(isBeyondIntronAutoWindow("c.479+598A>G", "intron_variant")).toBe(true);
+    expect(isBeyondIntronAutoWindow("c.2995-86_2995-72del", "intron_variant")).toBe(true);
+    expect(isBeyondIntronAutoWindow("c.100+21G>A", "intron_variant")).toBe(true);
+  });
+
+  it("still queues coding changes", () => {
+    expect(isBeyondIntronAutoWindow("c.1486G>A", "missense_variant")).toBe(false);
+    expect(isBeyondIntronAutoWindow("c.68_69del", "frameshift_variant")).toBe(false);
+  });
+
+  it("does not queue an intronic consequence when the offset cannot be read", () => {
+    expect(isBeyondIntronAutoWindow("c.?", "intron_variant")).toBe(true);
   });
 });
 
