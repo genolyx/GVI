@@ -49,6 +49,11 @@ describe("local gnomAD allele choice", () => {
       alternateAllele: "a",
     }))).toBeCloseTo(0.000168056);
   });
+
+  it("reads AF from a compact index row and ignores the homozygote column", () => {
+    const found = parseAlleleFrequencyLines("chr8\t10610142\tG\tC\t0.406875\t3");
+    expect(found.get("8:10610142:G:C")).toBeCloseTo(0.406875);
+  });
 });
 
 describe("installed gnomAD release", () => {

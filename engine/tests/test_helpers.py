@@ -2150,12 +2150,89 @@ def test_exonic_dup_not_deep_intronic_or_pre_atg():
     assert not sp._deep_intronic_insert_is_pre_atg(pd, coding_exons, {}, None)
     assert not sp._splice_viz_pre_atg_context(pd, coding_exons)
     pd_first = dict(pd, variant_exon=2)
-    assert not sp._met_reinitiation_applies(
+    assert sp._met_reinitiation_applies(
         pd_first, current_cons='frameshift', current_rank=2, is_first_exon=False,
     )
     assert sp._met_reinitiation_applies(
         pd_first, current_cons='start_lost', current_rank=2, is_first_exon=False,
     )
+
+
+def test_met_reinitiation_early_ptc_on_midgene_and_single_exon_off():
+    import vc_engine.splice as sp
+    from vc_engine.truncation import sync_truncation_fraction_from_ptc
+
+    coding_exons = [
+        {'anatomical_rank': 2, 'start_cds': 1, 'end_cds': 200},
+        {'anatomical_rank': 3, 'start_cds': 201, 'end_cds': 800},
+    ]
+    # Later exon, including an onset under 10% of a long ORF (FLG c.477dup, aa 159/4061).
+    flg = {
+        'c_dot': 'c.477dup',
+        'variant_exon': 3,
+        'coding_exons': coding_exons,
+        'protein_start': 159,
+        'protein_length': 4061,
+    }
+    assert not sp._met_reinitiation_applies(
+        flg, current_cons='frameshift', current_rank=3, is_first_exon=False,
+    )
+    # First coding exon enters even when the PTC’s C-terminal loss would be ~92%.
+    # NPRL2 c.35dup p.S13Qfs*17: stop aa 30/380, next Met aa 60 → 15.8%.
+    nprl_exons = [{'anatomical_rank': i, 'start_cds': 1, 'end_cds': 40} for i in range(1, 12)]
+    nprl = {
+        'consequence': 'frameshift',
+        'c_dot': 'c.35dup',
+        'hgvs_p': 'p.S13Qfs*17',
+        'variant_exon': 1,
+        'snpeff_exon_rank': 2,
+        'protein_start': 13,
+        'protein_length': 380,
+        'novel_stop_aa': 30,
+        'downstream_aas': 17,
+        'coding_exons': nprl_exons,
+        'nmd_escape_truncation_fraction': 0.9210526315789473,
+    }
+    assert sp._met_reinitiation_applies(
+        nprl, current_cons='frameshift', current_rank=1, is_first_exon=True,
+    )
+    nprl['met_reinitiation'] = True
+    nprl['next_methionine_position'] = 60
+    frac = sync_truncation_fraction_from_ptc(nprl)
+    assert abs(frac - (60 / 380)) < 1e-9
+    assert abs(frac - 0.158) < 0.001
+    # Next-Met loss under 10% stays on that fraction so the upstream scan can run.
+    early = dict(nprl, next_methionine_position=20, nmd_escape_truncation_fraction=0.92)
+    early_frac = sync_truncation_fraction_from_ptc(early)
+    assert abs(early_frac - (20 / 380)) < 1e-9
+    from vc_engine.truncation import is_start_loss_reinit_viable
+    from vc_engine.regions import _needs_downstream_clinvar_plp
+    assert is_start_loss_reinit_viable(early_frac)
+    assert not _needs_downstream_clinvar_plp(early)
+    single = {
+        'c_dot': 'c.30dup',
+        'variant_exon': 1,
+        'coding_exons': [{'anatomical_rank': 1, 'start_cds': 1, 'end_cds': 900}],
+        'protein_start': 10,
+        'protein_length': 300,
+    }
+    assert not sp._met_reinitiation_applies(
+        single, current_cons='frameshift', current_rank=1, is_first_exon=True,
+    )
+    assert sp._met_reinitiation_applies(
+        single, current_cons='start_lost', current_rank=1, is_first_exon=True,
+    )
+    kept = {
+        'consequence': 'frameshift',
+        'met_reinitiation': True,
+        'next_methionine_position': 12,
+        'protein_length': 400,
+        'protein_start': 8,
+        'hgvs_p': 'p.Gln8Alafs*20',
+        'nmd_escape_truncation_fraction': 0.99,
+    }
+    frac = sync_truncation_fraction_from_ptc(kept)
+    assert abs(frac - (12 / 400)) < 1e-9
 
 
 def test_slc16a2_clinvar_and_hgvs_derive(monkeypatch, tmp_path):

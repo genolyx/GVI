@@ -16,7 +16,7 @@ type OrganizationContextValue = {
   organizations: Organization[];
   activeOrganization: Organization | null;
   activeOrganizationId: number | null;
-  setActiveOrganizationId: (id: number) => void;
+  setActiveOrganizationId: (id: number | null) => void;
   hasPermission: (permission: string) => boolean;
   isLoading: boolean;
   organizationError: string | null;
@@ -40,7 +40,14 @@ export function OrganizationProvider({ children }: { children: React.ReactNode }
 
   useEffect(() => {
     const loaded = query.data;
-    if (!loaded?.length) return;
+    if (!loaded) return;
+    if (loaded.length === 0) {
+      if (activeOrganizationId !== null) {
+        setActiveOrganizationIdState(null);
+        localStorage.removeItem(STORAGE_KEY);
+      }
+      return;
+    }
     if (activeOrganizationId && loaded.some(org => org.id === activeOrganizationId)) return;
     const saved = Number(localStorage.getItem(STORAGE_KEY));
     const next = loaded.some(org => org.id === saved) ? saved : loaded[0].id;
@@ -62,7 +69,8 @@ export function OrganizationProvider({ children }: { children: React.ReactNode }
       activeOrganizationId,
       setActiveOrganizationId: id => {
         setActiveOrganizationIdState(id);
-        localStorage.setItem(STORAGE_KEY, String(id));
+        if (id === null) localStorage.removeItem(STORAGE_KEY);
+        else localStorage.setItem(STORAGE_KEY, String(id));
       },
       hasPermission: permission => {
         if (!activeOrganization || !permissionCatalog.data) return false;

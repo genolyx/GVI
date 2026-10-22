@@ -16,6 +16,8 @@ import {
   GetObjectCommand,
   HeadBucketCommand,
   CreateBucketCommand,
+  ListObjectsV2Command,
+  DeleteObjectsCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import crypto from "node:crypto";
@@ -228,4 +230,36 @@ export async function storageGetSignedUrl(
       : {}),
   });
   return getSignedUrl(client, command, { expiresIn: 3600 });
+}
+
+/** Delete every object under a prefix. Returns how many objects were removed. */
+export async function storageDeletePrefix(prefix: string): Promise<number> {
+  const key = assertSafeKey(prefix).replace(/\/?$/, "/");
+  const { client, bucket } = getClient();
+  let token: string | undefined;
+  let removed = 0;
+  do {
+    const page = await client.send(
+      new ListObjectsV2Command({
+        Bucket: bucket,
+        Prefix: key,
+        ContinuationToken: token,
+      })
+    );
+    const objects = (page.Contents ?? [])
+      .map(item => item.Key)
+      .filter((name): name is string => Boolean(name))
+      .map(Key => ({ Key }));
+    if (objects.length) {
+      await client.send(
+        new DeleteObjectsCommand({
+          Bucket: bucket,
+          Delete: { Objects: objects },
+        })
+      );
+      removed += objects.length;
+    }
+    token = page.IsTruncated ? page.NextContinuationToken : undefined;
+  } while (token);
+  return removed;
 }

@@ -2,6 +2,15 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import { CreateOrganizationForm } from "@/components/CreateOrganizationForm";
 import { PageHeader } from "@/components/PageHeader";
 import { StatePanel } from "@/components/StatePanel";
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -11,9 +20,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useOrganization } from "@/contexts/OrganizationContext";
 import { trpc } from "@/lib/trpc";
-import { isPlatformAdminRole, type OrganizationRole } from "@shared/permissions";
-import { Building2, Copy, MailPlus, UserRoundCog, UsersRound, X } from "lucide-react";
-import { useState } from "react";
+import { isPlatformAdminRole, isSuperAdminRole, type OrganizationRole } from "@shared/permissions";
+import { Building2, Copy, MailPlus, Trash2, UserRoundCog, UsersRound, X } from "lucide-react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { formatDateTime } from "@/lib/datetime";
 
@@ -26,9 +35,41 @@ const roles: { value: OrganizationRole; label: string; description: string }[] =
 
 export default function OrganizationPage() {
   const { user } = useAuth();
-  const { activeOrganization, activeOrganizationId, hasPermission, refetchOrganizations } = useOrganization();
+  const { activeOrganization, activeOrganizationId, organizations, setActiveOrganizationId, hasPermission, refetchOrganizations } = useOrganization();
   const utils = trpc.useUtils();
   const isPlatformAdmin = isPlatformAdminRole(user?.role);
+  const isSuperAdmin = isSuperAdminRole(user?.role);
+  const [orgName, setOrgName] = useState("");
+  const [orgSlug, setOrgSlug] = useState("");
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [confirmSlug, setConfirmSlug] = useState("");
+  useEffect(() => {
+    setOrgName(activeOrganization?.name ?? "");
+    setOrgSlug(activeOrganization?.slug ?? "");
+    setConfirmSlug("");
+    setDeleteOpen(false);
+  }, [activeOrganization?.id, activeOrganization?.name, activeOrganization?.slug]);
+  const renameOrganization = trpc.organizations.update.useMutation({
+    onSuccess: async () => {
+      await refetchOrganizations();
+      toast.success("Organization updated.");
+    },
+    onError: error => toast.error(error.message),
+  });
+  const removeOrganization = trpc.organizations.remove.useMutation({
+    onSuccess: async result => {
+      const next = organizations.find(org => org.id !== activeOrganizationId);
+      setActiveOrganizationId(next?.id ?? null);
+      await refetchOrganizations();
+      setDeleteOpen(false);
+      toast.success(
+        result.storageWarning
+          ? `${result.name} was deleted. Some stored files could not be removed.`
+          : `${result.name} was deleted.`
+      );
+    },
+    onError: error => toast.error(error.message),
+  });
   const enabled = Boolean(activeOrganizationId && hasPermission("member:manage"));
   const members = trpc.organizations.members.useQuery({ organizationId: activeOrganizationId || 0 }, { enabled });
   const invites = trpc.organizations.invites.useQuery({ organizationId: activeOrganizationId || 0 }, { enabled });
@@ -100,6 +141,102 @@ export default function OrganizationPage() {
           description={(invite.error || updateRole.error || revoke.error)?.message || "Check the role and invite status, then try again."}
         />
       ) : null}
+
+      {isSuperAdmin && activeOrganization ? (
+        <Card className="clinical-card shadow-none">
+          <CardHeader>
+            <div className="flex items-center gap-3">
+              <div className="grid size-9 place-items-center rounded-xl bg-primary/8 text-primary">
+                <Building2 className="size-4" />
+              </div>
+              <div>
+                <CardTitle className="font-display text-base">Organization identity</CardTitle>
+                <CardDescription className="mt-1 text-xs">
+                  Super administrator only. Rename this workspace, or delete it and every record that belongs to it.
+                </CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="max-w-xl space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="org-settings-name">Organization name</Label>
+              <Input
+                id="org-settings-name"
+                value={orgName}
+                onChange={event => setOrgName(event.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="org-settings-slug">Organization identifier</Label>
+              <Input
+                id="org-settings-slug"
+                value={orgSlug}
+                onChange={event => setOrgSlug(event.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ""))}
+              />
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                disabled={
+                  renameOrganization.isPending ||
+                  orgName.trim().length < 2 ||
+                  !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(orgSlug) ||
+                  (orgName.trim() === activeOrganization.name && orgSlug === activeOrganization.slug)
+                }
+                onClick={() =>
+                  renameOrganization.mutate({
+                    organizationId: activeOrganization.id,
+                    name: orgName.trim(),
+                    slug: orgSlug,
+                  })
+                }
+              >
+                {renameOrganization.isPending ? "Saving…" : "Save name"}
+              </Button>
+              <Button variant="destructive" onClick={() => setDeleteOpen(true)}>
+                <Trash2 className="mr-2 size-4" />
+                Delete organization
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {activeOrganization?.name}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This removes the workspace and its cases, variants, files, and memberships. Type the identifier{" "}
+              <span className="font-semibold text-foreground">{activeOrganization?.slug}</span> to confirm.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="org-delete-confirm">Organization identifier</Label>
+            <Input
+              id="org-delete-confirm"
+              value={confirmSlug}
+              onChange={event => setConfirmSlug(event.target.value.toLowerCase())}
+              autoComplete="off"
+            />
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <Button
+              variant="destructive"
+              disabled={confirmSlug !== activeOrganization?.slug || removeOrganization.isPending}
+              onClick={() => {
+                if (!activeOrganization) return;
+                removeOrganization.mutate({
+                  organizationId: activeOrganization.id,
+                  confirmSlug,
+                });
+              }}
+            >
+              {removeOrganization.isPending ? "Deleting…" : "Delete organization"}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {isPlatformAdmin ? (
         <Card className="clinical-card shadow-none">

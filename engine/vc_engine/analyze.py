@@ -6391,7 +6391,11 @@ def analyze_variant():
                                 )
 
                             parsed_data['protein_length'] = total_len
-                            parsed_data['protein_start'] = 1
+                            parsed_data['met_reinitiation'] = True
+                            if current_cons in ('nonsense', 'frameshift'):
+                                parsed_data.setdefault('original_consequence', current_cons)
+                            if current_cons == 'start_lost':
+                                parsed_data['protein_start'] = 1
                 except Exception as e:
                     print(f"5' Logic Error: {e}")
 
@@ -6542,6 +6546,7 @@ def analyze_variant():
             (
                 current_csq_nmd == 'start_lost'
                 or parsed_data.get('early_oof_exon_skip_next_met')
+                or parsed_data.get('met_reinitiation')
             )
             and is_start_loss_reinit_viable(trunc_frac)
         )
@@ -7744,7 +7749,7 @@ def analyze_variant():
                     and not parsed_data.get('cryptic_gain_outcome')
                 )
             )
-            is_start_loss = csq == 'start_lost'
+            is_start_loss = csq == 'start_lost' or bool(parsed_data.get('met_reinitiation'))
             is_nmd_escape = parsed_data.get('nmd_escape', False)
             trunc_frac = sync_truncation_fraction_from_ptc(parsed_data)
             

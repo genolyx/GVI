@@ -105,6 +105,25 @@ async function selectedReleaseDirectory(): Promise<string | null> {
   return v3 || path.dirname(single);
 }
 
+async function indexFiles(directory: string, cohort: "genomes" | "exomes"): Promise<string[]> {
+  const indexDir = path.join(directory, "af-index");
+  let names: string[] = [];
+  try {
+    names = await readdir(indexDir);
+  } catch {
+    return [];
+  }
+  const present = new Set(names);
+  return names
+    .filter(name => {
+      if (!name.endsWith(".af.tsv.gz")) return false;
+      if (!name.includes(`.${cohort}.`) && !name.includes(`${cohort}.v`)) return false;
+      return present.has(`${name}.tbi`);
+    })
+    .map(name => path.join(indexDir, name))
+    .sort();
+}
+
 async function cohortFiles(directory: string, cohort: "genomes" | "exomes"): Promise<string[]> {
   let names: string[] = [];
   try {
@@ -122,6 +141,19 @@ async function cohortFiles(directory: string, cohort: "genomes" | "exomes"): Pro
     .sort();
 }
 
+function regionBody(file: string, sites: GnomadSite[], bed: boolean): string {
+  const contigPrefix = /(?:^|[._])chr/i.test(path.basename(file));
+  return sites
+    .map(site => {
+      const chrom = bareChromosome(site.chromosome);
+      const name = contigPrefix ? `chr${chrom}` : chrom;
+      const start = bed ? Math.max(0, site.position - 1) : site.position;
+      return `${name}\t${start}\t${site.position}`;
+    })
+    .join("\n");
+}
+
+/** Sites VCF query. A null result means this chromosome file was not read. */
 async function queryFile(
   file: string,
   sites: GnomadSite[]
@@ -129,20 +161,33 @@ async function queryFile(
   const directory = await mkdtemp(path.join(os.tmpdir(), "gvi-gnomad-"));
   const regions = path.join(directory, "regions.txt");
   try {
-    const contigPrefix = /(?:^|[._])chr/i.test(path.basename(file));
-    const body = sites
-      .map(site => {
-        const chrom = bareChromosome(site.chromosome);
-        const name = contigPrefix ? `chr${chrom}` : chrom;
-        return `${name}\t${site.position}\t${site.position}`;
-      })
-      .join("\n");
-    await writeFile(regions, `${body}\n`);
+    await writeFile(regions, `${regionBody(file, sites, false)}\n`);
     const { stdout } = await execFileAsync(
       "bcftools",
       ["query", "-R", regions, "-f", "%CHROM\t%POS\t%REF\t%ALT\t%INFO/AF\n", file],
       { timeout: 60_000, maxBuffer: 64 * 1024 * 1024 }
     );
+    return parseAlleleFrequencyLines(stdout);
+  } catch {
+    return null;
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
+/** Compact AF index. Coordinates in the region file are BED, 0-based start. */
+async function queryIndexFile(
+  file: string,
+  sites: GnomadSite[]
+): Promise<Map<string, number> | null> {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "gvi-gnomad-"));
+  const regions = path.join(directory, "regions.bed");
+  try {
+    await writeFile(regions, `${regionBody(file, sites, true)}\n`);
+    const { stdout } = await execFileAsync("tabix", ["-R", regions, file], {
+      timeout: 60_000,
+      maxBuffer: 64 * 1024 * 1024,
+    });
     return parseAlleleFrequencyLines(stdout);
   } catch {
     return null;
@@ -163,11 +208,13 @@ export async function lookupLocalGnomad(
   if (!sites.length) return new Map();
   const directory = await selectedReleaseDirectory();
   if (!directory) return null;
-  const [genomes, exomes] = await Promise.all([
+  const [genomes, exomes, genomeIndex, exomeIndex] = await Promise.all([
     cohortFiles(directory, "genomes"),
     cohortFiles(directory, "exomes"),
+    indexFiles(directory, "genomes"),
+    indexFiles(directory, "exomes"),
   ]);
-  if (!genomes.length && !exomes.length) return null;
+  if (!genomes.length && !exomes.length && !genomeIndex.length && !exomeIndex.length) return null;
 
   const byChrom = new Map<string, GnomadSite[]>();
   for (const site of sites) {
@@ -184,11 +231,17 @@ export async function lookupLocalGnomad(
 
   await Promise.all(
     Array.from(byChrom.entries()).map(async ([chrom, group]) => {
-      const genomeFile = pickChromosomeFile(genomes, chrom);
-      const exomeFile = pickChromosomeFile(exomes, chrom);
+      const genomeIndexFile = pickChromosomeFile(genomeIndex, chrom);
+      const exomeIndexFile = pickChromosomeFile(exomeIndex, chrom);
+      const genomeFile = genomeIndexFile ?? pickChromosomeFile(genomes, chrom);
+      const exomeFile = exomeIndexFile ?? pickChromosomeFile(exomes, chrom);
       const [genomeResult, exomeResult] = await Promise.all([
-        genomeFile ? queryFile(genomeFile, group) : Promise.resolve(null),
-        exomeFile ? queryFile(exomeFile, group) : Promise.resolve(null),
+        genomeFile
+          ? (genomeIndexFile ? queryIndexFile : queryFile)(genomeFile, group)
+          : Promise.resolve(null),
+        exomeFile
+          ? (exomeIndexFile ? queryIndexFile : queryFile)(exomeFile, group)
+          : Promise.resolve(null),
       ]);
       if (genomeResult) {
         genomesRead.add(chrom);

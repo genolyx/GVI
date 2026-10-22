@@ -201,8 +201,9 @@ def sync_truncation_fraction_from_ptc(parsed_data: MutableMapping[str, Any]) -> 
             return 0.0
     csq = parsed_data.get("consequence") or ""
 
-    # Start-loss: fraction is distance to the next in-frame Met, never C-terminal PTC math.
-    if csq == "start_lost":
+    # Start-loss, or an early PTC that entered the same next-Met block:
+    # fraction is distance to the next in-frame Met, never C-terminal PTC math.
+    if csq == "start_lost" or parsed_data.get("met_reinitiation"):
         try:
             plen = int(parsed_data.get("protein_length") or 0)
         except (TypeError, ValueError):
@@ -273,6 +274,8 @@ def formalize_nonsense_ptc(
     protein_length: int,
 ) -> None:
     """Set canonical PTC fields for nonsense (stop aa == onset aa)."""
+    if parsed_data.get("met_reinitiation"):
+        return
     try:
         stop = int(stop_aa)
         plen = int(protein_length)
@@ -299,6 +302,8 @@ def formalize_frameshift_ptc(
     the 3′ UTR (e.g. DOCK4 p.Gln1974ValfsTer19) must keep stop > length so the
     negative extension fraction drives short/long 3′-extension matrix rules.
     """
+    if parsed_data.get("met_reinitiation"):
+        return
     try:
         onset = int(onset_aa)
         stop = int(stop_aa)
@@ -349,6 +354,8 @@ def ensure_truncation_fraction_from_stop(parsed_data: MutableMapping[str, Any]) 
     length are known but ``nmd_escape_truncation_fraction`` was never set.
     """
     if parsed_data.get("cryptic_natural_stop_preserved"):
+        return
+    if parsed_data.get("met_reinitiation"):
         return
     csq = parsed_data.get("consequence") or ""
     if csq not in ("nonsense", "frameshift"):

@@ -1,8 +1,9 @@
-"""Local gnomAD sites-VCF allele frequency.
+"""Local gnomAD allele frequency.
 
 When ``VC_GNOMAD_DIR`` (a directory of per-chromosome files) or
 ``VC_GNOMAD_PATH`` (one indexed VCF) is set, frequency comes from those
-files. MyVariant ``gnomad_exomes`` / ``gnomad_genomes`` fields are not used.
+files. A chromosome file in ``<release>/af-index`` is used instead of the
+sites VCF. MyVariant ``gnomad_exomes`` / ``gnomad_genomes`` fields are not used.
 """
 from __future__ import annotations
 
@@ -157,6 +158,30 @@ def _has_index(path: str) -> bool:
     return os.path.exists(path + ".tbi") or os.path.exists(path + ".csi")
 
 
+def parse_af_index_line(line: str) -> Optional[dict[str, Any]]:
+    """One allele row from the compact index: chrom, pos, ref, alt, af, nhomalt."""
+    parts = line.rstrip("\n").split("\t")
+    if len(parts) < 6 or parts[0].startswith("#"):
+        return None
+    chrom, pos_text, ref, alt, af_text, nhom_text = parts[:6]
+    try:
+        position = int(pos_text)
+    except ValueError:
+        return None
+    af = None if af_text in ("", ".") else first_numeric(af_text)
+    nhom = None if nhom_text in ("", ".") else first_numeric(nhom_text)
+    if af is None and nhom is None:
+        return None
+    return {
+        "chrom": chrom,
+        "pos": position,
+        "ref": ref.upper(),
+        "alt": alt.upper(),
+        "af": af,
+        "nhomalt": None if nhom is None else int(nhom),
+    }
+
+
 class LocalGnomad:
     def __init__(self, directory: str = "", single_path: str = "", genomes_glob: str = "", exomes_glob: str = ""):
         self.directory = directory
@@ -175,12 +200,28 @@ class LocalGnomad:
         found = [str(path) for path in Path(self.directory).glob(pattern) if _has_index(str(path))]
         return sorted(found)
 
+    def index_files(self, dataset: str) -> list[str]:
+        if not self.directory:
+            return []
+        directory = Path(self.directory) / "af-index"
+        if not directory.is_dir():
+            return []
+        token = "exomes" if dataset == "exomes" else "genomes"
+        found = [
+            str(path)
+            for path in directory.glob(f"*{token}*.af.tsv.gz")
+            if _has_index(str(path))
+        ]
+        return sorted(found)
+
     def lookup(self, chrom: str, pos: int, ref: str, alt: str) -> dict[str, Any]:
         exomes_files = self.indexed_files("exomes")
         genomes_files = self.indexed_files("genomes")
-        queried = bool(exomes_files or genomes_files)
-        exomes = self._lookup_one(exomes_files, chrom, pos, ref, alt) if exomes_files else None
-        genomes = self._lookup_one(genomes_files, chrom, pos, ref, alt) if genomes_files else None
+        exome_index = self.index_files("exomes")
+        genome_index = self.index_files("genomes")
+        queried = bool(exomes_files or genomes_files or exome_index or genome_index)
+        exomes = self._lookup_dataset("exomes", exome_index, exomes_files, chrom, pos, ref, alt)
+        genomes = self._lookup_dataset("genomes", genome_index, genomes_files, chrom, pos, ref, alt)
         return {
             "queried": queried,
             "exomes": None if exomes is None else exomes.get("af"),
@@ -188,6 +229,37 @@ class LocalGnomad:
             "exomes_nhomalt": None if exomes is None else exomes.get("nhomalt"),
             "genomes_nhomalt": None if genomes is None else genomes.get("nhomalt"),
         }
+
+    def _lookup_dataset(
+        self,
+        dataset: str,
+        index_paths: list[str],
+        vcf_paths: list[str],
+        chrom: str,
+        pos: int,
+        ref: str,
+        alt: str,
+    ) -> Optional[dict[str, Any]]:
+        del dataset
+        index_path = pick_file_for_chrom(index_paths, chrom)
+        if index_path:
+            return self._lookup_index(index_path, chrom, pos, ref, alt)
+        if not vcf_paths:
+            return None
+        return self._lookup_one(vcf_paths, chrom, pos, ref, alt)
+
+    def _lookup_index(self, path: str, chrom: str, pos: int, ref: str, alt: str) -> Optional[dict[str, Any]]:
+        try:
+            handle = self._open(path)
+            query_chrom = self._contig(path, chrom)
+            for line in handle.fetch(query_chrom, pos - 1, pos):
+                parsed = parse_af_index_line(line)
+                if not parsed or parsed["pos"] != pos or parsed["ref"] != ref or parsed["alt"] != alt:
+                    continue
+                return {"af": parsed["af"], "nhomalt": parsed["nhomalt"]}
+        except Exception as exc:
+            print(f"[gnomad-local] index lookup failed {chrom}:{pos} {ref}>{alt}: {exc}")
+        return None
 
     def _lookup_one(self, files: list[str], chrom: str, pos: int, ref: str, alt: str) -> Optional[dict[str, Any]]:
         path = pick_file_for_chrom(files, chrom)
@@ -231,9 +303,13 @@ class LocalGnomad:
         handle = self._handles.get(path)
         if handle is None:
             import pysam
-            handle = pysam.VariantFile(path)
+            if path.endswith(".tsv.gz"):
+                handle = pysam.TabixFile(path)
+                contigs = list(handle.contigs)
+            else:
+                handle = pysam.VariantFile(path)
+                contigs = list(handle.header.contigs)
             self._handles[path] = handle
-            contigs = list(handle.header.contigs)
             self._chr_prefix[path] = any(str(contig).startswith("chr") for contig in contigs)
         return handle
 

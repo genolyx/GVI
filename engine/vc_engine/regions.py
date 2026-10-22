@@ -102,6 +102,9 @@ def _needs_downstream_clinvar_plp(parsed_data):
     """
     if not parsed_data:
         return False
+    # Early PTC on the next-Met pathway uses the upstream scan, not 3′ NMD-escape.
+    if parsed_data.get("met_reinitiation"):
+        return False
     csq = parsed_data.get("consequence", "")
     is_core_nmd_csq = csq in ("nonsense", "frameshift")
     try:

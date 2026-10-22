@@ -6,6 +6,7 @@ from vc_engine.gnomad_local import (
     gnomad_mode,
     homozygote_count,
     homozygote_total,
+    parse_af_index_line,
     pick_file_for_chrom,
     release_from_names,
 )
@@ -31,6 +32,18 @@ def test_single_file_covers_every_chromosome():
 def test_release_from_filename():
     assert release_from_names(["gnomad.genomes.v3.1.2.sites.chr22.vcf.bgz"]) == "v3.1.2"
     assert release_from_names(["notes.txt"]) is None
+
+
+def test_af_index_line_keeps_frequency_and_homozygote_count():
+    parsed = parse_af_index_line("chr8\t10610142\tG\tC\t0.406875\t3\n")
+    assert parsed is not None
+    assert parsed["pos"] == 10610142
+    assert parsed["ref"] == "G"
+    assert parsed["alt"] == "C"
+    assert parsed["af"] == 0.406875
+    assert parsed["nhomalt"] == 3
+    assert parse_af_index_line("#CHROM\tPOS\tREF\tALT\tAF\tNHOMALT") is None
+    assert parse_af_index_line("chr8\t10\tA\tG\t.\t.\n") is None
 
 
 def test_af_uses_the_matching_alt():

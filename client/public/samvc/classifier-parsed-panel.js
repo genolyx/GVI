@@ -925,7 +925,7 @@ if (_isFsExtension) {
     if ((!pStart || pStart <= 0) && Number.isFinite(cryptTL) && cryptTL > 0) {
         pStart = cryptTL + 1;
     }
-    if (res.parsed_data.consequence === 'start_lost' || res.parsed_data.early_oof_exon_skip_next_met) {
+    if (res.parsed_data.consequence === 'start_lost' || res.parsed_data.early_oof_exon_skip_next_met || res.parsed_data.met_reinitiation) {
         // Start-loss, or an early OOF exon skip that keeps Met1: missing N-terminus to the next Met.
         const nextMetPos = res.parsed_data.next_methionine_position || Math.round(res.parsed_data.nmd_escape_truncation_fraction * pLen) + 1;
         if (nextMetPos !== -1) {
@@ -994,10 +994,10 @@ if (!res.parsed_data.cryptic_natural_stop_preserved && truncFracVal < 0 && trunc
 } else if (
     !res.parsed_data.cryptic_natural_stop_preserved
     && truncFracVal > 0
-    && (_csqForTrunc === 'start_lost' || res.parsed_data.early_oof_exon_skip_next_met)
+    && (_csqForTrunc === 'start_lost' || res.parsed_data.early_oof_exon_skip_next_met || res.parsed_data.met_reinitiation)
 ) {
     // N-terminal % is distance to the next Met, not C-terminal PTC math.
-    const earlyNextMet = res.parsed_data.early_oof_exon_skip_next_met === true;
+    const earlyNextMet = res.parsed_data.early_oof_exon_skip_next_met === true || res.parsed_data.met_reinitiation === true;
     const isUnder10Start = truncFracVal < TRUNC_SEVERE_THRESHOLD;
     const threshLbl = isUnder10Start
         ? (earlyNextMet ? '<10% next-Met' : '<10% start-loss')
@@ -1168,7 +1168,7 @@ function downstreamPlpNotFoundPill(dir) {
 }
 
 if (showTruncEvidencePills) {
-    const dir = res.parsed_data.consequence === 'start_lost' ? 'Upstream of Next Met' : 'Downstream';
+    const dir = (res.parsed_data.consequence === 'start_lost' || res.parsed_data.met_reinitiation) ? 'Upstream of Next Met' : 'Downstream';
 
     // Domain Badge
     if (res.parsed_data.has_critical_domain) {

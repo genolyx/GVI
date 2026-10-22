@@ -375,12 +375,60 @@ def _variant_in_first_coding_mrna_exon(parsed_data):
         return False
 
 
+def _single_coding_exon_gene(parsed_data):
+    """One coding exon. Those truncations stay on the 3′ NMD-escape path."""
+    rows = (parsed_data or {}).get('coding_exons') or []
+    coding = [r for r in rows if isinstance(r, dict)]
+    if len(coding) == 1:
+        return True
+    if len(coding) > 1:
+        return False
+    for key in ('nmd_exon_total', 'snpeff_exon_total'):
+        try:
+            if int((parsed_data or {}).get(key) or 0) == 1:
+                return True
+        except (TypeError, ValueError):
+            continue
+    return False
+
+
+def _early_ptc_in_first_coding_exon(parsed_data, current_rank, is_first_exon):
+    if is_first_exon:
+        return True
+    if _variant_in_first_coding_mrna_exon(parsed_data):
+        return True
+    try:
+        rank = int(current_rank or 0)
+    except (TypeError, ValueError):
+        rank = 0
+    first = _first_coding_mrna_exon_rank((parsed_data or {}).get('coding_exons') or [])
+    try:
+        return bool(first and rank and rank == int(first))
+    except (TypeError, ValueError):
+        return False
+
+
 def _met_reinitiation_applies(parsed_data, *, current_cons, current_rank, is_first_exon):
     """
-    Next-Met / 5′ re-initiation applies only when the primary start codon is abolished
-    (start_lost). Early nonsense/frameshift in exon 1 does not qualify (e.g. FLG c.477dup).
+    When the existing next-Met / 5′ block runs.
+
+    On: start_lost, or nonsense/frameshift in the first coding exon
+    (NPRL2 c.35dup — next Met, not the PTC’s C-terminal percent).
+    Off: a frameshift outside that exon (FLG c.477dup), including when the
+    residue is under 10% of a very long ORF, and any nonsense/frameshift in a
+    single-coding-exon gene (3′ NMD-escape).
     """
-    return current_cons == 'start_lost'
+    cons = current_cons or (parsed_data or {}).get('consequence') or ''
+    if cons == 'start_lost':
+        return True
+    if cons not in ('nonsense', 'frameshift'):
+        return False
+    # Partial exon-internal cryptic splice stays a frameshift with its own percent.
+    if (parsed_data or {}).get('splice_viz_exon_internal_cryptic'):
+        return False
+    if _single_coding_exon_gene(parsed_data):
+        return False
+    return _early_ptc_in_first_coding_exon(parsed_data, current_rank, is_first_exon)
 
 
 def _deep_intronic_should_run(consequence, c_dot):

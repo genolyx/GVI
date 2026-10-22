@@ -13,9 +13,26 @@ import {
 import { ROLE_PERMISSIONS, ORGANIZATION_ROLES, SUPER_ADMIN_ORGANIZATION_ROLE, canProvisionOrganization, isPlatformAdminRole, isSuperAdminRole } from "../../shared/permissions";
 import { protectedProcedure, publicProcedure, router } from "../_core/trpc";
 import { writeAuditEvent } from "../domain/audit";
+import { deleteOrganizationGraph } from "../domain/organizationDelete";
 import { requireDb, requireOrganizationPermission } from "../domain/tenant";
+import { storageDeletePrefix } from "../storage";
 
 const roleSchema = z.enum(ORGANIZATION_ROLES);
+const organizationSlugSchema = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
+  .max(80);
+
+function requireSuperAdmin(role: string | null | undefined) {
+  if (!isSuperAdminRole(role)) {
+    throw new TRPCError({
+      code: "FORBIDDEN",
+      message: "Only a super administrator can change or delete an organization.",
+    });
+  }
+}
 
 /** Standard addresses, plus the single-label host used by Dev Login (`admin@localhost`). */
 const inviteEmailSchema = z
@@ -141,6 +158,106 @@ export const organizationsRouter = router({
         req: ctx.req,
       });
       return { id: result };
+    }),
+
+  /** Super administrators can rename a workspace they are not a member of. */
+  update: protectedProcedure
+    .input(
+      z.object({
+        organizationId: z.number().int().positive(),
+        name: z.string().trim().min(2).max(160),
+        slug: organizationSlugSchema,
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      requireSuperAdmin(ctx.user.role);
+      const db = await requireDb();
+      const existing = await db
+        .select({ id: organizations.id, name: organizations.name, slug: organizations.slug })
+        .from(organizations)
+        .where(eq(organizations.id, input.organizationId))
+        .limit(1);
+      const current = existing[0];
+      if (!current || current.id !== input.organizationId) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Organization not found." });
+      }
+      if (current.name === input.name && current.slug === input.slug) return { id: current.id };
+      try {
+        await db
+          .update(organizations)
+          .set({ name: input.name, slug: input.slug })
+          .where(eq(organizations.id, input.organizationId));
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const causeMessage =
+          error instanceof Error && error.cause instanceof Error ? error.cause.message : "";
+        const combined = `${message}\n${causeMessage}`;
+        if (
+          combined.includes("organizations_slug_uq") ||
+          combined.includes("Duplicate entry") ||
+          /ER_DUP_ENTRY|errno:\s*1062/i.test(combined)
+        ) {
+          throw new TRPCError({
+            code: "CONFLICT",
+            message: `The organization identifier "${input.slug}" is already taken.`,
+          });
+        }
+        throw error;
+      }
+      await writeAuditEvent({
+        organizationId: input.organizationId,
+        actorUserId: ctx.user.id,
+        action: "organization.updated",
+        entityType: "organization",
+        entityId: input.organizationId,
+        before: { name: current.name, slug: current.slug },
+        after: { name: input.name, slug: input.slug },
+        req: ctx.req,
+      });
+      return { id: input.organizationId };
+    }),
+
+  /**
+   * Super administrators can remove a workspace and every record that belongs to it.
+   * The caller must retype the current identifier.
+   */
+  remove: protectedProcedure
+    .input(
+      z.object({
+        organizationId: z.number().int().positive(),
+        confirmSlug: z.string().trim().toLowerCase(),
+      })
+    )
+    .mutation(async ({ ctx, input }) => {
+      requireSuperAdmin(ctx.user.role);
+      const db = await requireDb();
+      const existing = await db
+        .select({ id: organizations.id, name: organizations.name, slug: organizations.slug })
+        .from(organizations)
+        .where(eq(organizations.id, input.organizationId))
+        .limit(1);
+      const current = existing[0];
+      if (!current) {
+        throw new TRPCError({ code: "NOT_FOUND", message: "Organization not found." });
+      }
+      if (input.confirmSlug !== current.slug) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: "Type the organization identifier exactly to confirm deletion.",
+        });
+      }
+      await deleteOrganizationGraph(current.id);
+      let storageWarning: string | null = null;
+      try {
+        await storageDeletePrefix(`organizations/${current.id}`);
+      } catch (error) {
+        storageWarning = error instanceof Error ? error.message : "Stored files could not be removed.";
+        console.error("[organization.remove] storage cleanup failed", {
+          organizationId: current.id,
+          error,
+        });
+      }
+      return { id: current.id, name: current.name, storageWarning };
     }),
 
   securityContext: protectedProcedure

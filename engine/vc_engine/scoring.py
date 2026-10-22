@@ -326,7 +326,7 @@ def apply_acmg(parsed_data, splice_points=None, nmd_points=None):
                 "weight": "very_strong",
             })
     elif _is_nullish_consequence(consequence) and not gof_blocks:
-        if consequence == "start_lost":
+        if consequence == "start_lost" or parsed_data.get("met_reinitiation"):
             if start_lost_pathogenic:
                 criteria.append({
                     "code": "PVS1",
