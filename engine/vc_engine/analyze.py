@@ -61,12 +61,12 @@ from vc_engine.truncation import (
     apply_nmd_escape_from_coding_exons,
     c_terminal_loss_fraction,
     ensure_truncation_fraction_from_stop,
+    frameshift_ter_index,
     sync_truncation_fraction_from_ptc,
     formalize_frameshift_ptc,
     formalize_nonsense_ptc,
     is_marginal_loss,
     is_severe_loss,
-    is_short_3prime_extension,
     is_start_loss_reinit_viable,
     parse_nonsense_stop_aa_from_hgvs,
     start_loss_fraction_from_next_met,
@@ -5241,16 +5241,26 @@ def analyze_variant():
                         ter_offset = int(fs_match.group(1))
                         if ter_offset > 0:
                             if p_current > 0:
-                                # Novel termination: first affected AA + fsTer N
-                                # (e.g. Q1756fsTer74 → stop at 1830). Do NOT cap at WT
-                                # length — stops past the native terminus are 3′ extensions
-                                # (e.g. DOCK4 p.Q1974Vfs*19 on a 1975-aa protein).
-                                physical_stop_pos = p_current + ter_offset
+                                # fsTerN counts from the first changed residue and
+                                # includes the stop, so the codon index is onset+N-1.
+                                # Extension only when that index is past the WT protein
+                                # (TWIST1 p.His180MetfsTer54 → Ter 233, product 232).
+                                # Stops inside the protein keep onset+N so C-terminal
+                                # loss fractions stay put (Q1756fsTer74 → 1830).
+                                ter_index = frameshift_ter_index(p_current, ter_offset)
+                                if p_len > 0 and ter_index > p_len:
+                                    physical_stop_pos = ter_index
+                                else:
+                                    physical_stop_pos = p_current + ter_offset
                             else:
                                 c_match = re.search(r'c\.([0-9]+)', parsed_data.get('c_dot', '').lower())
                                 if c_match:
                                     approx_aa = max(1, int(c_match.group(1)) // 3)
-                                    physical_stop_pos = approx_aa + ter_offset
+                                    ter_index = frameshift_ter_index(approx_aa, ter_offset)
+                                    if p_len > 0 and ter_index > p_len:
+                                        physical_stop_pos = ter_index
+                                    else:
+                                        physical_stop_pos = approx_aa + ter_offset
                     except Exception:
                         pass
             
@@ -5379,7 +5389,11 @@ def analyze_variant():
             except (TypeError, ValueError):
                 p_len_final = 0
             if parsed_data.get('consequence') == 'frameshift' and ter_offset > 0 and p_current > 0:
-                physical_stop_pos = p_current + ter_offset
+                ter_index = frameshift_ter_index(p_current, ter_offset)
+                if p_len_final > 0 and ter_index > p_len_final:
+                    physical_stop_pos = ter_index
+                else:
+                    physical_stop_pos = p_current + ter_offset
                 curr_stop_eval = physical_stop_pos
 
             # Formalize Stop Codon metrics after all NMD heuristics and math calculations resolve
@@ -6534,14 +6548,12 @@ def analyze_variant():
             print("DEBUG: Skipping ClinVar HTML lab scrape (Gemini disabled / fast path)")
 
         # 3. Auto-Lookup (P/LP in region): nonsense / frameshift NMD-escape protocol — P/LP
-        # strictly 3′ of the PTC anchor (short 3′ loss, marginal fs extension, or structural
-        # last-exon / penultimate escape with substantial C-terminal loss). Structural splice
+        # strictly 3′ of the PTC anchor (protein extension past the native stop, or structural
+        # last-exon / penultimate escape with C-terminal loss). The <10% / ≥10% threshold
+        # applies to C-terminal loss only, not to protein extensions. Structural splice
         # (whole–exon loss, PTC in skipped exon, etc.) uses splice_deleted_coords VCF scan.
         sync_truncation_fraction_from_ptc(parsed_data)
         current_csq_nmd = parsed_data.get('consequence', '')
-        is_core_nmd_csq = current_csq_nmd in ['nonsense', 'frameshift']
-        trunc_frac = parsed_data.get('nmd_escape_truncation_fraction', 0.0)
-        is_short_extension = is_core_nmd_csq and is_short_3prime_extension(trunc_frac)
         is_start_loss_escape = (
             (
                 current_csq_nmd == 'start_lost'

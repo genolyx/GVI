@@ -898,20 +898,15 @@ if (_isFsExtension) {
     const extPct = (Math.abs(_truncFracRaw) * 100).toFixed(1);
     const pLen = res.parsed_data.protein_length;
     const novelStop = res.parsed_data.novel_stop_aa;
-    const d_aas = res.parsed_data.downstream_aas;
-    let fsOnset = res.parsed_data.protein_start;
-    if (res.parsed_data.consequence === 'frameshift' && res.parsed_data.hgvs_p) {
-        const mOnset = res.parsed_data.hgvs_p.match(/p\.(?:[A-Z][a-z]{2}|[A-Z*])(\d+)/);
-        if (mOnset) fsOnset = parseInt(mOnset[1], 10);
-    }
-    const showStop = (Number.isFinite(novelStop) && novelStop > 0)
-        ? `Stop: ${fsOnset || '?'} [onset] + ${d_aas != null ? d_aas : '?'} [shift] = ${novelStop}/${pLen} (past WT end)`
-        : `extends past ${pLen}-aa WT terminus`;
+    const productLen = Number(res.parsed_data.protein_product_length) || (Number(novelStop) > 1 ? Number(novelStop) - 1 : null);
+    const productBit = productLen ? `${productLen} vs ${pLen}` : `stop aa ${novelStop} vs ${pLen}`;
+    const expl = res.parsed_data.protein_extension_explanation
+        || `Frameshift stop past the native terminus — extends the protein by ${extPct}% (${productBit}) (novel stop at aa ${novelStop} vs ${pLen}-aa reference) — elongated ORF with a novel C-terminus (not a shorter truncation).`;
     const ptcLabel = res.parsed_data.hgvs_p || '';
     const ptcSuffix = ptcLabel
         ? ` &middot; <span style="color:#fde68a;background:rgba(251,191,36,0.12);padding:1px 6px;border-radius:3px;font-weight:600;">${ptcLabel}</span>`
         : '';
-    truncPill = `<span class="data-pill" title="Frameshift stop codon is past the native protein terminus — the ORF is extended into the 3′ UTR, not truncated." style="border-color: #fcd34d; color: #fde68a; background: rgba(251, 191, 36, 0.10);">3′ extension: <strong style="color: #fde68a;">+${extPct}% (${showStop})</strong>${ptcSuffix}</span>`;
+    truncPill = `<span class="data-pill" title="${esc(expl)}" style="border-color: #fcd34d; color: #fde68a; background: rgba(251, 191, 36, 0.10);">Extends the protein: <strong style="color: #fde68a;">+${extPct}%</strong> (${productBit}; novel stop aa ${novelStop} vs ${pLen}-aa reference)${ptcSuffix}</span>`;
 } else if (!res.parsed_data.cryptic_natural_stop_preserved && res.parsed_data.nmd_escape_truncation_fraction > 0 && isTruncatingConsequence(res.parsed_data)) {
     const pct = (res.parsed_data.nmd_escape_truncation_fraction * 100).toFixed(1);
     const pLen = res.parsed_data.protein_length;
@@ -984,13 +979,10 @@ if (!res.parsed_data.cryptic_natural_stop_preserved && truncFracVal < 0 && trunc
     && Number(res.parsed_data.protein_length) > 0
     && Number(res.parsed_data.novel_stop_aa) > Number(res.parsed_data.protein_length)
     && isTruncatingConsequence(res.parsed_data)) {
-    const absExt = Math.abs(truncFracVal);
-    const isLongExt = absExt >= TRUNC_SEVERE_THRESHOLD;
-    const threshLbl = isLongExt ? '≥10% 3′ extension' : '<10% 3′ extension';
-    const threshTip = isLongExt
-        ? 'Frameshift extends the ORF by at least 10% past the native stop.'
-        : 'Frameshift extends the ORF by less than 10% past the native stop — evaluate whether the altered C-terminus is clinically critical.';
-    truncThresholdPill = `<span class="data-pill" title="${esc(threshTip)}" style="border-color: #fcd34d; color: #fde68a; background: rgba(251, 191, 36, 0.08);">Extension: <strong>${threshLbl}</strong> (+${(absExt * 100).toFixed(1)}%)</span>`;
+    // The <10% / ≥10% threshold is for C-terminal loss only. Extensions show
+    // the percent and stop vs WT length on the extension pill and in the
+    // explanation text, without a cutoff label.
+    truncThresholdPill = '';
 } else if (
     !res.parsed_data.cryptic_natural_stop_preserved
     && truncFracVal > 0

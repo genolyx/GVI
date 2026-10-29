@@ -7,12 +7,15 @@ from vc_engine.truncation import (
     ensure_truncation_fraction_from_stop,
     formalize_frameshift_ptc,
     formalize_nonsense_ptc,
+    frameshift_product_length,
+    frameshift_ter_index,
     is_long_3prime_extension,
     is_marginal_loss,
     is_severe_loss,
     is_short_3prime_extension,
     n_terminal_loss_fraction,
     parse_nonsense_stop_aa_from_hgvs,
+    sync_truncation_fraction_from_ptc,
     truncation_rule_label,
 )
 
@@ -42,11 +45,16 @@ class TestCTerminalLoss:
         assert c_terminal_loss_fraction(50, 0) == 0.0
 
     def test_stop_past_native_terminus_is_negative_extension(self):
-        # DOCK4-style: p.Q1974Vfs*19 on 1975-aa protein → stop at 1993
-        frac = c_terminal_loss_fraction(1993, 1975)
+        # DOCK4 p.Q1974Vfs*19: Ter = 1974+19-1 = 1992, product = 1991, WT = 1975.
+        # (1991-1975)/1975, not 1993/1975 (that counted the stop codon).
+        ter = frameshift_ter_index(1974, 19)
+        assert ter == 1992
+        assert frameshift_product_length(ter) == 1991
+        frac = c_terminal_loss_fraction(ter, 1975)
+        expect = -((1991 - 1975) / 1975.0)
         assert frac < 0
-        assert abs(frac - (1.0 - 1993 / 1975.0)) < 1e-9
-        assert is_short_3prime_extension(frac)
+        assert abs(frac - expect) < 1e-9
+        assert abs(frac - (1.0 - 1993 / 1975.0)) > 1e-4
 
     def test_missing_length_coerced_to_one_does_not_invent_extension(self):
         # NOTCH1 c.1651_1654dup regression: stop~571 with plen=1 must not yield −570
@@ -101,12 +109,51 @@ class TestFormalizePtc:
 
     def test_frameshift_3prime_extension_not_clamped(self):
         pd = {}
-        formalize_frameshift_ptc(pd, 1974, 1993, 1975)
+        formalize_frameshift_ptc(pd, 1974, frameshift_ter_index(1974, 19), 1975)
         assert pd["protein_start"] == 1974
-        assert pd["novel_stop_aa"] == 1993
-        assert pd["downstream_aas"] == 19
+        assert pd["novel_stop_aa"] == 1992
+        assert pd["protein_product_length"] == 1991
+        assert pd["downstream_aas"] == 18
+        assert pd["protein_extension"] is True
         assert pd["nmd_escape_truncation_fraction"] < 0
-        assert is_short_3prime_extension(pd["nmd_escape_truncation_fraction"])
+        expl = pd["protein_extension_explanation"]
+        assert "extends the protein" in expl
+        assert "elongated ORF with a novel C-terminus" in expl
+        assert "not a shorter truncation" in expl
+        assert "<10%" not in expl and "≥10%" not in expl
+
+    def test_twist1_extension_excludes_stop_codon(self):
+        """TWIST1 p.His180MetfsTer54, WT 202 → Ter 233, product 232, +14.9%."""
+        assert frameshift_ter_index(180, 54) == 233
+        assert frameshift_product_length(233) == 232
+        frac = c_terminal_loss_fraction(233, 202)
+        assert abs(frac - (-(30 / 202.0))) < 1e-12
+        assert round(abs(frac) * 100, 1) == 14.9
+        assert abs(abs(frac) - (233 / 202.0)) > 0.001
+        pd = {
+            "consequence": "frameshift",
+            "hgvs_p": "p.His180MetfsTer54",
+            "protein_length": 202,
+            "nmd_decision_basis": (
+                "PTC in the last coding exon (2 of 2); no downstream exon-exon "
+                "junction remains — predicted to escape NMD."
+            ),
+        }
+        formalize_frameshift_ptc(pd, 180, 233, 202)
+        assert pd["novel_stop_aa"] == 233
+        assert pd["protein_product_length"] == 232
+        assert round(abs(pd["nmd_escape_truncation_fraction"]) * 100, 1) == 14.9
+        expl = pd["nmd_math"]
+        assert "extends the protein by 14.9%" in expl
+        assert "232 vs 202" in expl
+        assert "novel stop at aa 233 vs 202-aa reference" in expl
+        assert "elongated ORF with a novel C-terminus (not a shorter truncation)" in expl
+        assert "escape NMD" in expl
+        assert "truncated protein" not in expl.lower()
+        assert "<10%" not in expl and "≥10%" not in expl
+        sync_truncation_fraction_from_ptc(pd)
+        assert round(abs(pd["nmd_escape_truncation_fraction"]) * 100, 1) == 14.9
+        assert "extends the protein by 14.9%" in pd["nmd_math"]
 
     def test_parse_hgvs_nonsense(self):
         assert parse_nonsense_stop_aa_from_hgvs("p.S1050*") == 1050

@@ -222,11 +222,17 @@ def _append_nmd_escape_clinical_context(
             sections.append(("Clinical context", body))
             return
         if parsed_data.get('downstream_plp_scan_performed') and anchor > 0:
-            pct_line = (
-                f"{pct}% C-terminal lost; evaluate whether the truncated segment is clinically critical."
-                if pct is not None else
-                "Evaluate whether the truncated C-terminal segment is clinically critical."
-            )
+            if parsed_data.get('protein_extension') or (trunc_frac and trunc_frac < 0):
+                pct_line = (
+                    parsed_data.get('protein_extension_explanation')
+                    or "Elongated ORF with a novel C-terminus (not a shorter truncation)."
+                )
+            else:
+                pct_line = (
+                    f"{pct}% C-terminal lost; evaluate whether the truncated segment is clinically critical."
+                    if pct is not None else
+                    "Evaluate whether the truncated C-terminal segment is clinically critical."
+                )
             search_link = (parsed_data.get('downstream_pathogenic_clinvar_search_link') or '').strip()
             link_html = ""
             if search_link:

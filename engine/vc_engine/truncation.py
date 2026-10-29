@@ -20,12 +20,135 @@ _HGVSP_NONSENSE_RE = re.compile(
 )
 
 
+def frameshift_ter_index(onset_aa: int, fs_ter_n: int) -> int:
+    """HGVS ``fsTerN`` / ``fs*N`` termination-codon index.
+
+    The count starts at the first changed residue and includes the stop codon,
+    so the codon index is ``onset + N - 1``.
+    """
+    try:
+        onset = int(onset_aa)
+        n = int(fs_ter_n)
+    except (TypeError, ValueError):
+        return 0
+    if onset <= 0 or n <= 0:
+        return 0
+    return onset + n - 1
+
+
+def frameshift_product_length(ter_index: int) -> int:
+    """Translated length of the mutant product. The stop codon is not an amino acid."""
+    try:
+        ter = int(ter_index)
+    except (TypeError, ValueError):
+        return 0
+    if ter <= 1:
+        return 0
+    return ter - 1
+
+
+def protein_extension_fraction(ter_index: int, protein_length: int) -> float:
+    """Signed fraction for a 3′ protein extension.
+
+    ``-((product_length - WT_length) / WT_length)``, where
+    ``product_length = Ter_index - 1``. Negative so callers still recognize an
+    extension via ``fraction < 0``. ``0.0`` when ``Ter_index`` is not past the
+    native terminus (that case stays C-terminal loss).
+
+    Do not use ``Ter / WT``. That counts the stop codon as an amino acid
+    (TWIST1 233/202 = 15.3% instead of (232 − 202) / 202 = 14.9%).
+
+    A protein length below 10 with a stop far past that length is a failed
+    length lookup, not a real extension.
+    """
+    try:
+        ter = int(ter_index)
+        plen = int(protein_length)
+    except (TypeError, ValueError):
+        return 0.0
+    if ter <= 0 or plen <= 0 or ter <= plen:
+        return 0.0
+    if plen < 10 and ter > plen * 2:
+        return 0.0
+    product = ter - 1
+    if product <= plen:
+        return 0.0
+    return -((product - plen) / float(plen))
+
+
+def protein_extension_explanation(
+    ter_index: int,
+    protein_length: int,
+    nmd_basis: str = "",
+) -> str:
+    """Explanation for an elongated ORF, including the percent and both lengths."""
+    try:
+        ter = int(ter_index)
+        plen = int(protein_length)
+    except (TypeError, ValueError):
+        return ""
+    frac = protein_extension_fraction(ter, plen)
+    if frac == 0.0:
+        return ""
+    product = frameshift_product_length(ter)
+    pct = round(abs(frac) * 100.0, 1)
+    sent = (
+        f"Frameshift stop past the native terminus — extends the protein by {pct}% "
+        f"({product} vs {plen}) (novel stop at aa {ter} vs {plen}-aa reference) — "
+        f"elongated ORF with a novel C-terminus (not a shorter truncation)."
+    )
+    basis = str(nmd_basis or "").strip()
+    if basis and basis not in sent:
+        return f"{sent} {basis}"
+    return sent
+
+
+def refresh_protein_extension_readout(parsed_data: MutableMapping[str, Any]) -> float:
+    """Store the extension fraction and explanation when the Ter codon is past WT.
+
+    C-terminal loss (stop inside the reference protein) is left unchanged.
+    """
+    if parsed_data.get("met_reinitiation"):
+        return 0.0
+    try:
+        ter = int(parsed_data.get("novel_stop_aa") or 0)
+        plen = int(parsed_data.get("protein_length") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    if ter <= 0:
+        ter = resolved_ptc_stop_aa(parsed_data)
+    frac = protein_extension_fraction(ter, plen)
+    if frac == 0.0:
+        return 0.0
+    parsed_data["protein_extension"] = True
+    parsed_data["protein_product_length"] = frameshift_product_length(ter)
+    parsed_data["nmd_escape_truncation_fraction"] = frac
+    expl = protein_extension_explanation(
+        ter, plen, str(parsed_data.get("nmd_decision_basis") or ""),
+    )
+    parsed_data["protein_extension_explanation"] = expl
+    existing = str(parsed_data.get("nmd_math") or "")
+    basis = str(parsed_data.get("nmd_decision_basis") or "").strip()
+    if expl and (
+        "extends the protein by" not in existing
+        or (basis and basis not in existing)
+    ):
+        parsed_data["nmd_math"] = expl
+    return frac
+
+
 def c_terminal_loss_fraction(stop_aa: int, protein_length: int) -> float:
     """C-terminal length change when translation stops at ``stop_aa`` (1-based).
 
-    Positive: fraction of the WT protein lost to a premature stop.
-    Negative: fraction by which a frameshift stop past the native terminus
-    extends the ORF (used by ``is_short_3prime_extension`` / long-extension rules).
+    Positive: fraction of the WT protein lost to a premature stop inside the
+    reference protein (``1 - stop / length``). Unchanged for C-terminal loss.
+
+    When ``stop_aa`` is a termination-codon index past the native terminus,
+    returns the protein-extension fraction ``-((product - WT) / WT)`` with
+    ``product = stop_aa - 1`` (the stop codon is not an amino acid).
+
+    A protein length below 10 with a stop far past that length is a failed
+    length lookup (e.g. NOTCH1 with length coerced to 1), not a real extension.
     """
     try:
         stop = int(stop_aa)
@@ -34,10 +157,10 @@ def c_terminal_loss_fraction(stop_aa: int, protein_length: int) -> float:
         return 0.0
     if stop <= 0 or plen <= 0:
         return 0.0
-    # Guard: never treat "unknown length coerced to 1" style inputs as a giant
-    # 3′ extension (e.g. NOTCH1 p.C552Yfs*19 with plen=1 → −570).
     if plen < 10 and stop > plen * 2:
         return 0.0
+    if stop > plen:
+        return protein_extension_fraction(stop, plen)
     return 1.0 - (stop / float(plen))
 
 
@@ -253,6 +376,11 @@ def sync_truncation_fraction_from_ptc(parsed_data: MutableMapping[str, Any]) -> 
             return float(parsed_data.get("nmd_escape_truncation_fraction") or 0)
         except (TypeError, ValueError):
             return 0.0
+    if stop > plen:
+        parsed_data["novel_stop_aa"] = stop
+        ext = refresh_protein_extension_readout(parsed_data)
+        if ext != 0.0:
+            return ext
     frac = c_terminal_loss_fraction(stop, plen)
     # Persist truncations and 3′ extensions (negative fraction); leave 0.0 alone.
     if frac != 0.0:
@@ -260,6 +388,8 @@ def sync_truncation_fraction_from_ptc(parsed_data: MutableMapping[str, Any]) -> 
     elif float(parsed_data.get("nmd_escape_truncation_fraction") or 0) < 0:
         # Recomputed 0 after length was fixed — clear prior bogus extension.
         parsed_data["nmd_escape_truncation_fraction"] = 0.0
+        parsed_data.pop("protein_extension", None)
+        parsed_data.pop("protein_extension_explanation", None)
     return frac
 
 
@@ -298,9 +428,11 @@ def formalize_frameshift_ptc(
 ) -> None:
     """Set canonical PTC fields for frameshift (onset != stop when extension present).
 
-    Do not clamp ``stop_aa`` to WT ``protein_length`` — frameshifts that read into
-    the 3′ UTR (e.g. DOCK4 p.Gln1974ValfsTer19) must keep stop > length so the
-    negative extension fraction drives short/long 3′-extension matrix rules.
+    Do not clamp ``stop_aa`` to WT ``protein_length``. When ``stop_aa`` is a
+    termination-codon index past the native terminus (TWIST1 p.His180MetfsTer54,
+    Ter 233 on a 202-aa protein), the fraction is the extension
+    ``(product − WT) / WT`` with ``product = Ter − 1``. Stops inside the
+    reference protein keep the C-terminal loss fraction.
     """
     if parsed_data.get("met_reinitiation"):
         return
@@ -316,8 +448,13 @@ def formalize_frameshift_ptc(
     if stop > 0:
         parsed_data["novel_stop_aa"] = stop
         parsed_data["downstream_aas"] = max(0, stop - onset)
+    if plen > 0:
+        parsed_data["protein_length"] = plen
     # Need a real WT length before claiming truncation % or 3′ extension %.
     if plen <= 0 or (plen < max(onset, 10) and stop > plen):
+        return
+    if stop > plen > 0:
+        refresh_protein_extension_readout(parsed_data)
         return
     if stop > 0:
         frac = c_terminal_loss_fraction(stop, plen)

@@ -17,10 +17,9 @@ from vc_engine.clinvar import (
     _clinvar_multi_vid_search_url,
 )
 from vc_engine.truncation import (
-    is_long_3prime_extension,
     is_marginal_loss,
     is_severe_loss,
-    is_short_3prime_extension,
+    protein_extension_explanation,
     resolved_ptc_stop_aa,
 )
 from vc_engine.uniprot import _skipped_exon_uniprot_report_line
@@ -94,9 +93,10 @@ def _needs_downstream_clinvar_plp(parsed_data):
     """
     Whether to scan ClinVar for P/LP strictly 3′ of the PTC anchor.
 
-    Covers short 3′ extensions (<10% lost), marginal fs extensions, and
-    structural NMD escape (last-exon / penultimate <50 nt) where a substantial
-    C-terminal segment is still lost (e.g. MC4R c.771C>A, p.C257*).
+    Covers protein extensions (stop past the native terminus; the <10% / ≥10%
+    threshold is for C-terminal loss only) and structural NMD escape
+    (last-exon / penultimate <50 nt) where a C-terminal segment is still lost
+    (e.g. MC4R c.771C>A, p.C257*).
     Exon-internal out-of-frame cryptic splice uses this scan too: the product
     is a frameshift, not a skipped exon.
     """
@@ -111,7 +111,11 @@ def _needs_downstream_clinvar_plp(parsed_data):
         trunc_frac = float(parsed_data.get("nmd_escape_truncation_fraction") or 0.0)
     except (TypeError, ValueError):
         trunc_frac = 0.0
-    is_short_extension = is_core_nmd_csq and is_short_3prime_extension(trunc_frac)
+    is_protein_extension = (
+        is_core_nmd_csq
+        and trunc_frac < 0.0
+        and trunc_frac > -5.0
+    )
     is_nmd_escape_downstream = (
         is_core_nmd_csq
         and bool(parsed_data.get("nmd_escape"))
@@ -126,7 +130,7 @@ def _needs_downstream_clinvar_plp(parsed_data):
             or _partial_exon_internal_frameshift(parsed_data)
         )
     )
-    return bool(is_short_extension or is_nmd_escape_downstream or is_splice_oof_escape)
+    return bool(is_protein_extension or is_nmd_escape_downstream or is_splice_oof_escape)
 
 
 def _finalize_plp_region_links(parsed_data, effective_gene=None):
@@ -168,17 +172,36 @@ def _finalize_downstream_plp_scan_metadata(parsed_data, effective_gene=None):
     except (TypeError, ValueError):
         trunc_frac = 0.0
     p_len = parsed_data.get("protein_length") or "?"
-    if is_short_3prime_extension(trunc_frac) or is_long_3prime_extension(trunc_frac):
-        ext_pct = round(abs(trunc_frac) * 100, 1)
-        bucket = "≥10%" if is_long_3prime_extension(trunc_frac) else "<10%"
-        pct_clause = (
-            f" (frameshift stop past the native terminus — extends the ORF by "
-            f"{ext_pct}% vs the {p_len}-aa reference; {bucket} 3′ extension)"
-        )
+    if trunc_frac < 0 and trunc_frac > -5:
+        try:
+            ter = int(parsed_data.get("novel_stop_aa") or anchor)
+            plen_i = int(p_len)
+        except (TypeError, ValueError):
+            ter = anchor
+            plen_i = 0
+        expl = str(parsed_data.get("protein_extension_explanation") or "").strip()
+        if not expl and plen_i > 0:
+            expl = protein_extension_explanation(
+                ter, plen_i, str(parsed_data.get("nmd_decision_basis") or ""),
+            )
         scan_bit = (
             f" ClinVar/HGMD scanned for P/LP strictly 3′ of aa {anchor} "
-            f"(coordinate past WT end; exploratory)."
+            f"(novel C-terminus past the reference stop)."
         )
+        existing = str(parsed_data.get("nmd_math") or "")
+        if expl and "extends the protein by" not in existing:
+            parsed_data["nmd_math"] = expl
+        if "3′ of aa" not in str(parsed_data.get("nmd_math") or ""):
+            parsed_data["nmd_math"] = (
+                f"{(parsed_data.get('nmd_math') or '').rstrip()}{scan_bit}"
+            ).strip()
+        if not parsed_data.get("downstream_pathogenic_hits"):
+            zero_note = f" No matched ClinVar P/LP variants downstream of aa {anchor}."
+            if zero_note.strip() not in str(parsed_data.get("nmd_math") or ""):
+                parsed_data["nmd_math"] = (
+                    f"{(parsed_data.get('nmd_math') or '').rstrip()}{zero_note}"
+                )
+        return
     elif trunc_frac > 0:
         pct = round(trunc_frac * 100, 1)
         if is_severe_loss(trunc_frac):
