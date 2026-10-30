@@ -107,12 +107,13 @@ def _needs_downstream_clinvar_plp(parsed_data):
         return False
     csq = parsed_data.get("consequence", "")
     is_core_nmd_csq = csq in ("nonsense", "frameshift")
+    is_extension_csq = csq in ("nonsense", "frameshift", "stop_lost")
     try:
         trunc_frac = float(parsed_data.get("nmd_escape_truncation_fraction") or 0.0)
     except (TypeError, ValueError):
         trunc_frac = 0.0
     is_protein_extension = (
-        is_core_nmd_csq
+        is_extension_csq
         and trunc_frac < 0.0
         and trunc_frac > -5.0
     )
@@ -181,8 +182,9 @@ def _finalize_downstream_plp_scan_metadata(parsed_data, effective_gene=None):
             plen_i = 0
         expl = str(parsed_data.get("protein_extension_explanation") or "").strip()
         if not expl and plen_i > 0:
+            kind = "stop_lost" if "stop_lost" in str(parsed_data.get("consequence") or "") else "frameshift"
             expl = protein_extension_explanation(
-                ter, plen_i, str(parsed_data.get("nmd_decision_basis") or ""),
+                ter, plen_i, str(parsed_data.get("nmd_decision_basis") or ""), kind=kind,
             )
         scan_bit = (
             f" ClinVar/HGMD scanned for P/LP strictly 3′ of aa {anchor} "

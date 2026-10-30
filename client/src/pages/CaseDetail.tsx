@@ -45,11 +45,9 @@ import {
   vcfFiltersPayload,
   type CaseVcfFilterValues,
 } from "./CaseVcfFilters";
-import { frequencyTrackForOrder, FREQUENCY_TRACK_LABEL, type FrequencyTrack } from "@shared/germlineFrequency";
+import { FREQUENCY_TRACK_LABEL, type FrequencyTrack } from "@shared/germlineFrequency";
 import {
   defaultGermlineOrder,
-  GERMLINE_SERVICE_LABEL,
-  GERMLINE_TEST_CATEGORY_LABEL,
   germlineServiceFromStored,
   normalizeGermlineOrder,
   type GermlineOrderInput,
@@ -1385,15 +1383,21 @@ function GermlineOrderSection({
     specimenType: "",
   };
   const current = order ?? empty;
-  const category =
-    order && order.testCategory in GERMLINE_TEST_CATEGORY_LABEL
-      ? GERMLINE_TEST_CATEGORY_LABEL[
-          order.testCategory as GermlineOrderInput["testCategory"]
-        ]
-      : "";
-  const serviceLabel = order
-    ? GERMLINE_SERVICE_LABEL[germlineServiceFromStored(order)]
-    : "";
+  const savedTrack = filtersFromJobManifest(savedManifest).track;
+  const reportRows: Array<[string, string]> = [
+    [
+      "Report mode",
+      current.reportMode === "couples"
+        ? "Couples"
+        : current.reportMode === "single"
+          ? "Single"
+          : "",
+    ],
+  ];
+  if (current.reportMode === "couples") {
+    reportRows.push(["Partner order ID", current.partnerCaseNumber]);
+  }
+  reportRows.push(["Prior order (follow-up)", current.priorCaseNumber]);
   return (
     <section className="space-y-4">
       <div className="flex items-center justify-between gap-3">
@@ -1559,13 +1563,7 @@ function GermlineOrderSection({
         </div>
       ) : (
         <div className="space-y-5">
-          <FrequencyRules
-            track={frequencyTrackForOrder({
-              testCategory: current.testCategory,
-              packageCode: current.packageCode,
-              otherTestType: current.otherTestType,
-            })}
-          />
+          {savedTrack ? <FrequencyRules track={savedTrack} /> : null}
         <div className="grid gap-5 lg:grid-cols-2">
           <OrderCard
             title="Case request"
@@ -1589,18 +1587,7 @@ function GermlineOrderSection({
           />
           <PanelGeneList name={panelListName} genes={panelGenes} />
           <HpoGeneList groups={hpoGenes} />
-          <OrderCard
-            title="Test type and report pairing"
-            rows={[
-              ["Service", serviceLabel],
-              ["Test category", category],
-              ["Other test type", current.otherTestType],
-              ["Package code (test type)", current.packageCode],
-              ["Report mode", current.reportMode],
-              ["Partner order ID", current.partnerCaseNumber],
-              ["Prior order (follow-up)", current.priorCaseNumber],
-            ]}
-          />
+          <OrderCard title="Report pairing" rows={reportRows} />
           <OrderCard
             title="Hospital and identifiers"
             rows={[

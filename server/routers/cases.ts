@@ -53,7 +53,6 @@ import { ingestFailureMessage, variantReingestSet, variantReingestTarget } from 
 import { hpoGeneGroupsForText, loadHpoIndex, searchHpoTerms } from "../domain/hpoGenes";
 import { resolveGermlineScope } from "../domain/geneScope";
 import {
-  emptyVcfSelectionLog,
   selectVcfRecords,
   variantInsertRow,
   vcfFilterSchema,
@@ -274,15 +273,6 @@ async function startOriginalVcfRun(args: {
 
 type CaseFileRow = typeof caseFiles.$inferSelect;
 
-class VcfIngestFailure extends Error {
-  readonly lines: string[];
-
-  constructor(message: string, lines: string[]) {
-    super(message);
-    this.lines = lines;
-  }
-}
-
 /** Jobs the user stopped while ingest was still reading the VCF. */
 const stoppedJobIds = new Set<number>();
 
@@ -482,41 +472,23 @@ export async function ingestVcfForJob(params: {
         metadata: { steps: selection.steps },
       });
     }
-    if (!parsed.length) {
-      if (!selection) throw new Error("VCF contains no readable variant records");
-      const lines = emptyVcfSelectionLog({
-        parsedCount: selection.parsedCount,
-        truncated: selection.truncated,
-        dropped: selection.filtered.dropped,
-        filters: vcfFilters ?? {
-          hpo: "",
-          genes: "",
-          maxAf: null,
-          minQual: null,
-          minGenotypeQuality: null,
-          minDepth: null,
-          passOnly: false,
-          codingOnly: false,
-          excludeClinvarBenign: false,
-          excludeClinvarVus: false,
-        },
-        geneCount: selection.geneCount,
-        recordsWithoutGene: selection.recordsWithoutGene,
-        afFromInfoOnly: selection.afFromInfoOnly,
-        gnomadFilled: selection.gnomadFilled,
-      });
-      throw new VcfIngestFailure(
-        "No variants passed the panel, HPO, gene list, frequency, and quality filters.",
-        lines
-      );
+    const readCount = selection?.parsedCount ?? 0;
+    const finishedEmpty = readCount > 0 && parsed.length === 0;
+    if (!parsed.length && !finishedEmpty) {
+      throw new Error("VCF contains no readable variant records");
     }
     const held = selection?.filtered.held ?? [];
     const heldNote = held.length
       ? ` ${held.length.toLocaleString()} ClinVar VUS or benign variant(s) were saved for review and were not queued.`
       : "";
-    const keptNote = selection
-      ? ` Kept ${parsed.length.toLocaleString()} of ${selection.parsedCount.toLocaleString()} after the filters that could be applied.${heldNote}${selection.notes.length ? ` ${selection.notes.join(" ")}` : ""}`
-      : "";
+    const filterNotes = selection?.notes.length ? ` ${selection.notes.join(" ")}` : "";
+    const keptNote =
+      selection && parsed.length
+        ? ` Kept ${parsed.length.toLocaleString()} of ${selection.parsedCount.toLocaleString()} after the filters that could be applied.${heldNote}${filterNotes}`
+        : "";
+    const readyMessage = finishedEmpty
+      ? `No variants remained after the filters. Read ${readCount.toLocaleString()} records.${heldNote}${filterNotes}`
+      : `Normalized ${parsed.length.toLocaleString()} variant(s) — ready for review.${keptNote}`;
     if (stoppedJobIds.has(jobId)) return;
     let completed = false;
     await db.transaction(async tx => {
@@ -573,7 +545,7 @@ export async function ingestVcfForJob(params: {
         organizationId,
         jobId,
         status: "review_ready",
-        message: `Normalized ${parsed.length.toLocaleString()} variant(s) — ready for review.${keptNote}`,
+        message: readyMessage,
         progressPercent: 100,
       });
       await tx
@@ -597,31 +569,33 @@ export async function ingestVcfForJob(params: {
           error
         );
       }
-      try {
-        const job = await db
-          .select({ createdBy: analysisJobs.createdBy })
-          .from(analysisJobs)
-          .where(
-            and(eq(analysisJobs.id, jobId), eq(analysisJobs.organizationId, organizationId))
-          )
-          .limit(1);
-        const queued = await enqueueFilteredCaseVariants({
-          organizationId,
-          caseId,
-          requestedBy: job[0]?.createdBy ?? null,
-        });
-        await db.insert(analysisEvents).values({
-          organizationId,
-          jobId,
-          status: "review_ready",
-          message: classifierQueueMessage(queued),
-          progressPercent: 100,
-        });
-      } catch (error) {
-        console.warn(
-          `[VCF] germline classifier queue after ingest failed for case ${caseId}:`,
-          error
-        );
+      if (parsed.length > 0) {
+        try {
+          const job = await db
+            .select({ createdBy: analysisJobs.createdBy })
+            .from(analysisJobs)
+            .where(
+              and(eq(analysisJobs.id, jobId), eq(analysisJobs.organizationId, organizationId))
+            )
+            .limit(1);
+          const queued = await enqueueFilteredCaseVariants({
+            organizationId,
+            caseId,
+            requestedBy: job[0]?.createdBy ?? null,
+          });
+          await db.insert(analysisEvents).values({
+            organizationId,
+            jobId,
+            status: "review_ready",
+            message: classifierQueueMessage(queued),
+            progressPercent: 100,
+          });
+        } catch (error) {
+          console.warn(
+            `[VCF] germline classifier queue after ingest failed for case ${caseId}:`,
+            error
+          );
+        }
       }
       const partnerJob = await db
         .select({ manifest: analysisJobs.manifest })
@@ -659,10 +633,7 @@ export async function ingestVcfForJob(params: {
       status: "failed",
       message,
       progressPercent: 0,
-      metadata:
-        error instanceof VcfIngestFailure || error instanceof VcfAnnotationFailure
-          ? { lines: error.lines }
-          : null,
+      metadata: error instanceof VcfAnnotationFailure ? { lines: error.lines } : null,
     });
     await db
       .update(cases)

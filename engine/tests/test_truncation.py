@@ -155,145 +155,307 @@ class TestFormalizePtc:
         assert round(abs(pd["nmd_escape_truncation_fraction"]) * 100, 1) == 14.9
         assert "extends the protein by 14.9%" in pd["nmd_math"]
 
-    def test_parse_hgvs_nonsense(self):
-        assert parse_nonsense_stop_aa_from_hgvs("p.S1050*") == 1050
-        assert parse_nonsense_stop_aa_from_hgvs("p.Ser1050Ter") == 1050
 
-    def test_ensure_backfill_from_hgvs_only(self):
-        pd = {
-            "consequence": "nonsense",
-            "hgvs_p": "p.S1050*",
-            "protein_length": 1214,
-            "nmd_escape_truncation_fraction": 0.0,
-        }
-        ensure_truncation_fraction_from_stop(pd)
-        assert pd["novel_stop_aa"] == 1050
-        assert pd["nmd_escape_truncation_fraction"] > 0
+def test_cacna1a_extension_ter_is_in_3utr_not_on_coding_exon():
+    """CACNA1A c.7317del p.V2440Yfs*168: Stop at the last CDS end, Ter in the 3′ UTR."""
+    from vc_engine.splice import _build_splice_viz_payload, frameshift_utr_extension_geometry
 
-    def test_tubb1_last_exon_nonsense_escapes_nmd(self):
-        """TUBB1 c.958A>T p.K320*: PTC in last coding exon → escape + ~29% loss."""
-        from vc_engine.truncation import apply_nmd_escape_from_coding_exons
+    geo = frameshift_utr_extension_geometry(2607, 2506)
+    assert geo["utr_nt"] == (2607 - 2506 - 1) * 3 == 300
+    assert 0.08 < geo["ter_fraction_in_utr"] < 0.92
+    pd = {
+        "consequence": "frameshift",
+        "gene_symbol": "CACNA1A",
+        "hgvs_p": "p.V2440Yfs*168",
+        "c_dot": "c.7317del",
+        "variant_exon": 40,
+        "protein_length": 2506,
+        "novel_stop_aa": 2607,
+        "coding_exons_source": "refseq_gff",
+        "coding_exons": [
+            {"anatomical_rank": 40, "start_cds": 6901, "end_cds": 7100, "length_bp": 200},
+            {"anatomical_rank": 47, "start_cds": 7300, "end_cds": 7518, "length_bp": 219},
+        ],
+    }
+    viz = _build_splice_viz_payload(pd)
+    layer = viz["ptc_markers"]["reference"]
+    assert layer["utr_extension"] is True
+    assert layer["native_stop_at_cds_end"] is True
+    assert layer["exon_rank"] == 47
+    assert "fraction_in_exon" not in layer
+    assert layer["wt_protein_length"] == 2506
+    assert layer["ptc_aa_position"] == 2607
+    assert layer["utr_nt"] == 300
+    assert viz["reference_ptc_location_kind"] == "utr_extension"
+    cap = viz["reference_ptc_location_label"]
+    assert "3′ UTR (past native stop on exon 47)" in cap
+    assert "native stop after aa 2506" in cap
+    assert "novel Ter at aa 2607" in cap
+    assert "~300 nt into 3′ UTR" in cap
+    legend = viz["reference_ptc_location_detail"]
+    assert "Stop = WT terminus" in legend
+    assert "dashed 3′ UTR = read-through" in legend
+    assert "Ter = novel stop (protein extension)" in legend
+    ranks = [e["rank"] for e in viz["focus_primary"]["exons"]]
+    assert 47 in ranks
+    # A stop inside the protein stays on the coding exon.
+    inside = dict(pd)
+    inside["novel_stop_aa"] = 100
+    inside["variant_exon"] = 40
+    inside["coding_exons"] = [
+        {"anatomical_rank": 2, "start_cds": 1, "end_cds": 900, "length_bp": 900},
+    ]
+    inside["variant_exon"] = 2
+    viz_in = _build_splice_viz_payload(inside)
+    layer_in = viz_in["ptc_markers"]["reference"]
+    assert not layer_in.get("utr_extension")
+    assert layer_in.get("fraction_in_exon") is not None
+    assert layer_in["fraction_in_exon"] < 0.97
 
-        # ENST00000217133 coding map (CDS indices)
-        coding = [
-            {"start_cds": 1, "end_cds": 57, "anatomical_rank": 1},
-            {"start_cds": 58, "end_cds": 166, "anatomical_rank": 2},
-            {"start_cds": 167, "end_cds": 277, "anatomical_rank": 3},
-            {"start_cds": 278, "end_cds": 1356, "anatomical_rank": 4},
-        ]
-        pd = {
-            "consequence": "nonsense",
-            "hgvs_p": "p.K320*",
-            "protein_length": 451,
-            "coding_exons": coding,
-            "nmd_escape_truncation_fraction": 0.0,
-        }
-        assert apply_nmd_escape_from_coding_exons(pd, 958) is True
-        assert pd["nmd_escape"] is True
-        assert "last coding exon" in (pd.get("nmd_decision_basis") or "")
-        ensure_truncation_fraction_from_stop(pd)
-        assert pd["novel_stop_aa"] == 320
-        assert abs(pd["nmd_escape_truncation_fraction"] - (1 - 320 / 451.0)) < 1e-4
-        assert is_severe_loss(pd["nmd_escape_truncation_fraction"])
+def test_parse_hgvs_nonsense():
+    assert parse_nonsense_stop_aa_from_hgvs("p.S1050*") == 1050
+    assert parse_nonsense_stop_aa_from_hgvs("p.Ser1050Ter") == 1050
 
-    def test_internal_exon_ptc_triggers_nmd(self):
-        from vc_engine.truncation import apply_nmd_escape_from_coding_exons
+def test_ensure_backfill_from_hgvs_only():
+    pd = {
+        "consequence": "nonsense",
+        "hgvs_p": "p.S1050*",
+        "protein_length": 1214,
+        "nmd_escape_truncation_fraction": 0.0,
+    }
+    ensure_truncation_fraction_from_stop(pd)
+    assert pd["novel_stop_aa"] == 1050
+    assert pd["nmd_escape_truncation_fraction"] > 0
 
-        coding = [
-            {"start_cds": 1, "end_cds": 300, "anatomical_rank": 1},
-            {"start_cds": 301, "end_cds": 600, "anatomical_rank": 2},
-            {"start_cds": 601, "end_cds": 900, "anatomical_rank": 3},
-        ]
-        pd = {"coding_exons": coding}
-        assert apply_nmd_escape_from_coding_exons(pd, 150) is True
-        assert pd["nmd_escape"] is False
-        assert "upstream of the penultimate" in (pd.get("nmd_decision_basis") or "")
+def test_tubb1_last_exon_nonsense_escapes_nmd():
+    """TUBB1 c.958A>T p.K320*: PTC in last coding exon → escape + ~29% loss."""
+    from vc_engine.truncation import apply_nmd_escape_from_coding_exons
 
-    def test_sync_fraction_uses_onset_plus_shift(self):
-        from vc_engine.truncation import sync_truncation_fraction_from_ptc
+    # ENST00000217133 coding map (CDS indices)
+    coding = [
+        {"start_cds": 1, "end_cds": 57, "anatomical_rank": 1},
+        {"start_cds": 58, "end_cds": 166, "anatomical_rank": 2},
+        {"start_cds": 167, "end_cds": 277, "anatomical_rank": 3},
+        {"start_cds": 278, "end_cds": 1356, "anatomical_rank": 4},
+    ]
+    pd = {
+        "consequence": "nonsense",
+        "hgvs_p": "p.K320*",
+        "protein_length": 451,
+        "coding_exons": coding,
+        "nmd_escape_truncation_fraction": 0.0,
+    }
+    assert apply_nmd_escape_from_coding_exons(pd, 958) is True
+    assert pd["nmd_escape"] is True
+    assert "last coding exon" in (pd.get("nmd_decision_basis") or "")
+    ensure_truncation_fraction_from_stop(pd)
+    assert pd["novel_stop_aa"] == 320
+    assert abs(pd["nmd_escape_truncation_fraction"] - (1 - 320 / 451.0)) < 1e-4
+    assert is_severe_loss(pd["nmd_escape_truncation_fraction"])
 
-        pd = {
-            "consequence": "frameshift",
-            "protein_length": 1020,
-            "protein_start": 714,
-            "novel_stop_aa": 719,
-            "downstream_aas": 5,
-            "nmd_escape_truncation_fraction": 0.30,
-        }
-        frac = sync_truncation_fraction_from_ptc(pd)
-        assert abs(frac - (1 - 719 / 1020.0)) < 1e-4
-        assert abs(pd["nmd_escape_truncation_fraction"] - frac) < 1e-4
+def test_internal_exon_ptc_triggers_nmd():
+    from vc_engine.truncation import apply_nmd_escape_from_coding_exons
 
-    def test_sync_splice_oof_ptc_from_sidecar_fields(self):
-        from vc_engine.truncation import sync_truncation_fraction_from_ptc
+    coding = [
+        {"start_cds": 1, "end_cds": 300, "anatomical_rank": 1},
+        {"start_cds": 301, "end_cds": 600, "anatomical_rank": 2},
+        {"start_cds": 601, "end_cds": 900, "anatomical_rank": 3},
+    ]
+    pd = {"coding_exons": coding}
+    assert apply_nmd_escape_from_coding_exons(pd, 150) is True
+    assert pd["nmd_escape"] is False
+    assert "upstream of the penultimate" in (pd.get("nmd_decision_basis") or "")
 
-        pd = {
-            "consequence": "splice_acceptor_variant",
-            "protein_length": 428,
-            "protein_start": 71,
-            "downstream_aas": 5,
-            "exon_skip_oof_ptc_aa": 76,
-            "is_splice_frameshift": True,
-            "splice_is_in_frame": False,
-            "nmd_escape_truncation_fraction": 0.79,
-        }
-        frac = sync_truncation_fraction_from_ptc(pd)
-        assert abs(frac - (1 - 76 / 428.0)) < 1e-4
+def test_sync_fraction_uses_onset_plus_shift():
+    from vc_engine.truncation import sync_truncation_fraction_from_ptc
 
-    def test_sync_clears_stale_missense_truncation(self):
-        from vc_engine.truncation import sync_truncation_fraction_from_ptc
+    pd = {
+        "consequence": "frameshift",
+        "protein_length": 1020,
+        "protein_start": 714,
+        "novel_stop_aa": 719,
+        "downstream_aas": 5,
+        "nmd_escape_truncation_fraction": 0.30,
+    }
+    frac = sync_truncation_fraction_from_ptc(pd)
+    assert abs(frac - (1 - 719 / 1020.0)) < 1e-4
+    assert abs(pd["nmd_escape_truncation_fraction"] - frac) < 1e-4
 
-        pd = {
-            "consequence": "missense",
-            "protein_start": 116,
-            "protein_length": 1464,
-            "nmd_escape_truncation_fraction": 0.921,
-        }
-        assert sync_truncation_fraction_from_ptc(pd) == 0.0
-        assert pd["nmd_escape_truncation_fraction"] == 0.0
+def test_sync_splice_oof_ptc_from_sidecar_fields():
+    from vc_engine.truncation import sync_truncation_fraction_from_ptc
 
-    def test_sync_start_loss_uses_n_terminal_not_c_terminal(self):
-        """GNAS-style: next Met at 60/394 → ~15%, not protein_start=1 → ~99% C-term."""
-        from vc_engine.truncation import (
-            resolved_ptc_stop_aa,
-            start_loss_fraction_from_next_met,
-            sync_truncation_fraction_from_ptc,
-        )
+    pd = {
+        "consequence": "splice_acceptor_variant",
+        "protein_length": 428,
+        "protein_start": 71,
+        "downstream_aas": 5,
+        "exon_skip_oof_ptc_aa": 76,
+        "is_splice_frameshift": True,
+        "splice_is_in_frame": False,
+        "nmd_escape_truncation_fraction": 0.79,
+    }
+    frac = sync_truncation_fraction_from_ptc(pd)
+    assert abs(frac - (1 - 76 / 428.0)) < 1e-4
 
-        pd = {
-            "consequence": "start_lost",
-            "protein_start": 1,
-            "protein_length": 394,
-            "next_methionine_position": 60,
-            # Stale wrong value from an earlier C-term sync
-            "nmd_escape_truncation_fraction": 0.997,
-        }
-        assert resolved_ptc_stop_aa(pd) == 0
-        frac = sync_truncation_fraction_from_ptc(pd)
-        expect = start_loss_fraction_from_next_met(60, 394)
-        assert abs(frac - expect) < 1e-9
-        assert abs(pd["nmd_escape_truncation_fraction"] - expect) < 1e-9
-        assert frac < 0.2  # not the bogus ~99% C-terminal figure
+def test_sync_clears_stale_missense_truncation():
+    from vc_engine.truncation import sync_truncation_fraction_from_ptc
 
-    def test_resolved_ptc_prefers_onset_plus_shift(self):
-        from vc_engine.truncation import resolved_ptc_stop_aa
+    pd = {
+        "consequence": "missense",
+        "protein_start": 116,
+        "protein_length": 1464,
+        "nmd_escape_truncation_fraction": 0.921,
+    }
+    assert sync_truncation_fraction_from_ptc(pd) == 0.0
+    assert pd["nmd_escape_truncation_fraction"] == 0.0
 
-        pd = {
-            "protein_start": 714,
-            "downstream_aas": 5,
-            "novel_stop_aa": 714,
-        }
-        assert resolved_ptc_stop_aa(pd) == 719
+def test_sync_start_loss_uses_n_terminal_not_c_terminal():
+    """GNAS-style: next Met at 60/394 → ~15%, not protein_start=1 → ~99% C-term."""
+    from vc_engine.truncation import (
+        resolved_ptc_stop_aa,
+        start_loss_fraction_from_next_met,
+        sync_truncation_fraction_from_ptc,
+    )
 
-    def test_resolved_ptc_ignores_missense_protein_start(self):
-        from vc_engine.truncation import resolved_ptc_stop_aa
+    pd = {
+        "consequence": "start_lost",
+        "protein_start": 1,
+        "protein_length": 394,
+        "next_methionine_position": 60,
+        # Stale wrong value from an earlier C-term sync
+        "nmd_escape_truncation_fraction": 0.997,
+    }
+    assert resolved_ptc_stop_aa(pd) == 0
+    frac = sync_truncation_fraction_from_ptc(pd)
+    expect = start_loss_fraction_from_next_met(60, 394)
+    assert abs(frac - expect) < 1e-9
+    assert abs(pd["nmd_escape_truncation_fraction"] - expect) < 1e-9
+    assert frac < 0.2  # not the bogus ~99% C-terminal figure
 
-        pd = {
-            "consequence": "missense",
-            "protein_start": 116,
-            "protein_length": 1464,
-        }
-        assert resolved_ptc_stop_aa(pd) == 0
+def test_resolved_ptc_prefers_onset_plus_shift():
+    from vc_engine.truncation import resolved_ptc_stop_aa
+
+    pd = {
+        "protein_start": 714,
+        "downstream_aas": 5,
+        "novel_stop_aa": 714,
+    }
+    assert resolved_ptc_stop_aa(pd) == 719
+
+def test_resolved_ptc_ignores_missense_protein_start():
+    from vc_engine.truncation import resolved_ptc_stop_aa
+
+    pd = {
+        "consequence": "missense",
+        "protein_start": 116,
+        "protein_length": 1464,
+    }
+    assert resolved_ptc_stop_aa(pd) == 0
+
+
+def test_stop_lost_ext_n_uses_onset_plus_n():
+    """p.*278Cext*5 on a 277-aa protein: Ter = 278+5, product = Ter-1."""
+    from vc_engine.truncation import (
+        apply_stop_lost_extension,
+        frameshift_product_length,
+        protein_extension_fraction,
+        stop_lost_ter_index,
+    )
+
+    assert stop_lost_ter_index(278, 5) == 283
+    ter = 283
+    plen = 277
+    product = frameshift_product_length(ter)
+    assert product == 282
+    frac = protein_extension_fraction(ter, plen)
+    assert abs(frac - (-(282 - 277) / 277.0)) < 1e-12
+    pd = {
+        "consequence": "stop_lost",
+        "hgvs_p": "p.*278Cext*5",
+        "c_dot": "c.834A>T",
+        "protein_length": plen,
+    }
+    apply_stop_lost_extension(pd)
+    assert pd["novel_stop_aa"] == 283
+    assert pd["protein_product_length"] == 282
+    assert abs(pd["nmd_escape_truncation_fraction"] - frac) < 1e-12
+    expl = pd["protein_extension_explanation"]
+    assert expl.startswith("Stop-lost read-through past the native terminus — extends the protein")
+    assert "extends the protein by" in expl
+    assert "282 vs 277" in expl
+    assert "novel stop at aa 283 vs 277-aa reference" in expl
+    assert "truncated" not in expl.lower()
+    assert "<10%" not in expl and "≥10%" not in expl
+    assert "Frameshift stop" not in expl
+    sync_truncation_fraction_from_ptc(pd)
+    assert abs(pd["nmd_escape_truncation_fraction"] - frac) < 1e-12
+    assert "Stop-lost read-through" in pd["nmd_math"]
+
+
+def test_stop_lost_readthrough_scan_sets_novel_stop():
+    """Mutate the native TGA and scan the appended 3′ UTR for the next stop."""
+    from vc_engine.truncation import apply_stop_lost_extension, stop_lost_ter_from_readthrough
+
+    cds = "ATG" + ("GCT" * 276) + "TGA"
+    assert len(cds) == 834
+    assert cds[-3:] == "TGA"
+    utr = "AAACCCTAA"
+    assert stop_lost_ter_from_readthrough(cds, utr, 834, "T") == 281
+    pd = {
+        "consequence": "stop_lost",
+        "hgvs_p": "p.*278Cext*?",
+        "c_dot": "c.834A>T",
+        "protein_length": 277,
+    }
+    apply_stop_lost_extension(pd, cds=cds, utr=utr)
+    assert pd["novel_stop_aa"] == 281
+    assert pd["protein_product_length"] == 280
+    assert abs(pd["nmd_escape_truncation_fraction"] - (-(280 - 277) / 277.0)) < 1e-12
+    expl = pd["nmd_math"]
+    assert "Stop-lost read-through past the native terminus — extends the protein" in expl
+    assert "truncated" not in expl.lower()
+    assert "<10%" not in expl and "≥10%" not in expl
+
+
+def test_plp1_stop_lost_map_shows_utr_when_ter_unknown():
+    """PLP1 c.834A>T p.*278Cext*? still draws Stop + 3′ UTR + Ter? without a transcript id."""
+    from vc_engine.splice import _build_splice_viz_payload
+    from vc_engine.truncation import apply_stop_lost_extension
+
+    pd = {
+        "consequence": "stop_lost",
+        "gene_symbol": "PLP1",
+        "hgvs_p": "p.*278Cext*?",
+        "c_dot": "c.834A>T",
+        "protein_length": 277,
+        "variant_exon": 7,
+        "coding_exons_source": "refseq_gff",
+        "coding_exons": [
+            {"anatomical_rank": 6, "start_cds": 600, "end_cds": 750, "length_bp": 151},
+            {"anatomical_rank": 7, "start_cds": 751, "end_cds": 834, "length_bp": 84},
+        ],
+    }
+    apply_stop_lost_extension(pd)
+    assert pd["stop_lost_ter_unknown"] is True
+    assert pd["protein_extension"] is True
+    assert "novel_stop_aa" not in pd
+    assert "Stop-lost read-through past the native terminus — extends the protein" in pd["nmd_math"]
+    assert "truncated" not in pd["nmd_math"].lower()
+    viz = _build_splice_viz_payload(pd)
+    layer = viz["ptc_markers"]["reference"]
+    assert layer["utr_extension"] is True
+    assert layer["ter_unknown"] is True
+    assert layer["native_stop_at_cds_end"] is True
+    assert layer["exon_rank"] == 7
+    assert "fraction_in_exon" not in layer
+    assert "ptc_aa_position" not in layer
+    assert layer["wt_protein_length"] == 277
+    cap = viz["reference_ptc_location_label"]
+    assert "3′ UTR (past native stop on exon 7)" in cap
+    assert "native stop after aa 277" in cap
+    assert "novel Ter? (length not resolved)" in cap
+    assert "Stop = WT terminus" in viz["reference_ptc_location_detail"]
+    assert 7 in [e["rank"] for e in viz["focus_primary"]["exons"]]
 
 
 @pytest.mark.parametrize(

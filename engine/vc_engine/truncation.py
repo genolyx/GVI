@@ -76,10 +76,92 @@ def protein_extension_fraction(ter_index: int, protein_length: int) -> float:
     return -((product - plen) / float(plen))
 
 
+_STOP_LOST_HGVS_RE = re.compile(
+    r"p\.(?:\*|Ter)(\d+)([A-Za-z]{1,3})ext(?:\*|Ter)(\?|\d+)",
+    re.I,
+)
+_STOP_CODONS = {"TAA", "TAG", "TGA"}
+_SNV_CDOT_RE = re.compile(r"c\.(\d+)([ACGT])>([ACGT])", re.I)
+
+STOP_LOST_NMD_BASIS = (
+    "Stop-lost read-through continues past the native CDS end into the 3′ UTR; "
+    "no exon–exon junction remains downstream of the original terminus — predicted to escape NMD."
+)
+
+
+def stop_lost_ter_index(onset_aa: int, ext_n: int) -> int:
+    """HGVS ``p.*{onset}Xext*{N}`` termination-codon index.
+
+    Unlike ``fs*N`` (onset + N − 1), the extension count is added to the
+    native stop index: novel Ter = onset + N.
+    """
+    try:
+        onset = int(onset_aa)
+        n = int(ext_n)
+    except (TypeError, ValueError):
+        return 0
+    if onset <= 0 or n < 0:
+        return 0
+    return onset + n
+
+
+def parse_stop_lost_hgvs(hgvs_p: str) -> Optional[dict]:
+    """Parse ``p.*278Cext*?`` / ``p.Ter278CysextTer15``. ``n`` is None when N is ``?``."""
+    raw = str(hgvs_p or "").replace("(", "").replace(")", "")
+    m = _STOP_LOST_HGVS_RE.search(raw)
+    if not m:
+        return None
+    nraw = m.group(3)
+    return {
+        "onset": int(m.group(1)),
+        "aa": m.group(2),
+        "n": None if nraw == "?" else int(nraw),
+    }
+
+
+def parse_snv_cdot(c_dot: str) -> Optional[tuple]:
+    """Return ``(c_pos, ref, alt)`` for a coding SNV, or None."""
+    m = _SNV_CDOT_RE.search(str(c_dot or ""))
+    if not m:
+        return None
+    return int(m.group(1)), m.group(2).upper(), m.group(3).upper()
+
+
+def stop_lost_ter_from_readthrough(cds: str, utr: str, c_pos: int, alt: str) -> int:
+    """Mutate the native stop in the CDS, append the 3′ UTR, and return the next stop's codon index.
+
+    The codon index is 1-based from the CDS start (the native stop is ``protein_length + 1``).
+    Returns 0 when the mutated codon is still a stop or no later in-frame stop is in the sequence.
+    """
+    seq_cds = (cds or "").upper().replace("U", "T")
+    tail = (utr or "").upper().replace("U", "T")
+    try:
+        pos = int(c_pos)
+    except (TypeError, ValueError):
+        return 0
+    alt_b = str(alt or "").upper().replace("U", "T")
+    if pos < 1 or pos > len(seq_cds) or alt_b not in "ACGT":
+        return 0
+    bases = list(seq_cds)
+    bases[pos - 1] = alt_b
+    seq = "".join(bases) + tail
+    codon0 = ((pos - 1) // 3) * 3
+    native_index = codon0 // 3 + 1
+    for i in range(codon0, len(seq) - 2, 3):
+        tri = seq[i:i + 3]
+        if tri in _STOP_CODONS:
+            idx = i // 3 + 1
+            if idx == native_index:
+                return 0
+            return idx
+    return 0
+
+
 def protein_extension_explanation(
     ter_index: int,
     protein_length: int,
     nmd_basis: str = "",
+    kind: str = "frameshift",
 ) -> str:
     """Explanation for an elongated ORF, including the percent and both lengths."""
     try:
@@ -92,10 +174,40 @@ def protein_extension_explanation(
         return ""
     product = frameshift_product_length(ter)
     pct = round(abs(frac) * 100.0, 1)
+    if kind == "stop_lost":
+        lead = "Stop-lost read-through past the native terminus — extends the protein"
+    else:
+        lead = "Frameshift stop past the native terminus — extends the protein"
     sent = (
-        f"Frameshift stop past the native terminus — extends the protein by {pct}% "
+        f"{lead} by {pct}% "
         f"({product} vs {plen}) (novel stop at aa {ter} vs {plen}-aa reference) — "
         f"elongated ORF with a novel C-terminus (not a shorter truncation)."
+    )
+    basis = str(nmd_basis or "").strip()
+    if basis and basis not in sent:
+        return f"{sent} {basis}"
+    return sent
+
+
+def stop_lost_unknown_explanation(onset_aa: int, protein_length: int, nmd_basis: str = "") -> str:
+    """Elongated-ORF sentence when ``ext*?`` did not resolve to a codon index."""
+    try:
+        onset = int(onset_aa or 0)
+    except (TypeError, ValueError):
+        onset = 0
+    try:
+        plen = int(protein_length or 0)
+    except (TypeError, ValueError):
+        plen = 0
+    if plen > 0:
+        where = f"native stop after aa {plen}"
+    else:
+        where = "native terminus"
+    label = f"p.*{onset}ext*?" if onset > 0 else "ext*?"
+    sent = (
+        "Stop-lost read-through past the native terminus — extends the protein "
+        f"({where}, {label}; novel Ter length not resolved) — "
+        "elongated ORF with a novel C-terminus (not a shorter truncation)."
     )
     basis = str(nmd_basis or "").strip()
     if basis and basis not in sent:
@@ -121,10 +233,12 @@ def refresh_protein_extension_readout(parsed_data: MutableMapping[str, Any]) -> 
     if frac == 0.0:
         return 0.0
     parsed_data["protein_extension"] = True
+    parsed_data.pop("stop_lost_ter_unknown", None)
     parsed_data["protein_product_length"] = frameshift_product_length(ter)
     parsed_data["nmd_escape_truncation_fraction"] = frac
+    kind = "stop_lost" if "stop_lost" in str(parsed_data.get("consequence") or "") else "frameshift"
     expl = protein_extension_explanation(
-        ter, plen, str(parsed_data.get("nmd_decision_basis") or ""),
+        ter, plen, str(parsed_data.get("nmd_decision_basis") or ""), kind=kind,
     )
     parsed_data["protein_extension_explanation"] = expl
     existing = str(parsed_data.get("nmd_math") or "")
@@ -275,6 +389,25 @@ def resolved_ptc_stop_aa(parsed_data: Mapping[str, Any]) -> int:
     return 0
 
 
+def _restore_early_frameshift_dual_readout(parsed_data: MutableMapping[str, Any]) -> None:
+    """Put structural NMD and the next-Met line back if a C-terminal rewrite dropped one."""
+    csq = str(parsed_data.get("consequence") or parsed_data.get("original_consequence") or "")
+    if csq not in ("nonsense", "frameshift"):
+        return
+    if not parsed_data.get("met_reinitiation"):
+        return
+    sop = str(parsed_data.get("next_met_sop_line") or "").strip()
+    if not sop:
+        return
+    basis = str(parsed_data.get("nmd_decision_basis") or "").strip()
+    math = str(parsed_data.get("nmd_math") or "")
+    has_sop = "N-terminal loss" in math or "next in-frame" in math.lower()
+    has_basis = (not basis) or (basis[:48] in math)
+    if has_sop and has_basis:
+        return
+    parsed_data["nmd_math"] = f"{basis} {sop}".strip() if basis else sop
+
+
 def sync_truncation_fraction_from_ptc(parsed_data: MutableMapping[str, Any]) -> float:
     """Recompute truncation fraction for nonsense/frameshift (C-term) or start-loss (N-term)."""
     if parsed_data.get("cryptic_natural_stop_preserved"):
@@ -341,6 +474,7 @@ def sync_truncation_fraction_from_ptc(parsed_data: MutableMapping[str, Any]) -> 
         if nmet > 0 and plen > 0:
             frac = start_loss_fraction_from_next_met(nmet, plen)
             parsed_data["nmd_escape_truncation_fraction"] = frac
+            _restore_early_frameshift_dual_readout(parsed_data)
             return frac
         try:
             return float(parsed_data.get("nmd_escape_truncation_fraction") or 0)
@@ -462,6 +596,80 @@ def formalize_frameshift_ptc(
         frac = c_terminal_loss_fraction(onset, plen) if onset <= plen else 0.0
     if frac != 0.0:
         parsed_data["nmd_escape_truncation_fraction"] = frac
+
+
+def apply_stop_lost_extension(
+    parsed_data: MutableMapping[str, Any],
+    cds: str = "",
+    utr: str = "",
+) -> None:
+    """Formalize a stop-lost as a protein extension (same fraction as a frameshift past WT).
+
+    ``p.*{onset}Xext*{N}`` uses Ter = onset + N (not the frameshift onset+N−1 rule).
+    When N is ``?``, ``cds`` + ``utr`` are scanned after the coding SNV is applied
+    to the native stop. An unresolved stop still flags an elongated ORF so the
+    map can draw native Stop + 3′ UTR + Ter?.
+    """
+    if parsed_data.get("met_reinitiation"):
+        return
+    if "stop_lost" not in str(parsed_data.get("consequence") or ""):
+        return
+    spec = parse_stop_lost_hgvs(parsed_data.get("hgvs_p") or "")
+    try:
+        plen = int(parsed_data.get("protein_length") or 0)
+    except (TypeError, ValueError):
+        plen = 0
+    if plen < 0:
+        plen = 0
+    if not str(parsed_data.get("nmd_decision_basis") or "").strip():
+        parsed_data["nmd_decision_basis"] = STOP_LOST_NMD_BASIS
+    parsed_data["nmd_escape"] = True
+
+    onset = int(spec["onset"]) if spec else (plen + 1 if plen > 0 else 0)
+    n = spec.get("n") if spec else None
+    ter = 0
+    if n is not None:
+        ter = stop_lost_ter_index(onset, n)
+    elif cds:
+        snv = parse_snv_cdot(parsed_data.get("c_dot") or "")
+        if snv:
+            ter = stop_lost_ter_from_readthrough(cds, utr or "", snv[0], snv[2])
+    if ter <= 0:
+        try:
+            existing = int(parsed_data.get("novel_stop_aa") or 0)
+        except (TypeError, ValueError):
+            existing = 0
+        if existing > plen > 0:
+            ter = existing
+    if ter > plen > 0:
+        if onset > 0:
+            parsed_data["protein_start"] = onset
+        parsed_data["novel_stop_aa"] = ter
+        if onset > 0:
+            parsed_data["downstream_aas"] = max(0, ter - onset)
+        if plen > 0:
+            parsed_data["protein_length"] = plen
+        refresh_protein_extension_readout(parsed_data)
+        return
+
+    parsed_data["stop_lost_ter_unknown"] = True
+    parsed_data["protein_extension"] = True
+    parsed_data.pop("novel_stop_aa", None)
+    parsed_data.pop("protein_product_length", None)
+    parsed_data.pop("downstream_aas", None)
+    try:
+        stale = float(parsed_data.get("nmd_escape_truncation_fraction") or 0)
+    except (TypeError, ValueError):
+        stale = 0.0
+    if stale < 0:
+        parsed_data["nmd_escape_truncation_fraction"] = 0.0
+    if onset > 0:
+        parsed_data["protein_start"] = onset
+    expl = stop_lost_unknown_explanation(
+        onset, plen, str(parsed_data.get("nmd_decision_basis") or ""),
+    )
+    parsed_data["protein_extension_explanation"] = expl
+    parsed_data["nmd_math"] = expl
 
 
 def is_start_loss_reinit_viable(fraction: float) -> bool:

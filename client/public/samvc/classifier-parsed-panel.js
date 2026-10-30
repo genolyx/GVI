@@ -525,7 +525,9 @@
     return (
       c.includes('nonsense')
       || c.includes('frameshift')
+      || c.includes('stop_lost')
       || c === 'start_lost'
+      || pd.protein_extension
       || pd.is_splice_frameshift
       || pd.splice_is_in_frame === false
     );
@@ -885,28 +887,53 @@ if (res.parsed_data.spliceai_competing_splice_isoforms && res.parsed_data.exon_s
 const _truncFracRaw = Number(res.parsed_data.nmd_escape_truncation_fraction);
 const _pLenForExt = Number(res.parsed_data.protein_length);
 const _novelStopForExt = Number(res.parsed_data.novel_stop_aa);
+const _pastNativeStop = (
+    Number.isFinite(_pLenForExt) && _pLenForExt > 0
+    && Number.isFinite(_novelStopForExt) && _novelStopForExt > _pLenForExt
+);
+const _absurdExtFrac = Number.isFinite(_truncFracRaw) && _truncFracRaw <= -5;
+// A stop past the WT terminus is an extension even when a saved run stored the
+// percent as a positive "loss" fraction or left the shift at 0.
 const _isFsExtension = (
     !res.parsed_data.cryptic_natural_stop_preserved
-    && Number.isFinite(_truncFracRaw)
-    && _truncFracRaw < 0
-    && _truncFracRaw > -5 // reject absurd −570-style artifacts from missing WT length
-    && Number.isFinite(_pLenForExt) && _pLenForExt > 0
-    && Number.isFinite(_novelStopForExt) && _novelStopForExt > _pLenForExt
+    && _pastNativeStop
+    && !_absurdExtFrac
     && isTruncatingConsequence(res.parsed_data)
 );
-if (_isFsExtension) {
-    const extPct = (Math.abs(_truncFracRaw) * 100).toFixed(1);
-    const pLen = res.parsed_data.protein_length;
-    const novelStop = res.parsed_data.novel_stop_aa;
-    const productLen = Number(res.parsed_data.protein_product_length) || (Number(novelStop) > 1 ? Number(novelStop) - 1 : null);
-    const productBit = productLen ? `${productLen} vs ${pLen}` : `stop aa ${novelStop} vs ${pLen}`;
+const _stopLostUnknown = (
+    String(res.parsed_data.consequence || '').indexOf('stop_lost') >= 0
+    && !!res.parsed_data.protein_extension
+    && !(Number.isFinite(_novelStopForExt) && Number.isFinite(_pLenForExt) && _novelStopForExt > _pLenForExt)
+);
+if (_stopLostUnknown) {
     const expl = res.parsed_data.protein_extension_explanation
-        || `Frameshift stop past the native terminus — extends the protein by ${extPct}% (${productBit}) (novel stop at aa ${novelStop} vs ${pLen}-aa reference) — elongated ORF with a novel C-terminus (not a shorter truncation).`;
+        || 'Stop-lost read-through past the native terminus — extends the protein (novel Ter length not resolved) — elongated ORF with a novel C-terminus (not a shorter truncation).';
     const ptcLabel = res.parsed_data.hgvs_p || '';
     const ptcSuffix = ptcLabel
         ? ` &middot; <span style="color:#fde68a;background:rgba(251,191,36,0.12);padding:1px 6px;border-radius:3px;font-weight:600;">${ptcLabel}</span>`
         : '';
-    truncPill = `<span class="data-pill" title="${esc(expl)}" style="border-color: #fcd34d; color: #fde68a; background: rgba(251, 191, 36, 0.10);">Extends the protein: <strong style="color: #fde68a;">+${extPct}%</strong> (${productBit}; novel stop aa ${novelStop} vs ${pLen}-aa reference)${ptcSuffix}</span>`;
+    truncPill = `<span class="data-pill" title="${esc(expl)}" style="border-color: #fcd34d; color: #fde68a; background: rgba(251, 191, 36, 0.10);">Extends the protein: <strong style="color: #fde68a;">stop-lost read-through</strong> (Ter?)${ptcSuffix}</span>`;
+} else if (_isFsExtension) {
+    const pLen = res.parsed_data.protein_length;
+    const novelStop = res.parsed_data.novel_stop_aa;
+    const _storedProduct = Number(res.parsed_data.protein_product_length);
+    const productLen = (Number.isFinite(_storedProduct) && _storedProduct > pLen)
+        ? _storedProduct
+        : (Number(novelStop) > 1 ? Number(novelStop) - 1 : null);
+    const extPct = (productLen && pLen > 0 && productLen > pLen)
+        ? (((productLen - pLen) / pLen) * 100).toFixed(1)
+        : (Math.abs(_truncFracRaw) * 100).toFixed(1);
+    const productBit = productLen ? `${productLen} vs ${pLen} aa` : `stop aa ${novelStop} vs ${pLen} aa`;
+    const _extLead = String(res.parsed_data.consequence || '').indexOf('stop_lost') >= 0
+        ? 'Stop-lost read-through past the native terminus — extends the protein'
+        : 'Frameshift stop past the native terminus — extends the protein';
+    const expl = res.parsed_data.protein_extension_explanation
+        || `${_extLead} by ${extPct}% (${productBit}) (novel stop at aa ${novelStop} vs ${pLen}-aa reference) — elongated ORF with a novel C-terminus (not a shorter truncation).`;
+    const ptcLabel = res.parsed_data.hgvs_p || '';
+    const ptcSuffix = ptcLabel
+        ? ` &middot; <span style="color:#fde68a;background:rgba(251,191,36,0.12);padding:1px 6px;border-radius:3px;font-weight:600;">${ptcLabel}</span>`
+        : '';
+    truncPill = `<span class="data-pill" title="${esc(expl)}" style="border-color: #fcd34d; color: #fde68a; background: rgba(251, 191, 36, 0.10);">Extends the protein: <strong style="color: #fde68a;">+${extPct}%</strong> past the native stop (${productBit}) · novel Ter ${novelStop} in the 3′ UTR${ptcSuffix}</span>`;
 } else if (!res.parsed_data.cryptic_natural_stop_preserved && res.parsed_data.nmd_escape_truncation_fraction > 0 && isTruncatingConsequence(res.parsed_data)) {
     const pct = (res.parsed_data.nmd_escape_truncation_fraction * 100).toFixed(1);
     const pLen = res.parsed_data.protein_length;
@@ -962,8 +989,13 @@ if (_isFsExtension) {
             const showOne = ptcOne && ptcOne !== ptcLabel ? ` <span style="color:#fca5a5;opacity:0.85;">(${ptcOne})</span>` : '';
             ptcSuffix = ` &middot; <span style="color:#fca5a5;background:rgba(239,68,68,0.12);padding:1px 6px;border-radius:3px;font-family:inherit;font-weight:600;">${ptcLabel}</span>${showOne}`;
         }
+        let shiftAas = d_aas;
+        if ((!Number.isFinite(shiftAas) || Number(shiftAas) === 0)
+                && Number.isFinite(stopPos) && Number.isFinite(fsOnset) && stopPos > fsOnset) {
+            shiftAas = stopPos - fsOnset;
+        }
         const showStop = (Number.isFinite(stopPos) && stopPos > 0)
-                        ? `Stop: ${fsOnset || '?'} [onset] + ${d_aas} [Shift] = ${stopPos}/${pLen}`
+                        ? `Stop: ${fsOnset || '?'} [onset] + ${shiftAas} [Shift] = ${stopPos}/${pLen}`
                         : (Number.isFinite(pStart) && pStart > 0
                               ? `Stop: ${pStart}/${pLen}`
                               : `Stop: position unresolved/${pLen}`);
@@ -975,9 +1007,7 @@ let truncThresholdPill = '';
 const TRUNC_SEVERE_THRESHOLD = 0.10;
 const truncFracVal = Number(res.parsed_data.nmd_escape_truncation_fraction) || 0;
 const _csqForTrunc = String(res.parsed_data.consequence || '');
-if (!res.parsed_data.cryptic_natural_stop_preserved && truncFracVal < 0 && truncFracVal > -5
-    && Number(res.parsed_data.protein_length) > 0
-    && Number(res.parsed_data.novel_stop_aa) > Number(res.parsed_data.protein_length)
+if (!res.parsed_data.cryptic_natural_stop_preserved && _pastNativeStop && !_absurdExtFrac
     && isTruncatingConsequence(res.parsed_data)) {
     // The <10% / ≥10% threshold is for C-terminal loss only. Extensions show
     // the percent and stop vs WT length on the extension pill and in the

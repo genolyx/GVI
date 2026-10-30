@@ -2235,6 +2235,86 @@ def test_met_reinitiation_early_ptc_on_midgene_and_single_exon_off():
     assert abs(frac - (12 / 400)) < 1e-9
 
 
+def test_kmt2a_c849dup_dual_nmd_and_next_met_when_eligible():
+    """Early frameshift keeps structural NMD and the next-Met line.
+
+    On NM_001197104 / ENST00000534358, c.849 is in mRNA exon 3 (CDS 503–3156),
+    so next-Met stays off. A first-coding-exon dup whose protein-onset coordinate
+    falls past that exon (KMT2A-style ordering mismatch) stays eligible, and a
+    later C-terminal rewrite of nmd_math does not drop the next-Met line.
+    """
+    import vc_engine.splice as sp
+    from vc_engine.truncation import sync_truncation_fraction_from_ptc
+
+    mane = [
+        {'anatomical_rank': 1, 'start_cds': 1, 'end_cds': 432},
+        {'anatomical_rank': 2, 'start_cds': 433, 'end_cds': 502},
+        {'anatomical_rank': 3, 'start_cds': 503, 'end_cds': 3156},
+    ]
+    exon3 = {
+        'consequence': 'frameshift',
+        'c_dot': 'c.849dup',
+        'gene_symbol': 'KMT2A',
+        'variant_exon': 3,
+        'protein_start': 284,
+        'protein_length': 3972,
+        'coding_exons': mane,
+    }
+    assert not sp._met_reinitiation_applies(
+        exon3, current_cons='frameshift', current_rank=3, is_first_exon=False,
+    )
+
+    # c.849 is inside the first coding exon; aa 400 × 3 sits past its end, and
+    # the stored exon rank was taken from that onset instead of the c. anchor.
+    ordering = {
+        'consequence': 'frameshift',
+        'c_dot': 'c.849dup',
+        'gene_symbol': 'KMT2A',
+        'variant_exon': 2,
+        'protein_start': 400,
+        'protein_length': 3972,
+        'coding_exons': [
+            {'anatomical_rank': 1, 'start_cds': 1, 'end_cds': 860},
+            {'anatomical_rank': 2, 'start_cds': 861, 'end_cds': 1200},
+            {'anatomical_rank': 3, 'start_cds': 1201, 'end_cds': 4000},
+        ],
+        'nmd_escape': False,
+        'nmd_decision_basis': (
+            'PTC in coding exon 1 of 36, upstream of the penultimate '
+            'exon-exon junction — predicted to trigger NMD.'
+        ),
+        'met_reinitiation': True,
+        'next_methionine_position': 320,
+        'nmd_escape_truncation_fraction': 320 / 3972,
+        'next_met_sop_line': (
+            'If a transcript escapes NMD, the next in-frame Methionine (aa 320) '
+            'is an N-terminal loss of 8.1% of the 3972-amino-acid protein '
+            '(<10% re-initiation pathway).'
+        ),
+        'nmd_math': (
+            'NMD escape: 92.8% C-terminal lost (Stop: 284 [WT] + 17 [shift] = 301/3972 aa).'
+        ),
+    }
+    assert sp._variant_c_in_first_coding_exon(ordering)
+    assert sp._met_reinitiation_applies(
+        ordering, current_cons='frameshift', current_rank=3, is_first_exon=False,
+    )
+    sync_truncation_fraction_from_ptc(ordering)
+    assert 'predicted to trigger NMD' in ordering['nmd_math']
+    assert 'N-terminal loss' in ordering['nmd_math']
+    assert 'C-terminal lost' not in ordering['nmd_math']
+    sections = []
+    sp._append_truncation_nmd_sections(
+        sections, ordering, 'KMT2A', 'frameshift', True, True, False,
+        ordering['nmd_escape_truncation_fraction'],
+    )
+    body = sections[0][1]
+    assert 'predicted to trigger NMD' in body
+    assert 'N-terminal loss' in body
+    assert 'C-terminal lost' not in body
+    assert 'C-terminal truncation' not in body
+
+
 def test_slc16a2_clinvar_and_hgvs_derive(monkeypatch, tmp_path):
     import requests
     monkeypatch.setenv("VC_DATA_ROOT", str(tmp_path))

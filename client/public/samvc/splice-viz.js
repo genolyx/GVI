@@ -223,6 +223,29 @@ function buildSpliceVizHtml(sv, opts) {
         return up === l && dn === r;
     };
 
+    const svUtrExtensionBox = (hit) => {
+        const nt = parseInt(hit.utr_nt, 10);
+        const boxNt = parseInt(hit.utr_box_nt, 10);
+        const span = (!isNaN(boxNt) && boxNt > 0) ? boxNt : ((!isNaN(nt) && nt > 0) ? nt : 48);
+        const w = Math.max(88, Math.min(220, Math.round(56 + Math.sqrt(span) * 6)));
+        let frac = 0.72;
+        if (hit.ter_fraction_in_utr != null && hit.ter_fraction_in_utr !== '') {
+            const raw = parseFloat(hit.ter_fraction_in_utr);
+            if (!isNaN(raw)) frac = Math.min(0.92, Math.max(0.08, raw));
+        }
+        const terUnknown = !!(hit.ter_unknown || hit.ptc_aa_position == null || hit.ptc_aa_position === '');
+        const terAa = terUnknown ? '?' : hit.ptc_aa_position;
+        const terLabel = terUnknown ? 'Ter?' : 'Ter';
+        const tip = '3\u2032 UTR read-through past the native stop. Novel ' + terLabel + ' at aa ' + terAa
+            + (isNaN(nt) ? (terUnknown ? ' (length not resolved)' : '') : (' (~' + nt + ' nt into the 3\u2032 UTR)'))
+            + '. Dashed box is the extended ORF, not the coding exon.';
+        return '<div class="splice-utr-ext" style="position:relative;flex:0 0 ' + w + 'px;min-width:' + w + 'px;min-height:34px;margin-left:4px;border-radius:4px;border:2px dashed #fbbf24;background:repeating-linear-gradient(135deg,rgba(251,191,36,0.28),rgba(251,191,36,0.28) 4px,rgba(251,191,36,0.08) 4px,rgba(251,191,36,0.08) 8px);box-sizing:border-box;" title="' + T(tip) + '">'
+            + '<span class="splice-utr-label" style="position:absolute;top:2px;left:0;right:0;text-align:center;font-size:0.5rem;font-weight:800;color:#fde68a;line-height:1.05;letter-spacing:0.01em;">past Stop<br>3\u2032 UTR</span>'
+            + '<span style="position:absolute;left:' + (frac * 100) + '%;top:4px;bottom:14px;width:2px;margin-left:-1px;background:#f87171;border-radius:1px;z-index:1;"></span>'
+            + '<span style="position:absolute;bottom:2px;left:' + (frac * 100) + '%;transform:translateX(-50%);font-size:0.48rem;font-weight:800;color:#fca5a5;line-height:1;white-space:nowrap;z-index:2;">' + terLabel + '</span>'
+            + '</div>';
+    };
+
     const buildGeneOrMrnaTrack = (exonArr, truncBefore, truncAfter, cfg) => {
         const arr = exonArr || [];
         const tb = parseInt(truncBefore || 0, 10) || 0;
@@ -237,6 +260,7 @@ function buildSpliceVizHtml(sv, opts) {
         const minPx = SV_EXON_MIN;
         const parts = [];
         let variantIntronPlaced = false;
+        let hasUtrExt = false;
         parts.push(buildEllipsis(tb, 'lo'));
         if (!isMrna && cfg.isReference && vm && vm.mode === 'intron' && vm.upstream_exon == null && vm.downstream_exon != null
                 && arr.length && parseInt(arr[0].rank, 10) === parseInt(vm.downstream_exon, 10)) {
@@ -257,9 +281,16 @@ function buildSpliceVizHtml(sv, opts) {
                 exonInternalCutSide: cfg.exonInternalCutSide,
             });
             const ptcHit = (cfg.ptcList || []).find(function (p) { return parseInt(p.exon_rank, 10) === r; });
+            const utrExt = !!(ptcHit && ptcHit.utr_extension && isMrna);
             let ptcLine = '';
             let ptcBadge = '';
-            if (ptcHit && isMrna) {
+            let nativeStop = '';
+            if (utrExt) {
+                const stopTip = 'Native (WT) stop at the CDS|UTR boundary, end of exon ' + r
+                    + (ptcHit.wt_protein_length != null ? (' (after aa ' + ptcHit.wt_protein_length + ')') : '');
+                nativeStop = '<span class="splice-wt-stop" style="position:absolute;left:100%;top:3px;bottom:13px;width:2px;margin-left:-1px;background:#fbbf24;border-radius:1px;z-index:2;" title="' + T(stopTip) + '"></span>'
+                    + '<span class="splice-wt-stop-label" style="position:absolute;left:100%;bottom:1px;transform:translateX(-100%);font-size:0.5rem;font-weight:800;color:#fde68a;line-height:1;white-space:nowrap;z-index:3;padding-right:3px;" title="' + T(stopTip) + '">WT Stop</span>';
+            } else if (ptcHit && isMrna) {
                 let ptcFrac = 0.5;
                 if (ptcHit.fraction_in_exon != null) {
                     const raw = parseFloat(ptcHit.fraction_in_exon);
@@ -290,7 +321,11 @@ function buildSpliceVizHtml(sv, opts) {
                     + 'border-left:2px dashed #fbbf24;margin-left:-1px;pointer-events:none;z-index:3;"'
                     + ' title="' + T(cutLbl + ' inside E' + r + ' \u2014 the shaded side is spliced out') + '"></span>';
             }
-            parts.push('<div style="position:relative;' + exonFlex + 'min-height:34px;border-radius:4px;display:flex;align-items:center;justify-content:center;box-sizing:border-box;' + (ptcHit ? 'padding-bottom:12px;' : '') + boxSt + '" title="' + T(es.tip) + '">' + exonVarMark + ptcLine + exonCutTick + metBadgeHtml(r, cfg) + '<span style="font-size:0.65rem;font-weight:600;color:#e2e8f0;">E' + r + '</span>' + ptcBadge + '</div>');
+            parts.push('<div style="position:relative;' + exonFlex + 'min-height:34px;border-radius:4px;display:flex;align-items:center;justify-content:center;box-sizing:border-box;' + ((ptcHit && isMrna) ? 'padding-bottom:12px;' : '') + boxSt + '" title="' + T(es.tip) + '">' + exonVarMark + ptcLine + nativeStop + exonCutTick + metBadgeHtml(r, cfg) + '<span style="font-size:0.65rem;font-weight:600;color:#e2e8f0;">E' + r + '</span>' + ptcBadge + '</div>');
+            if (utrExt) {
+                hasUtrExt = true;
+                parts.push(svUtrExtensionBox(ptcHit));
+            }
             if (isMrna && cfg.pseudoAfterRank != null && r === cfg.pseudoAfterRank && cfg.pseudoNt) {
                 const ptcArg = cfg.pseudoPtcMode === 'utr' ? 'utr' : cfg.pseudoPtc;
                 parts.push(svPseudoBoxHtml(cfg.pseudoNt, cfg.pseudoAccent, ptcArg, cfg.pseudoPtcFrac, cfg.pseudoPtcHgvs));
@@ -315,7 +350,7 @@ function buildSpliceVizHtml(sv, opts) {
             }
         }
         parts.push(buildEllipsis(ta, 'hi'));
-        const bodyCls = isMrna ? 'splice-track-body' : 'splice-track-body';
+        const bodyCls = 'splice-track-body' + (hasUtrExt ? ' splice-track-has-utr' : '');
         return '<div class="' + bodyCls + '">' + parts.join('') + '</div>';
     };
 
@@ -369,6 +404,13 @@ function buildSpliceVizHtml(sv, opts) {
 
     const formatPtcLocLine = (kind, label, detail, hgvs) => {
         if (!label && !hgvs) return '';
+        if (kind === 'utr_extension') {
+            let ext = '<span style="color:#fde68a;">' + T(label || '') + '</span>';
+            if (detail) {
+                ext += ' <span style="color:var(--sv-muted,#94a3b8);">' + T(detail) + '</span>';
+            }
+            return ext;
+        }
         let s = '<strong style="color:#fca5a5;">PTC location:</strong> ';
         if (kind === 'pseudo_exon') {
             s += '<span style="color:#fde68a;">' + T(label) + '</span>';
@@ -414,6 +456,19 @@ function buildSpliceVizHtml(sv, opts) {
         if (!layer || layer.exon_rank == null) return '';
         const er = parseInt(layer.exon_rank, 10);
         if (isNaN(er) || er < 1) return '';
+        if (layer.utr_extension) {
+            const plen = layer.wt_protein_length != null ? layer.wt_protein_length : '?';
+            const terUnknown = !!(layer.ter_unknown || layer.ptc_aa_position == null || layer.ptc_aa_position === '');
+            const ter = terUnknown ? '?' : layer.ptc_aa_position;
+            const nt = layer.utr_nt != null ? layer.utr_nt : '?';
+            const cap = terUnknown
+                ? ('3\u2032 UTR (past native stop on exon ' + er + ') \u2014 native stop after aa ' + plen
+                    + '; novel Ter? (length not resolved)')
+                : ('3\u2032 UTR (past native stop on exon ' + er + ') \u2014 native stop after aa ' + plen
+                    + '; novel Ter at aa ' + ter + ' (~' + nt + ' nt into 3\u2032 UTR)');
+            const legend = 'Stop = WT terminus; dashed 3\u2032 UTR = read-through; Ter = novel stop (protein extension).';
+            return formatPtcLocLine('utr_extension', cap, legend, '');
+        }
         let detail = null;
         if (layer.fraction_in_exon != null) {
             const f = parseFloat(layer.fraction_in_exon);
@@ -540,6 +595,38 @@ function buildSpliceVizHtml(sv, opts) {
             }
         }
         const o = { exon_rank: er, tip: tip };
+        const refUtr = sv.reference_ptc_location_kind === 'utr_extension'
+            && pm.reference && layer === pm.reference;
+        const plenN = parseInt(layer.wt_protein_length, 10);
+        const terN = parseInt(layer.ptc_aa_position, 10);
+        const pastWt = !isNaN(plenN) && plenN > 0 && !isNaN(terN) && terN > plenN + 1;
+        if (layer.utr_extension || refUtr || pastWt) {
+            o.utr_extension = true;
+            o.native_stop_at_cds_end = true;
+            o.ter_unknown = !!layer.ter_unknown || (refUtr && (isNaN(terN) || terN <= 0));
+            let utrNt = parseInt(layer.utr_nt, 10);
+            let boxNt = parseInt(layer.utr_box_nt, 10);
+            let terFrac = parseFloat(layer.ter_fraction_in_utr);
+            if ((isNaN(utrNt) || utrNt <= 0) && pastWt) {
+                utrNt = (terN - plenN - 1) * 3;
+                const tail = Math.max(9, Math.floor(utrNt / 8));
+                boxNt = utrNt + tail;
+                terFrac = (utrNt - 1.5) / boxNt;
+                terFrac = Math.min(0.92, Math.max(0.08, terFrac));
+            }
+            o.utr_nt = isNaN(utrNt) ? layer.utr_nt : utrNt;
+            o.utr_box_nt = isNaN(boxNt) ? layer.utr_box_nt : boxNt;
+            o.ter_fraction_in_utr = isNaN(terFrac) ? layer.ter_fraction_in_utr : terFrac;
+            o.wt_protein_length = layer.wt_protein_length;
+            o.ptc_aa_position = layer.ptc_aa_position;
+            tip = 'Native stop at the CDS end of exon ' + er
+                + ' (after aa ' + (layer.wt_protein_length != null ? layer.wt_protein_length : '?') + '). '
+                + 'Novel Ter at aa ' + (layer.ptc_aa_position != null ? layer.ptc_aa_position : '?')
+                + ' sits in the dashed 3\u2032 UTR read-through'
+                + (layer.utr_nt != null ? (' (~' + layer.utr_nt + ' nt).') : '.');
+            o.tip = tip;
+            return [o];
+        }
         if (frac != null) o.fraction_in_exon = frac;
         return [o];
     };
@@ -1140,8 +1227,14 @@ function buildSpliceVizHtml(sv, opts) {
                         ? ' Deep intronic products follow the pseudo-exon model (panel d): intronic insertion between flanking exons.'
                         : '')
                 : 'Exon box width \u221d coding bp on this transcript.'
-                    + (pm.reference ? ' <strong>Mutant mRNA</strong> row and <strong style="color:#fca5a5;">Novel stop (PTC)</strong> row show the predicted premature stop when resolved. ' : '')
-                    + ' <strong style="color:#fca5a5;">Novel stop (PTC)</strong> rows zoom to the stop exon when it lies outside the variant-centered isoform window.')
+                    + ((pm.reference && pm.reference.utr_extension)
+                        ? ' <strong style="color:#fde68a;">WT Stop</strong> is the native stop codon at the end of the last coding exon. The dashed box after that exon is read-through <strong>past the stop into the 3\u2032 UTR</strong>; <strong style="color:#fca5a5;">Ter</strong> inside the box is the novel stop. '
+                        : (pm.reference
+                            ? ' <strong>Mutant mRNA</strong> row and <strong style="color:#fca5a5;">Novel stop (PTC)</strong> row show the predicted premature stop when resolved. '
+                            : ''))
+                    + ((pm.reference && pm.reference.utr_extension)
+                        ? ''
+                        : ' <strong style="color:#fca5a5;">Novel stop (PTC)</strong> rows zoom to the stop exon when it lies outside the variant-centered isoform window.'))
             + '</div>';
     }
     h += '</div>';

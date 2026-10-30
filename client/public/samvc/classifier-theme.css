@@ -373,6 +373,16 @@ body.wb-review-page .wb-main {
   min-height: 38px;
   box-sizing: border-box;
 }
+/* Keep the dashed 3′ UTR box in the row, after the last coding exon. */
+.splice-track-row:has(.splice-track-has-utr) {
+  width: max-content;
+  min-width: 100%;
+}
+.splice-track-body.splice-track-has-utr {
+  width: max-content;
+  min-width: 0;
+  flex: 1 0 auto;
+}
 .splice-pre-mrna-body {
   min-height: 38px;
 }
@@ -736,6 +746,19 @@ html:not(.dark) .samvc-review .splice-viz-wrap [style*="rgba(20,20,30"] span {
 }
 html:not(.dark) .samvc-review .splice-viz-wrap span.splice-met {
   color: #fde68a !important;
+}
+html:not(.dark) .samvc-review .splice-viz-wrap .splice-wt-stop {
+  background: #fbbf24 !important;
+}
+html:not(.dark) .samvc-review .splice-viz-wrap span.splice-wt-stop-label {
+  color: #fde68a !important;
+}
+html:not(.dark) .samvc-review .splice-viz-wrap .splice-utr-ext {
+  border-color: #92400e !important;
+  background: repeating-linear-gradient(135deg, rgba(146, 64, 14, 0.18), rgba(146, 64, 14, 0.18) 4px, rgba(146, 64, 14, 0.05) 4px, rgba(146, 64, 14, 0.05) 8px) !important;
+}
+html:not(.dark) .samvc-review .splice-viz-wrap .splice-utr-label {
+  color: #92400e !important;
 }
 
 /* Drop the colored left rule. Keep the callout fill and warning colors. */

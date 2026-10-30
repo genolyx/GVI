@@ -20,10 +20,10 @@ declare global {
 }
 
 const SCRIPTS = [
-  "/samvc/splice-viz.js?v=light-ink",
+  "/samvc/splice-viz.js?v=utr-past-stop",
   "/samvc/junction-align-viz.js?v=base-letters",
   "/samvc/copy-paste-builder.js",
-  "/samvc/classifier-parsed-panel.js?v=protein-extension",
+  "/samvc/classifier-parsed-panel.js?v=utr-past-stop",
 ];
 
 let scriptsPromise: Promise<void> | null = null;

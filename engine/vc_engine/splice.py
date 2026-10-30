@@ -125,6 +125,13 @@ def _append_truncation_nmd_sections(
     p_len = parsed_data.get('protein_length', '?')
     nmd_math = _nmd_math_narrative_only(parsed_data.get('nmd_math') or '')
     nmd_basis = (parsed_data.get('nmd_decision_basis') or '').strip()
+    early_fs = (
+        bool(parsed_data.get('met_reinitiation'))
+        and (
+            (parsed_data.get('consequence') or '') in ('nonsense', 'frameshift')
+            or (parsed_data.get('original_consequence') or '') in ('nonsense', 'frameshift')
+        )
+    )
     if nmd_math:
         plain = _logic_section_text_plain(nmd_math) if '<' in nmd_math else nmd_math
         for chunk in re.split(r'(?:<br\s*/?\s*|\n)+', plain, flags=re.I):
@@ -187,6 +194,19 @@ def _append_truncation_nmd_sections(
                     f"≥10% C-terminal truncation ({pct}% of {p_len}-aa protein) — severe loss "
                     "despite NMD escape (PVS1 pathway)."
                 )
+
+    if early_fs:
+        # Structural NMD stays the first line. Next-Met is the re-initiation
+        # SOP line. A later C-terminal rewrite of nmd_math must not drop either.
+        if nmd_basis and not any(nmd_basis[:48] in ln for ln in lines):
+            lines.insert(0, nmd_basis)
+        sop = (parsed_data.get('next_met_sop_line') or '').strip()
+        if sop and not any('N-terminal loss' in ln or 'next in-frame' in ln.lower() for ln in lines):
+            lines.append(sop)
+        lines = [
+            ln for ln in lines
+            if 'C-terminal lost' not in ln and 'C-terminal truncation' not in ln
+        ]
 
     lcr = parsed_data.get('nmd_last_coding_exon_rank')
     tot = parsed_data.get('nmd_exon_total')
@@ -398,10 +418,31 @@ def _single_coding_exon_gene(parsed_data):
     return False
 
 
+def _variant_c_in_first_coding_exon(parsed_data):
+    """True when the c. anchor sits in the first coding exon.
+
+    Protein-onset × 3 can fall outside that exon for a duplication (the HGVS
+    residue and the c. coordinate disagree). That mismatch must not veto
+    next-Met when the changed base is in the first coding exon.
+    """
+    anchor = _hgvs_coding_anchor_nt((parsed_data or {}).get('c_dot'))
+    if not anchor:
+        return False
+    first = _deep_intronic_first_coding_exon((parsed_data or {}).get('coding_exons') or [])
+    if not first:
+        return False
+    try:
+        return int(first.get('start_cds') or 0) <= int(anchor) <= int(first.get('end_cds') or 0)
+    except (TypeError, ValueError):
+        return False
+
+
 def _early_ptc_in_first_coding_exon(parsed_data, current_rank, is_first_exon):
     if is_first_exon:
         return True
     if _variant_in_first_coding_mrna_exon(parsed_data):
+        return True
+    if _variant_c_in_first_coding_exon(parsed_data):
         return True
     try:
         rank = int(current_rank or 0)
@@ -7060,6 +7101,42 @@ def _ensure_cds_seq(parsed_data, http_session):
     return ''
 
 
+def _stop_lost_cds_and_utr(parsed_data, http_session):
+    """CDS plus the 3′ UTR tail for a stop-lost read-through scan.
+
+    Uses sequences already on ``parsed_data`` when present. Otherwise fetches
+    Ensembl CDS and cDNA for the resolved ENST and splits the UTR after the CDS.
+    """
+    cds = parsed_data.get('cds_seq') or ''
+    if not cds and http_session is not None:
+        cds = _ensure_cds_seq(parsed_data, http_session) or ''
+    cdna = parsed_data.get('cdna_seq') or ''
+    enst = (parsed_data.get('ensembl_transcript_id') or '').strip()
+    if (
+        not cdna
+        and enst.startswith('ENST')
+        and http_session is not None
+    ):
+        try:
+            clean = enst.split('.')[0]
+            c_url = f"https://rest.ensembl.org/sequence/id/{clean}?type=cdna"
+            r1 = http_session.get(c_url, timeout=60)
+            if getattr(r1, 'status_code', 0) == 200:
+                cdna = (r1.json() or {}).get('seq', '') or ''
+                if cdna:
+                    parsed_data['cdna_seq'] = cdna
+        except Exception as exc:
+            print(f"[stop-lost] cdna fetch failed: {exc}")
+    utr = ''
+    if cds and cdna:
+        cds0 = _find_cds_head_in_cdna(cdna, cds)
+        if cds0 >= 0:
+            utr = cdna[cds0 + len(cds):]
+    elif parsed_data.get('utr3_seq'):
+        utr = parsed_data.get('utr3_seq') or ''
+    return cds or '', utr or ''
+
+
 def _infer_viz_target_exon_rank(parsed_data, coding_exons):
     """
     mRNA exon to highlight for whole-exon skip / junction rows when variant_exon was not
@@ -7306,6 +7383,46 @@ def _compute_splice_viz_variant_marker(parsed_data, cons, c_dot, tr, last_rank):
 _SPLICE_VIZ_SEC_SKIP_PTC_PREFIX = "spliceai_secondary_donor_"
 
 
+def frameshift_utr_extension_geometry(ter_aa: int, protein_length: int):
+    """Place a novel stop that reads through the native terminus into the 3′ UTR.
+
+    The native stop is the codon after the last WT amino acid and ends the CDS.
+    ``utr_nt`` is the distance from the first 3′ UTR base through that novel
+    stop codon: ``(Ter - P - 1) * 3``. The dashed box is a little longer than
+    that span so the Ter tick sits inside the box, not on the CDS exon.
+    Returns ``None`` when the stop is not past the native stop codon.
+    """
+    try:
+        ter = int(ter_aa)
+        plen = int(protein_length)
+    except (TypeError, ValueError):
+        return None
+    if plen <= 0 or ter <= plen + 1:
+        return None
+    span_nt = (ter - plen - 1) * 3
+    tail_nt = max(9, span_nt // 8)
+    box_nt = span_nt + tail_nt
+    frac = (span_nt - 1.5) / float(box_nt)
+    frac = min(0.92, max(0.08, frac))
+    return {
+        "utr_nt": span_nt,
+        "utr_box_nt": box_nt,
+        "ter_fraction_in_utr": round(frac, 4),
+    }
+
+
+def _last_coding_anatomical_rank(coding_rows):
+    ranks = []
+    for cx in coding_rows or []:
+        try:
+            ar = int(cx.get("anatomical_rank") or 0)
+        except (TypeError, ValueError):
+            continue
+        if ar >= 1:
+            ranks.append(ar)
+    return max(ranks) if ranks else None
+
+
 def _ptc_aa_to_anatomical_exon(coding_rows, ptc_aa_1b):
     """Map 1-based protein Ter position to anatomical exon rank (reference CDS model)."""
     if not coding_rows or ptc_aa_1b is None:
@@ -7480,12 +7597,47 @@ def _splice_viz_ptc_layer_junction(parsed_data):
     return out
 
 
+def _utr_extension_caption(ref_ptc):
+    """Map caption for a stop past the native terminus, including an unresolved Ter?."""
+    er = ref_ptc.get('exon_rank')
+    plen = ref_ptc.get('wt_protein_length')
+    if ref_ptc.get('ter_unknown') or ref_ptc.get('ptc_aa_position') in (None, ''):
+        return (
+            f"3′ UTR (past native stop on exon {er}) — "
+            f"native stop after aa {plen}; novel Ter? (length not resolved)"
+        )
+    return (
+        f"3′ UTR (past native stop on exon {er}) — "
+        f"native stop after aa {plen}; "
+        f"novel Ter at aa {ref_ptc.get('ptc_aa_position')} "
+        f"(~{ref_ptc.get('utr_nt')} nt into 3′ UTR)"
+    )
+
+
+def _stop_lost_unknown_utr_layer(parsed_data, plen, coding_exons):
+    """Native Stop + dashed 3′ UTR + Ter? when the novel stop index is unknown."""
+    er = _last_coding_anatomical_rank(coding_exons)
+    if er is None or er < 1:
+        return None
+    return {
+        'exon_rank': er,
+        'hgvs_p': str(parsed_data.get('hgvs_p') or '').strip(),
+        'utr_extension': True,
+        'ter_unknown': True,
+        'native_stop_at_cds_end': True,
+        'wt_protein_length': plen if plen > 0 else None,
+        'utr_box_nt': 48,
+        'ter_fraction_in_utr': 0.62,
+    }
+
+
 def _splice_viz_ptc_layer_reference(parsed_data):
-    """Direct nonsense/frameshift on the reference transcript (non-splice exon map)."""
+    """Direct nonsense/frameshift/stop-lost on the reference transcript (non-splice exon map)."""
     if _splice_viz_should_include(parsed_data):
         return None
     cons = (parsed_data.get('consequence') or '').lower()
-    if not any(x in cons for x in ('nonsense', 'frameshift', 'stop_gained')):
+    is_stop_lost = 'stop_lost' in cons
+    if not is_stop_lost and not any(x in cons for x in ('nonsense', 'frameshift', 'stop_gained')):
         return None
     ptc_aa = None
     try:
@@ -7494,16 +7646,43 @@ def _splice_viz_ptc_layer_reference(parsed_data):
             ptc_aa = int(nsv)
     except (TypeError, ValueError):
         ptc_aa = None
-    if not ptc_aa:
+    if not ptc_aa and not is_stop_lost:
         try:
             ps = parsed_data.get('protein_start')
             if ps is not None and int(ps) > 0:
                 ptc_aa = int(ps)
         except (TypeError, ValueError):
             ptc_aa = None
+    ce = parsed_data.get('coding_exons') or []
+    try:
+        plen = int(parsed_data.get('protein_length') or 0)
+    except (TypeError, ValueError):
+        plen = 0
+    if is_stop_lost and not ptc_aa:
+        return _stop_lost_unknown_utr_layer(parsed_data, plen, ce)
     if not ptc_aa:
         return None
-    ce = parsed_data.get('coding_exons') or []
+    geo = frameshift_utr_extension_geometry(ptc_aa, plen) if plen > 0 else None
+    if is_stop_lost and not geo:
+        return _stop_lost_unknown_utr_layer(parsed_data, plen, ce)
+    if geo:
+        er = _last_coding_anatomical_rank(ce)
+        if er is None or er < 1:
+            return None
+        hgvs_p = str(parsed_data.get('hgvs_p') or '').strip()
+        # Stop is past the native terminus. Do not set fraction_in_exon —
+        # that tick is clamped onto the last coding-exon box.
+        return {
+            'exon_rank': er,
+            'hgvs_p': hgvs_p,
+            'ptc_aa_position': ptc_aa,
+            'utr_extension': True,
+            'native_stop_at_cds_end': True,
+            'wt_protein_length': plen,
+            'utr_nt': geo['utr_nt'],
+            'utr_box_nt': geo['utr_box_nt'],
+            'ter_fraction_in_utr': geo['ter_fraction_in_utr'],
+        }
     er = _ptc_aa_to_anatomical_exon(ce, ptc_aa)
     if er is None:
         try:
@@ -7673,7 +7852,7 @@ def _splice_viz_shift_ptc_markers(markers, offset):
     return out
 
 
-def _splice_viz_focus_window(exons_full, center_rank, neighbor=2):
+def _splice_viz_focus_window(exons_full, center_rank, neighbor=2, include_rank=None):
     """
     Neighboring exons only (±neighbor) around center_rank for isoform-specific rows.
     Returns renormalized widths within the slice plus truncation counts for ellipsis pills.
@@ -7698,6 +7877,11 @@ def _splice_viz_focus_window(exons_full, center_rank, neighbor=2):
     rmin, rmax = min(ranks), max(ranks)
     lo = max(rmin, cr - int(neighbor))
     hi = min(rmax, cr + int(neighbor))
+    if include_rank is not None:
+        try:
+            hi = min(rmax, max(hi, int(include_rank)))
+        except (TypeError, ValueError):
+            pass
     subset_raw = [e for e in exons_full if lo <= int(e['rank']) <= hi]
     subset_raw.sort(key=lambda e: int(e['rank']))
     trunc_before = sum(1 for e in exons_full if int(e['rank']) < lo)
@@ -11937,10 +12121,17 @@ def _build_splice_viz_payload(parsed_data):
     if not splice_mode:
         tr_ref = _splice_viz_shift_rank(tr, _viz_rank_offset)
         variant_marker = _splice_viz_shift_marker(variant_marker, _viz_rank_offset)
-        ref_focus = _splice_viz_focus_window(exons_full, tr_ref, 2) if tr_ref is not None else None
         ptc_markers = _splice_viz_shift_ptc_markers(
             _build_splice_viz_ptc_markers(parsed_data, False, False),
             _viz_rank_offset,
+        )
+        _ext_rank = None
+        _ref_layer = ptc_markers.get('reference') if isinstance(ptc_markers, dict) else None
+        if isinstance(_ref_layer, dict) and _ref_layer.get('utr_extension'):
+            _ext_rank = _ref_layer.get('exon_rank')
+        ref_focus = (
+            _splice_viz_focus_window(exons_full, tr_ref, 2, include_rank=_ext_rank)
+            if tr_ref is not None else None
         )
         try:
             _first_coding = int(rows[0].get('anatomical_rank') or 0)
@@ -11968,17 +12159,25 @@ def _build_splice_viz_payload(parsed_data):
         ref_ptc = ptc_markers.get('reference')
         if ref_ptc:
             out['has_reference_ptc'] = True
-            out['reference_ptc_location_kind'] = 'coding_exon'
             er = ref_ptc.get('exon_rank')
-            if er is not None:
-                out['reference_ptc_location_label'] = f'native coding exon {er}'
-                if ref_ptc.get('fraction_in_exon') is not None:
-                    try:
-                        out['reference_ptc_location_detail'] = (
-                            f"~{round(float(ref_ptc['fraction_in_exon']) * 100)}% along exon {er} box"
-                        )
-                    except (TypeError, ValueError):
-                        pass
+            if ref_ptc.get('utr_extension'):
+                out['reference_ptc_location_kind'] = 'utr_extension'
+                out['reference_ptc_location_label'] = _utr_extension_caption(ref_ptc)
+                out['reference_ptc_location_detail'] = (
+                    "Stop = WT terminus; dashed 3′ UTR = read-through; "
+                    "Ter = novel stop (protein extension)."
+                )
+            else:
+                out['reference_ptc_location_kind'] = 'coding_exon'
+                if er is not None:
+                    out['reference_ptc_location_label'] = f'native coding exon {er}'
+                    if ref_ptc.get('fraction_in_exon') is not None:
+                        try:
+                            out['reference_ptc_location_detail'] = (
+                                f"~{round(float(ref_ptc['fraction_in_exon']) * 100)}% along exon {er} box"
+                            )
+                        except (TypeError, ValueError):
+                            pass
         return out
 
     if tr is None:

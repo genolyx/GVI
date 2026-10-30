@@ -58,7 +58,7 @@ export function GermlineOrderFields({
   return (
     <div className="grid gap-5 lg:grid-cols-2">
       <section className="space-y-4 rounded-xl border border-border/70 p-4">
-        <h3 className="text-sm font-semibold">Test type and report pairing</h3>
+        <h3 className="text-sm font-semibold">Report pairing</h3>
         {service === "carrier_screening" ? (
           <>
             <Field label="Report mode">

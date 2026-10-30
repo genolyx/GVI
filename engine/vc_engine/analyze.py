@@ -63,8 +63,10 @@ from vc_engine.truncation import (
     ensure_truncation_fraction_from_stop,
     frameshift_ter_index,
     sync_truncation_fraction_from_ptc,
+    apply_stop_lost_extension,
     formalize_frameshift_ptc,
     formalize_nonsense_ptc,
+    parse_stop_lost_hgvs,
     is_marginal_loss,
     is_severe_loss,
     is_start_loss_reinit_viable,
@@ -72,7 +74,7 @@ from vc_engine.truncation import (
     start_loss_fraction_from_next_met,
 )
 from vc_engine.scoring import apply_acmg, apply_clingen_disease_mechanism, apply_rubric
-from vc_engine.splice import SPLICEAI_RECONCILE_MIN, _append_deep_intronic_splice_logic_sections, _append_nmd_escape_clinical_context, _append_splice_product_logic_sections, _append_splice_support_sections, _append_truncation_nmd_sections, _apply_canonical_splice_hgvs_override, _apply_coding_snv_loss_exon_skip, _apply_near_splice_region_context, _apply_early_oof_exon_skip_next_met, _early_oof_next_met_sop_sentence, _apply_exon_skip_truncation_as_primary, _apply_pre_atg_splice_acceptor_context, _apply_pre_atg_splice_donor_context, _build_junction_align_payload, _build_splice_products_panel_html, _build_splice_variant_intro_short, _build_splice_viz_payload, _canonical_splice_junction_from_hgvs, _coding_snv_spliceai_loss_site, _consequence_is_acceptor_splice, _consequence_is_donor_splice, _deep_intronic_signal_label, _defer_whole_exon_skip_to_deep_intronic, _ensure_cds_seq, _ensure_coding_exons_for_splice_viz, _ensure_protein_length_from_coding_exons, _ensure_splice_secondary_cryptic_gain, _finalize_splice_report_narratives, _format_whole_exon_skip_hgvs_p, _hit_at_user_splice_junction_locus, _hydrate_exon_skip_truncation_metrics, _junction_align_ruler_ticks, _logic_csq_is_splice_context, _logic_lines_block, _mark_oof_exon_skip_nmd_provisional, _logic_section_text_plain, _logic_should_show_deep_intronic_context, _lookup_clinvar_plp_downstream_of_ptc, _met_reinitiation_applies, _missense_same_codon_different_change, _normalize_to_forward_strand, _oofs_exon_skip_ptc_cds_and_cdna, _reconcile_splice_model_precedence, refresh_pre_atg_deep_intronic_readouts, _resolve_cryptic_splice_outcome, _resolve_exon_internal_cryptic_outcome, _resolve_splice_junction_locus, _same_canonical_splice_junction_locus, _select_splice_coding_exon, _set_spliceai_narrative_sentence, _should_show_spliceai_narrative_in_logic, _splice_cdna_anchor_from_hgvs, _splice_variant_intro_is_complete, _spliceai_exon_skip_takes_precedence_over_weak_cryptic, _refresh_secondary_gain_at_spliceai_dp, _spliceai_scores_4, _spliceai_secondary_acceptor_parallel_exon_skip_math, _spliceai_secondary_donor_parallel_exon_skip_math, _spliceai_variant_locus_string, _stash_transcript_mrna_exon_metadata, _suppress_start_loss_nmd_for_exon_skip_primary, _translate_cds_aas, _whole_exon_skip_primary_resolved, compute_deep_intronic_splice_math, compute_deep_intronic_spliceai_products
+from vc_engine.splice import SPLICEAI_RECONCILE_MIN, _append_deep_intronic_splice_logic_sections, _append_nmd_escape_clinical_context, _append_splice_product_logic_sections, _append_splice_support_sections, _append_truncation_nmd_sections, _apply_canonical_splice_hgvs_override, _apply_coding_snv_loss_exon_skip, _apply_near_splice_region_context, _apply_early_oof_exon_skip_next_met, _early_oof_next_met_sop_sentence, _apply_exon_skip_truncation_as_primary, _apply_pre_atg_splice_acceptor_context, _apply_pre_atg_splice_donor_context, _build_junction_align_payload, _build_splice_products_panel_html, _build_splice_variant_intro_short, _build_splice_viz_payload, _canonical_splice_junction_from_hgvs, _coding_snv_spliceai_loss_site, _consequence_is_acceptor_splice, _consequence_is_donor_splice, _deep_intronic_signal_label, _defer_whole_exon_skip_to_deep_intronic, _ensure_cds_seq, _ensure_coding_exons_for_splice_viz, _stop_lost_cds_and_utr, _ensure_protein_length_from_coding_exons, _ensure_splice_secondary_cryptic_gain, _finalize_splice_report_narratives, _format_whole_exon_skip_hgvs_p, _hit_at_user_splice_junction_locus, _hydrate_exon_skip_truncation_metrics, _junction_align_ruler_ticks, _logic_csq_is_splice_context, _logic_lines_block, _mark_oof_exon_skip_nmd_provisional, _logic_section_text_plain, _logic_should_show_deep_intronic_context, _lookup_clinvar_plp_downstream_of_ptc, _met_reinitiation_applies, _missense_same_codon_different_change, _normalize_to_forward_strand, _oofs_exon_skip_ptc_cds_and_cdna, _reconcile_splice_model_precedence, refresh_pre_atg_deep_intronic_readouts, _resolve_cryptic_splice_outcome, _resolve_exon_internal_cryptic_outcome, _resolve_splice_junction_locus, _same_canonical_splice_junction_locus, _select_splice_coding_exon, _set_spliceai_narrative_sentence, _should_show_spliceai_narrative_in_logic, _splice_cdna_anchor_from_hgvs, _splice_variant_intro_is_complete, _spliceai_exon_skip_takes_precedence_over_weak_cryptic, _refresh_secondary_gain_at_spliceai_dp, _spliceai_scores_4, _spliceai_secondary_acceptor_parallel_exon_skip_math, _spliceai_secondary_donor_parallel_exon_skip_math, _spliceai_variant_locus_string, _stash_transcript_mrna_exon_metadata, _suppress_start_loss_nmd_for_exon_skip_primary, _translate_cds_aas, _whole_exon_skip_primary_resolved, compute_deep_intronic_splice_math, compute_deep_intronic_spliceai_products
 from vc_engine.spliceai import _apply_emg_spliceai_ds_only, _apply_emg_spliceai_if_broad_unavailable, _emg_spliceai_ds_snapshot, _ingest_spliceai_broad_json, _refresh_spliceai_in_silico_source
 from vc_engine.state import clingen_db, clingen_gene_lookup
 from vc_engine.uniprot import (
@@ -3997,6 +3999,66 @@ def _resolve_ensembl_transcript_id(http_session, parsed_data, candidate=None):
     return ""
 
 
+def _resolve_stop_lost_transcript(parsed_data):
+    """Fill an ENST for a stop-lost when the request left the transcript blank.
+
+    Uses a RefSeq/ENST already on the record, then the gene's canonical transcript.
+    """
+    if str(parsed_data.get("ensembl_transcript_id") or "").startswith("ENST"):
+        return
+    if (
+        parsed_data.get("transcript")
+        or parsed_data.get("refseq_transcript_id")
+        or parsed_data.get("ensembl_transcript_id")
+    ):
+        _resolve_ensembl_transcript_id(http_session, parsed_data)
+        if str(parsed_data.get("ensembl_transcript_id") or "").startswith("ENST"):
+            return
+    gene = (parsed_data.get("gene_symbol") or parsed_data.get("gene") or "").strip()
+    if not gene or http_session is None:
+        return
+    try:
+        url = f"https://rest.ensembl.org/lookup/symbol/homo_sapiens/{gene}?expand=0"
+        resp = http_session.get(url, timeout=20)
+        if getattr(resp, "status_code", 0) != 200:
+            return
+        canon = str((resp.json() or {}).get("canonical_transcript") or "")
+        if canon.startswith("ENST"):
+            parsed_data["ensembl_transcript_id"] = canon.split(".")[0]
+    except Exception as exc:
+        print(f"[stop-lost] transcript resolve failed: {exc}")
+
+
+def _apply_stop_lost_readthrough(parsed_data):
+    """Stop-lost is a protein extension: Ter = onset + N, or a cDNA scan when N is ``?``."""
+    csq = str(parsed_data.get("consequence") or "")
+    if "splice" not in csq and csq not in ("frameshift", "start_lost"):
+        if parse_stop_lost_hgvs(parsed_data.get("hgvs_p") or ""):
+            if csq in (
+                "unknown",
+                "nonsense",
+                "missense",
+                "3_prime_UTR_variant",
+                "synonymous_variant",
+                "",
+            ):
+                parsed_data["consequence"] = "stop_lost"
+    if "stop_lost" not in str(parsed_data.get("consequence") or ""):
+        return
+    spec = parse_stop_lost_hgvs(parsed_data.get("hgvs_p") or "")
+    try:
+        existing_ter = int(parsed_data.get("novel_stop_aa") or 0)
+    except (TypeError, ValueError):
+        existing_ter = 0
+    cds = ""
+    utr = ""
+    needs_scan = spec is None or spec.get("n") is None
+    if needs_scan and existing_ter <= 0:
+        _resolve_stop_lost_transcript(parsed_data)
+        cds, utr = _stop_lost_cds_and_utr(parsed_data, http_session)
+    apply_stop_lost_extension(parsed_data, cds=cds, utr=utr)
+
+
 def _mrna_exon_total(parsed_data, coding_exons=None):
     """Total mRNA exon count without requiring a local Ensembl `exons` list."""
     mt = parsed_data.get('mrna_exon_total')
@@ -5152,6 +5214,8 @@ def analyze_variant():
                         consequence = 'splice_region_variant'
                 elif 'fs' in c_lower or 'frameshift' in c_lower or 'fs' in p_lower:
                     consequence = 'frameshift'
+                elif re.search(r'(?:\*|ter)\d+[a-z]{1,3}ext(?:\*|ter)', p_lower):
+                    consequence = 'stop_lost'
                 elif '*' in c_lower or 'ter' in c_lower or 'nonsense' in c_lower or 'stop' in c_lower or '*' in p_lower or 'ter' in p_lower:
                     consequence = 'nonsense'
                 elif '>' in c_lower:
@@ -6373,36 +6437,62 @@ def analyze_variant():
                         total_len = len(seq)
                         
                         if total_len > 0:
-                            parsed_data.pop('nmd_math', None)
                             # Search for the next in-frame Met after the abolished initiator (index 0).
                             next_m_raw = seq.find('M', 1)
                             next_m = next_m_raw + 1 if next_m_raw != -1 else -1
+                            early_fs = current_cons in ('nonsense', 'frameshift')
 
                             if next_m != -1:
                                 t_frac = start_loss_fraction_from_next_met(next_m, total_len)
                                 parsed_data['nmd_escape_truncation_fraction'] = t_frac
                                 parsed_data['next_methionine_position'] = next_m
-                                parsed_data['nmd_escape'] = is_start_loss_reinit_viable(t_frac)
                                 pct = round(t_frac * 100, 1)
-                                if is_start_loss_reinit_viable(t_frac):
-                                    parsed_data['nmd_math'] = (
-                                        f"The primary start codon is abolished. Translation may re-initiate at the "
-                                        f"next in-frame Methionine (aa {next_m}), removing only {pct}% of the "
-                                        f"{total_len}-amino-acid protein (< 10% start-loss / re-initiation pathway)."
-                                    )
+                                if early_fs:
+                                    # Structural NMD (already in nmd_decision_basis) stays primary.
+                                    # Next-Met is the re-initiation line, not a replacement.
+                                    if is_start_loss_reinit_viable(t_frac):
+                                        sop = (
+                                            f"If a transcript escapes NMD, translation may re-initiate at the "
+                                            f"next in-frame Methionine (aa {next_m}): N-terminal loss {pct}% of the "
+                                            f"{total_len}-amino-acid protein (<10% re-initiation pathway)."
+                                        )
+                                    else:
+                                        sop = (
+                                            f"If a transcript escapes NMD, the next in-frame Methionine "
+                                            f"(aa {next_m}) is an N-terminal loss of {pct}% of the "
+                                            f"{total_len}-amino-acid protein (≥10% — severe N-terminal truncation)."
+                                        )
+                                    parsed_data['next_met_sop_line'] = sop
+                                    basis = (parsed_data.get('nmd_decision_basis') or '').strip()
+                                    parsed_data['nmd_math'] = f"{basis} {sop}".strip() if basis else sop
                                 else:
-                                    parsed_data['nmd_math'] = (
-                                        f"The primary start codon is abolished. The next in-frame Methionine "
-                                        f"(aa {next_m}) is too far downstream, removing {pct}% of the "
-                                        f"{total_len}-amino-acid protein (≥ 10% — severe N-terminal truncation)."
-                                    )
+                                    parsed_data['nmd_escape'] = is_start_loss_reinit_viable(t_frac)
+                                    if is_start_loss_reinit_viable(t_frac):
+                                        parsed_data['nmd_math'] = (
+                                            f"The primary start codon is abolished. Translation may re-initiate at the "
+                                            f"next in-frame Methionine (aa {next_m}), removing only {pct}% of the "
+                                            f"{total_len}-amino-acid protein (< 10% start-loss / re-initiation pathway)."
+                                        )
+                                    else:
+                                        parsed_data['nmd_math'] = (
+                                            f"The primary start codon is abolished. The next in-frame Methionine "
+                                            f"(aa {next_m}) is too far downstream, removing {pct}% of the "
+                                            f"{total_len}-amino-acid protein (≥ 10% — severe N-terminal truncation)."
+                                        )
                             else:
                                 parsed_data['nmd_escape_truncation_fraction'] = 1.0
-                                parsed_data['nmd_escape'] = False
-                                parsed_data['nmd_math'] = (
+                                if not early_fs:
+                                    parsed_data['nmd_escape'] = False
+                                no_met = (
                                     "The primary start codon is abolished and no downstream Methionine is "
                                     "available for re-initiation; 100% of the functional protein is lost."
                                 )
+                                if early_fs:
+                                    parsed_data['next_met_sop_line'] = no_met
+                                    basis = (parsed_data.get('nmd_decision_basis') or '').strip()
+                                    parsed_data['nmd_math'] = f"{basis} {no_met}".strip() if basis else no_met
+                                else:
+                                    parsed_data['nmd_math'] = no_met
 
                             parsed_data['protein_length'] = total_len
                             parsed_data['met_reinitiation'] = True
@@ -6552,6 +6642,7 @@ def analyze_variant():
         # last-exon / penultimate escape with C-terminal loss). The <10% / ≥10% threshold
         # applies to C-terminal loss only, not to protein extensions. Structural splice
         # (whole–exon loss, PTC in skipped exon, etc.) uses splice_deleted_coords VCF scan.
+        _apply_stop_lost_readthrough(parsed_data)
         sync_truncation_fraction_from_ptc(parsed_data)
         current_csq_nmd = parsed_data.get('consequence', '')
         is_start_loss_escape = (
@@ -7667,6 +7758,7 @@ def analyze_variant():
         try:
             _ensure_protein_length_from_coding_exons(parsed_data)
             ensure_truncation_fraction_from_stop(parsed_data)
+            _apply_stop_lost_readthrough(parsed_data)
             if (
                 parsed_data.get("consequence") in ("nonsense", "frameshift")
                 and not parsed_data.get("nmd_decision_basis")
@@ -8098,6 +8190,7 @@ def analyze_variant():
         try:
             _ensure_coding_exons_for_splice_viz(parsed_data)
             _ensure_cds_seq(parsed_data, http_session)
+            _apply_stop_lost_readthrough(parsed_data)
             parsed_data['splice_viz'] = _build_splice_viz_payload(parsed_data)
         except Exception as _svis_err:
             print(f"splice_viz build: {_svis_err}")
