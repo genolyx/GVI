@@ -23,7 +23,7 @@ const SCRIPTS = [
   "/samvc/splice-viz.js?v=utr-past-stop",
   "/samvc/junction-align-viz.js?v=base-letters",
   "/samvc/copy-paste-builder.js",
-  "/samvc/classifier-parsed-panel.js?v=utr-past-stop",
+  "/samvc/classifier-parsed-panel.js?v=hgmd-pm5",
 ];
 
 let scriptsPromise: Promise<void> | null = null;

@@ -20,6 +20,7 @@ from vc_engine.hgvs import (
     _parse_missense_substitution_hgvs_p,
     _protein_position_from_hgvs_label,
 )
+from vc_engine.isoform_map import alias_clause, coding_anchor, protein_anchor, same_residue_on_curated_frame
 from vc_engine.util import _safe_int_or_none
 
 # In-RAM HGMD positional catalogue. Populated by the app_v11 HGMD mount at
@@ -277,13 +278,18 @@ def record_hgmd_allele(gene, hgvs_c, protein_positions, tag, disease, pmids, ami
     )
 
 
-def hgmd_alternate_residue_hits(gene, c_dot, hgvs_p="", equivalent=None, limit=25):
+def hgmd_alternate_residue_hits(gene, c_dot, hgvs_p="", equivalent=None, limit=25, isoform_maps=None, curated_refseq=""):
     """Other HGMD rows at this nucleotide coordinate or this amino-acid residue.
 
     The exact allele, including isoform synonyms passed in ``equivalent``, is left
     out. A different base change at the same c. coordinate is a nucleotide alternate.
-    A different allele at the same amino-acid number, on another coordinate, is an
-    amino-acid alternate. Each hit keeps the spreadsheet PMIDs.
+    ``isoform_maps`` add those alternate c. anchors so a neighbor indexed only under
+    the other NM is found, and attach an ``also NM:c. / p.`` alias.
+
+    Amino-acid neighbors stay on the curated residue. A protein number that exists
+    only because another isoform counts the same codon differently is not searched
+    as the curated residue. A short-isoform row is kept only when its c. shifts
+    onto the curated codon.
     """
     gene_u = str(gene or "").strip().upper()
     query = _hgmd_display_c(c_dot)
@@ -300,6 +306,23 @@ def hgmd_alternate_residue_hits(gene, c_dot, hgvs_p="", equivalent=None, limit=2
     anchor = parsed[0] if parsed else None
     sub = _parse_missense_substitution_hgvs_p(hgvs_p)
     aa_pos = sub["pos"] if sub else _protein_position_from_hgvs_label(hgvs_p)
+    maps = [m for m in (isoform_maps or []) if isinstance(m, dict)]
+    extra_anchors = set()
+    aa_positions = set()
+    if isinstance(aa_pos, int) and aa_pos > 0:
+        aa_positions.add(aa_pos)
+    for item in maps:
+        alt_anchor = coding_anchor(item.get("hgvs_c") or "")
+        if isinstance(alt_anchor, int):
+            extra_anchors.add(alt_anchor)
+        # Candidate pool only. same_residue_on_curated_frame still rejects a
+        # remapped number that is not this codon (211 vs 241).
+        delta_aa = item.get("aa_delta")
+        if isinstance(aa_pos, int) and isinstance(delta_aa, int):
+            shifted = aa_pos + delta_aa
+            if shifted > 0:
+                aa_positions.add(shifted)
+    curated_c_pos = anchor if isinstance(anchor, int) else None
     nuc_q = f"c.{anchor}" if anchor is not None else ""
     if sub:
         aa_q = f"p.{sub['ref_3']}{sub['pos']}"
@@ -318,16 +341,18 @@ def hgmd_alternate_residue_hits(gene, c_dot, hgvs_p="", equivalent=None, limit=2
         )
         out = []
         for ent in ranked[:limit]:
-            out.append(
-                {
-                    "hgvs_c": ent["hgvs_c"],
-                    "tag": ent.get("tag") or "",
-                    "disease": ent.get("disease") or "",
-                    "pmids": list(ent.get("pmids") or []),
-                    "amino": ent.get("amino") or "",
-                    "link": _hgmd_gene_mutation_url(gene_u, ent["hgvs_c"]),
-                }
-            )
+            packed = {
+                "hgvs_c": ent["hgvs_c"],
+                "tag": ent.get("tag") or "",
+                "disease": ent.get("disease") or "",
+                "pmids": list(ent.get("pmids") or []),
+                "amino": ent.get("amino") or "",
+                "link": _hgmd_gene_mutation_url(gene_u, ent["hgvs_c"]),
+            }
+            alias = str(ent.get("alias") or "").strip()
+            if alias:
+                packed["alias"] = alias
+            out.append(packed)
         return out
 
     nucleotide = []
@@ -338,14 +363,41 @@ def hgmd_alternate_residue_hits(gene, c_dot, hgvs_p="", equivalent=None, limit=2
         hgvs_c = ent.get("hgvs_c") or ""
         if any(_same_hgmd_allele(hgvs_c, tail) for tail in tails):
             continue
-        same_anchor = anchor is not None and ent.get("anchor") == anchor
-        same_aa = aa_pos is not None and aa_pos in (ent.get("positions") or [])
+        ent_anchor = ent.get("anchor")
+        same_anchor = (
+            anchor is not None
+            and (ent_anchor == anchor or (isinstance(ent_anchor, int) and ent_anchor in extra_anchors))
+        )
+        positions = ent.get("positions") or []
+        same_aa = bool(aa_positions) and any(
+            isinstance(p, int) and p in aa_positions for p in positions
+        )
+        if same_aa and maps and not same_residue_on_curated_frame(
+            ent, aa_pos if isinstance(aa_pos, int) else protein_anchor(hgvs_p), curated_c_pos, maps,
+        ):
+            same_aa = False
+        clause = ""
+        if maps and (same_anchor or same_aa):
+            clause = alias_clause(
+                hgvs_c,
+                ent.get("amino") or "",
+                ent_anchor if isinstance(ent_anchor, int) else None,
+                curated_refseq,
+                curated_c_pos,
+                maps,
+            )
         if same_anchor and hgvs_c not in seen_n:
             seen_n.add(hgvs_c)
-            nucleotide.append(ent)
+            row = dict(ent)
+            if clause:
+                row["alias"] = clause
+            nucleotide.append(row)
         if same_aa and hgvs_c not in seen_a:
             seen_a.add(hgvs_c)
-            amino.append(ent)
+            row = dict(ent)
+            if clause:
+                row["alias"] = clause
+            amino.append(row)
     return {
         "nucleotide": _pack(nucleotide),
         "amino_acid": _pack(amino),

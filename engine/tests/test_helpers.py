@@ -1202,6 +1202,195 @@ NM_001386795.1\tRefSeq\texon\t1893\t2052\t.\t+\t.\tID=e18
     assert pd.get("nmd_exon_total") == 18
 
 
+def test_nkx2_1_alternate_numbering_does_not_search_remapped_residue():
+    """Curated NM_001079668 c.722/p.241. Short NM_003317 c.632/p.211 is the same allele.
+
+    Same-amino-acid neighbors may be c.722A>G / p.Asn241Ser and the short-isoform
+    form of that codon. c.631A>T / p.Lys211Ter only shares the remapped number.
+    """
+    from vc_engine.isoform_map import also_reported_line, build_refseq_isoform_maps
+    import vc_engine.hgmd as h
+
+    synonyms = [
+        {
+            "refseq": "NM_001079668.3",
+            "hgvs_c": "c.722A>T",
+            "hgvs_p": "p.Asn241Ile",
+            "full": "NM_001079668.3:c.722A>T",
+            "user_input": True,
+        },
+        {
+            "refseq": "NM_003317.4",
+            "hgvs_c": "c.632A>T",
+            "hgvs_p": "p.Asn211Ile",
+            "full": "NM_003317.4:c.632A>T",
+        },
+    ]
+    maps = build_refseq_isoform_maps(
+        synonyms, "NM_001079668.3", "c.722A>T", "p.Asn241Ile",
+    )
+    assert len(maps) == 1
+    assert maps[0]["cds_delta"] == -90
+    assert maps[0]["aa_delta"] == -30
+    reported = also_reported_line(maps)
+    assert reported.startswith(
+        "Also reported as (alternate transcript numbering — search papers with these):"
+    )
+    assert "NM_003317.4:c.632A>T" in reported
+    assert "p.Asn211Ile" in reported
+
+    saved = {gene: list(rows) for gene, rows in h.GLOBAL_HGMD_BY_GENE.items()}
+    h.GLOBAL_HGMD_BY_GENE.clear()
+    try:
+        h.record_hgmd_allele("NKX2-1", "c.632A>T", [211], "DM", "", ["100"], amino="Asn-Ile")
+        h.record_hgmd_allele("NKX2-1", "c.631A>T", [211], "DM", "", ["200"], amino="Lys-Ter")
+        h.record_hgmd_allele("NKX2-1", "c.632A>G", [211], "DM", "", ["300"], amino="Asn-Ser")
+        h.record_hgmd_allele("NKX2-1", "c.722A>G", [241], "DM", "", ["400"], amino="Asn-Ser")
+        found = h.hgmd_alternate_residue_hits(
+            "NKX2-1",
+            "c.722A>T",
+            "p.Asn241Ile",
+            equivalent=["NKX2-1_c.722A>T", "NKX2-1_c.632A>T"],
+            isoform_maps=maps,
+            curated_refseq="NM_001079668.3",
+        )
+        amino = {row["hgvs_c"]: row for row in found["amino_acid"]}
+        assert "c.631A>T" not in amino
+        assert "c.632A>T" not in amino
+        assert "c.632A>G" in amino
+        assert "c.722A>G" in amino
+        assert "NM_001079668.3:c.722A>G" in amino["c.632A>G"]["alias"]
+        assert "p.Asn241Ser" in amino["c.632A>G"]["alias"]
+        assert "NM_003317.4:c.632A>G" in amino["c.722A>G"]["alias"]
+        assert "p.Asn211Ser" in amino["c.722A>G"]["alias"]
+        nuc = {row["hgvs_c"] for row in found["nucleotide"]}
+        assert "c.632A>G" in nuc
+        assert "c.632A>T" not in nuc
+        assert "c.631A>T" not in nuc
+    finally:
+        h.GLOBAL_HGMD_BY_GENE.clear()
+        h.GLOBAL_HGMD_BY_GENE.update(saved)
+
+
+def test_hgmd_different_missense_at_curated_residue_is_pm5():
+    """p.Asn241Ser (and its short-isoform p.Asn211Ser) is PM5. p.Lys211Ter is not."""
+    from vc_engine.analyze import _collect_hgmd_pm5_alleles
+    from vc_engine.scoring import apply_acmg
+
+    maps = [{
+        "refseq": "NM_003317.4",
+        "hgvs_c": "c.632A>T",
+        "hgvs_p": "p.Asn211Ile",
+        "cds_delta": -90,
+        "aa_delta": -30,
+    }]
+    parsed = {
+        "consequence": "missense",
+        "c_dot": "c.722A>T",
+        "hgvs_p": "p.N241I",
+        "refseq_isoform_maps": maps,
+        "gnomad_af": 0,
+        "gnomad_checked": True,
+        "metadome_intolerant": True,
+        "regional_hotspot": [{"vid": "1"}, {"vid": "2"}],
+        "hgmd_amino_acid_alternates": [
+            {
+                "hgvs_c": "c.722A>G",
+                "amino": "p.Asn241Ser",
+                "tag": "DM",
+                "pmids": ["38757609"],
+                "link": "https://example.test/722",
+            },
+        ],
+        "hgmd_nucleotide_alternates": [
+            {
+                "hgvs_c": "c.722A>G",
+                "amino": "p.Asn241Ser",
+                "tag": "DM",
+                "pmids": ["38757609"],
+            },
+        ],
+    }
+    _collect_hgmd_pm5_alleles(parsed)
+    assert parsed["different_pathogenic"] is True
+    assert len(parsed["hgmd_pm5_alleles"]) == 1
+    assert parsed["different_pathogenic_details"]["source"] == "HGMD"
+    assert parsed["different_pathogenic_details"]["hgvs_p"] == "p.Asn241Ser"
+    scored = apply_acmg(parsed)
+    codes = [row["code"] for row in scored["criteria"]]
+    assert "PM5" in codes
+    assert scored["classification"]["label"] == "Likely Pathogenic"
+
+    short = {
+        "consequence": "missense",
+        "c_dot": "c.722A>T",
+        "hgvs_p": "p.Asn241Ile",
+        "refseq_isoform_maps": maps,
+        "hgmd_amino_acid_alternates": [
+            {"hgvs_c": "c.632A>G", "amino": "p.Asn211Ser", "tag": "DM"},
+        ],
+    }
+    _collect_hgmd_pm5_alleles(short)
+    assert short["hgmd_pm5_alleles"][0]["hgvs_c"] == "c.632A>G"
+
+    rejected = {
+        "consequence": "missense",
+        "c_dot": "c.722A>T",
+        "hgvs_p": "p.Asn241Ile",
+        "refseq_isoform_maps": maps,
+        "hgmd_amino_acid_alternates": [
+            {"hgvs_c": "c.631A>T", "amino": "p.Lys211Ter", "tag": "DM"},
+            {"hgvs_c": "c.632A>T", "amino": "p.Asn211Ile", "tag": "DM"},
+        ],
+    }
+    _collect_hgmd_pm5_alleles(rejected)
+    assert "hgmd_pm5_alleles" not in rejected
+    assert not rejected.get("different_pathogenic")
+
+
+def test_vep_refseq_synonym_keeps_protein_change():
+    from vc_engine.analyze import _collect_refseq_nm_synonyms_from_vep_tc
+
+    pack = _collect_refseq_nm_synonyms_from_vep_tc([
+        {
+            "transcript_id": "ENST00000354822",
+            "hgvsc": "ENST00000354822.8:c.722A>T",
+            "hgvsp": "ENSP00000346879.4:p.Asn241Ile",
+            "mane_select": "NM_001079668.3",
+        },
+        {
+            "transcript_id": "NM_003317.4",
+            "hgvsc": "NM_003317.4:c.632A>T",
+            "hgvsp": "NP_003308.1:p.Asn211Ile",
+            "mane_select": "",
+        },
+    ])
+    by_c = {p["hgvs_c"]: p for p in pack["pairs"]}
+    assert by_c["c.722A>T"]["refseq"] == "NM_001079668.3"
+    assert by_c["c.722A>T"]["hgvs_p"] == "p.Asn241Ile"
+    assert by_c["c.632A>T"]["refseq"] == "NM_003317.4"
+    assert by_c["c.632A>T"]["hgvs_p"] == "p.Asn211Ile"
+
+
+def test_literature_search_includes_refseq_synonym_forms():
+    from vc_engine.literature import (
+        _literature_all_variant_terms,
+        _literature_merge_refseq_synonyms,
+    )
+
+    merged = _literature_merge_refseq_synonyms(
+        [],
+        [
+            {"refseq": "NM_001079668.3", "hgvs_c": "c.722A>T", "hgvs_p": "p.Asn241Ile", "user_input": True},
+            {"refseq": "NM_003317.4", "hgvs_c": "c.632A>T", "hgvs_p": "p.Asn211Ile", "full": "NM_003317.4:c.632A>T"},
+        ],
+        "c.722A>T",
+    )
+    c_dots, p_terms, _, _ = _literature_all_variant_terms("c.722A>T", "p.Asn241Ile", merged)
+    assert "c.632a>t" in c_dots
+    assert any("211" in term for term in p_terms)
+
+
 def test_hgmd_gene_mutation_url():
     url = _hgmd_gene_mutation_url("AMT", "c.878-1G>A")
     assert url.startswith("https://www.hgmd.cf.ac.uk/ac/gene.php?gene=AMT")

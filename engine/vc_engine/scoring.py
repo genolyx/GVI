@@ -479,13 +479,33 @@ def apply_acmg(parsed_data, splice_points=None, nmd_points=None):
                 "type": "pathogenic",
                 "weight": "strong",
             })
-        if parsed_data.get("different_pathogenic") or parsed_data.get("pm5_local_alleles"):
-            criteria.append({
-                "code": "PM5",
-                "desc": (
+        hgmd_pm5 = [
+            row for row in (parsed_data.get("hgmd_pm5_alleles") or [])
+            if isinstance(row, dict)
+        ]
+        clinvar_pm5 = bool(parsed_data.get("pm5_local_alleles")) or bool(
+            (parsed_data.get("different_pathogenic_details") or {}).get("vid")
+        )
+        if parsed_data.get("different_pathogenic") or parsed_data.get("pm5_local_alleles") or hgmd_pm5:
+            if hgmd_pm5 and not clinvar_pm5:
+                shown = []
+                for row in hgmd_pm5[:3]:
+                    c_dot = str(row.get("hgvs_c") or "").strip()
+                    protein = str(row.get("hgvs_p") or "").strip()
+                    shown.append(" / ".join(part for part in (c_dot, protein) if part))
+                pm5_desc = (
+                    "Different missense at this residue is disease-causing in HGMD ("
+                    + "; ".join(bit for bit in shown if bit)
+                    + ")"
+                )
+            else:
+                pm5_desc = (
                     "Novel missense change at an amino acid residue where a different "
                     "missense pathogenic change has been seen before"
-                ),
+                )
+            criteria.append({
+                "code": "PM5",
+                "desc": pm5_desc,
                 "type": "pathogenic",
                 "weight": "moderate",
             })

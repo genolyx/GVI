@@ -247,7 +247,8 @@
       const pmidHtml = pmids.map((id) => (
         '<a href="https://pubmed.ncbi.nlm.nih.gov/' + encodeURIComponent(id) + '/" target="_blank" rel="noopener">PMID ' + esc(id) + '</a>'
       )).join(', ');
-      bits.push(hgvs + ': ' + esc(tag) + ' (HGMD' + (pmidHtml ? ', ' + pmidHtml : '') + ')');
+      const alias = String(row.alias || '').trim();
+      bits.push(hgvs + ': ' + esc(tag) + ' (HGMD' + (pmidHtml ? ', ' + pmidHtml : '') + ')' + (alias ? ' ' + esc(alias) : ''));
     });
     return bits;
   }
@@ -1345,7 +1346,15 @@ if (res.parsed_data.c_allele_search_link || res.parsed_data.p_allele_search_link
         if (res.parsed_data.different_pathogenic_details) {
             let det = res.parsed_data.different_pathogenic_details;
             let p_str = det.hgvs_p || det.hgvs_c || 'Pathogenic Colocalization';
-            pm5Badge = `<span style="background: rgba(251, 191, 36, 0.2); color: #fbbf24; padding: 2px 6px; border-radius: 4px; margin-left: 8px; border: 1px solid rgba(251, 191, 36, 0.5); font-size: 11px; font-weight: bold;">⚠️ PM5: ${p_str} (Pathogenic) <a href="https://www.ncbi.nlm.nih.gov/clinvar/variation/${det.vid}/" target="_blank" style="color:#fbbf24; text-decoration:underline;">[VID: ${det.vid}]</a></span>`;
+            const hgmdPm5 = String(det.source || '') === 'HGMD' || (!det.vid && det.link);
+            const pm5Href = hgmdPm5 ? det.link : `https://www.ncbi.nlm.nih.gov/clinvar/variation/${det.vid}/`;
+            const pm5Cite = hgmdPm5
+                ? `HGMD ${escHtml(det.tag || 'DM')}`
+                : `[VID: ${escHtml(det.vid)}]`;
+            const pm5Link = pm5Href
+                ? ` <a href="${pm5Href}" target="_blank" style="color:#fbbf24; text-decoration:underline;">${pm5Cite}</a>`
+                : ` ${pm5Cite}`;
+            pm5Badge = `<span style="background: rgba(251, 191, 36, 0.2); color: #fbbf24; padding: 2px 6px; border-radius: 4px; margin-left: 8px; border: 1px solid rgba(251, 191, 36, 0.5); font-size: 11px; font-weight: bold;">⚠️ PM5: ${escHtml(p_str)} (Pathogenic)${pm5Link}</span>`;
         } else {
             pm5Badge = `<span style="background: rgba(251, 191, 36, 0.2); color: #fbbf24; padding: 2px 6px; border-radius: 4px; margin-left: 8px; border: 1px solid rgba(251, 191, 36, 0.5); font-size: 11px; text-transform: uppercase; font-weight: bold; letter-spacing: 0.5px;">⚠️ External PM5 Detected <a href="${search_p}" target="_blank" style="color:#fbbf24; text-decoration:underline;">(Search)</a></span>`;
         }
@@ -1512,6 +1521,36 @@ if (res.parsed_data.c_allele_search_link || res.parsed_data.p_allele_search_link
     }
 
 }
+
+function refseqSynonymBlock(pd) {
+  const rows = (pd && pd.refseq_nm_synonyms) || [];
+  const user = String((pd && pd.transcript) || '').split('.')[0].toUpperCase();
+  const others = [];
+  const seen = {};
+  rows.forEach((row) => {
+    if (!row || typeof row !== 'object' || row.user_input) return;
+    const id = String(row.refseq || '').split('.')[0].toUpperCase();
+    if (!id || (user && id === user)) return;
+    const full = String(row.full || ((row.refseq || '') + ':' + (row.hgvs_c || ''))).trim();
+    if (!full || seen[full]) return;
+    seen[full] = true;
+    const protein = String(row.hgvs_p || '').trim();
+    others.push(esc(full) + (protein ? ' (' + esc(protein) + ')' : ''));
+  });
+  if (!others.length) return '';
+  const links = (pd && pd.refseq_browser_links) || {};
+  const linkHtml = ['ucsc', 'ensembl', 'ncbi'].map((key) => {
+    const url = String(links[key] || '').trim();
+    if (!url) return '';
+    const label = key === 'ucsc' ? 'UCSC' : (key === 'ensembl' ? 'Ensembl' : 'NCBI');
+    return '<a href="' + esc(url) + '" target="_blank" rel="noopener" style="color:#7dd3fc; text-decoration:underline;">' + label + '</a>';
+  }).filter(Boolean).join(' · ');
+  return '<div class="eval-allele-wide"><span class="data-pill" style="border-color: #38bdf8; background: rgba(56, 189, 248, 0.1); color: #e0f2fe; display: block; max-width: fit-content;">Also reported as (alternate transcript numbering — search papers with these):<br><span style="font-size:12px; font-weight:normal; line-height:1.55;">' + others.join('<br>') + '</span>'
+    + '<br><span style="font-size:11px; font-weight:normal; opacity:0.85;">Same genomic allele under different numbering, not a different variant.</span>'
+    + (linkHtml ? '<br><span style="font-size:11px; font-weight:normal;">Confirm the base: ' + linkHtml + '</span>' : '')
+    + '</span></div>';
+}
+let refseqSynonymPill = refseqSynonymBlock(res.parsed_data);
 
 let clinvarScanPill = buildLocalClinvarScanPill(res.parsed_data);
 
@@ -1769,6 +1808,7 @@ ${(() => {
 <section class="eval-section">
   <h3 class="eval-section-title">Allele context, automation & literature status</h3>
   <div class="eval-allele-stack">
+${refseqSynonymPill}
 ${clinvarScanPill}
 ${exonicFsPrimaryPill}
 ${altPill}

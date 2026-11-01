@@ -294,6 +294,8 @@ def search_lit_index(
     root: Optional[str] = None,
     max_hits: int = 40,
     max_per_paper: int = 12,
+    extra_c_dots: Optional[list[str]] = None,
+    extra_hgvs_p: Optional[list[str]] = None,
 ) -> dict[str, Any]:
     """Search the local SQLite index for a mutation; flag overlap with HGMD PMIDs."""
     root = root if root is not None else default_lit_index_root()
@@ -328,13 +330,37 @@ def search_lit_index(
         hgmd_set = set(re.findall(r"\d{5,}", hgmd_pmids))
 
     queries = _query_variants(gene, c_dot, hgvs_p)
+    for alt_c in extra_c_dots or []:
+        for q in _query_variants(gene, alt_c, ""):
+            if q not in queries:
+                queries.append(q)
+    for alt_p in extra_hgvs_p or []:
+        for q in _query_variants(gene, "", alt_p):
+            if q not in queries:
+                queries.append(q)
     hits: list[dict[str, Any]] = []
     used_query = ""
+    seen_hit = set()
     for q in queries:
         cand = _search_sqlite(lit_db, db_path, q, gene=gene, limit=max(400, max_hits * 3))
-        if cand:
-            hits = cand
+        if not cand:
+            continue
+        if not used_query:
             used_query = q
+        for rec in cand:
+            key = (
+                str(rec.get("pmid") or ""),
+                str(rec.get("variant") or ""),
+                str(rec.get("also") or ""),
+            )
+            if key in seen_hit:
+                continue
+            seen_hit.add(key)
+            hits.append(rec)
+        # Primary gene+c. / gene+p. still wins alone when no alternate numbering
+        # was supplied. Alternates are unioned so a paper that only cites the
+        # other NM is not dropped after the curated query already matched.
+        if not extra_c_dots and not extra_hgvs_p:
             break
 
     if not hits and hgmd_set:

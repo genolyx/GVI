@@ -23,6 +23,7 @@ from vc_engine.allele_norm import align_query_allele
 from vc_engine.clinvar import _clinvar_cdot_label_from_esummary, _clinvar_coding_hgvs_from_hit, _clinvar_display_sig_from_rcv, _clinvar_geneinfo_matches, _clinvar_genomic_hgvs_from_hit, _clinvar_name_change_class, _clinvar_plp_sig_for_deleted_exon, _clinvar_rcv_any_pathogenic_or_likely, _clinvar_rcv_list_from_hit, _clinvar_sig_from_esummary_obj, _clinvar_variant_id_from_hit, _clinvar_variation_uid_for_pubmed_elink, _fetch_clinvar_aliases, _fetch_clinvar_esummary_map, _fetch_myvariant_clinvar_variant_hit, clinvar_allele_search_term, clinvar_allele_search_url, clinvar_portal_url
 from vc_engine.gnomad_local import apply_local_gnomad, homozygote_count, homozygote_total, local_gnomad_configured
 from vc_engine.hgmd import _hgmd_ordered_candidate_keys, _merge_hgmd_downstream_hits, _merge_hgmd_skipped_exon_hits, _merge_hgmd_upstream_hits, annotate_plp_hits_with_hgmd_pmids, hgmd_alternate_residue_hits
+from vc_engine.isoform_map import also_reported_line, browser_links, build_refseq_isoform_maps
 from vc_engine.lit_index import search_lit_index
 from vc_engine.noncoding import (
     append_noncoding_curation_logic_section,
@@ -152,10 +153,14 @@ def _collect_refseq_nm_synonyms_from_vep_tc(transcript_consequences):
         if full in seen_full:
             continue
         seen_full.add(full)
+        hgvsp = str(t.get("hgvsp") or "").strip()
+        if ":" in hgvsp:
+            hgvsp = hgvsp.split(":", 1)[1].strip()
         pairs.append(
             {
                 "refseq": left,
                 "hgvs_c": right,
+                "hgvs_p": hgvsp,
                 "full": full,
                 "mane_select": mane_sel,
                 "canonical": (t.get("canonical") == 1),
@@ -342,7 +347,7 @@ def _fetch_vep_refseq_synonyms_supplemental(http_session, nm_base, c_dot):
         hq = _vep_hgvs_query(nm_base, c_dot) or f"{nm_base}:{c_dot}"
         url = (
             "https://rest.ensembl.org/vep/human/hgvs/"
-            f"{urllib.parse.quote(hq, safe='')}?hgvs=1&mane=1&canonical=1"
+            f"{urllib.parse.quote(hq, safe='')}?hgvs=1&refseq=1&mane=1&canonical=1"
         )
         resp = http_session.get(url, timeout=45)
         if resp.status_code != 200:
@@ -1975,7 +1980,9 @@ def _format_hgmd_residue_plain(hits):
             if pid.isdigit() and pid not in pmids:
                 pmids.append(pid)
         pmid = f"; PMID {', '.join(pmids)}" if pmids else ""
-        out.append(f"{hgvs} — {tag} (HGMD{pmid})")
+        alias = str(hit.get("alias") or "").strip()
+        alias_bit = f"; {alias}" if alias else ""
+        out.append(f"{hgvs} — {tag} (HGMD{pmid}{alias_bit})")
     return out
 
 
@@ -2014,6 +2021,8 @@ def _allelic_amino_acid_change_lines(parsed_data):
             seen_vids.add(vid)
         lines.extend(_format_allele_entries_plain([a]))
     det = parsed_data.get('different_pathogenic_details') or {}
+    if str(det.get("source") or "") == "HGMD":
+        return lines
     if parsed_data.get('different_pathogenic') and det:
         vid = str(det.get('vid') or '').strip()
         if vid and vid in seen_vids:
@@ -2150,6 +2159,18 @@ def _append_allelic_context_logic_sections(sections, parsed_data):
         lines.append("Same amino acid change: " + "; ".join(aa))
     if nearby:
         lines.append("Nearby residue (±5 aa): " + "; ".join(nearby))
+
+    reported = also_reported_line(parsed_data.get("refseq_isoform_maps") or [])
+    if reported:
+        lines.append(reported)
+    links = parsed_data.get("refseq_browser_links") or {}
+    link_bits = []
+    for name in ("ucsc", "ensembl", "ncbi"):
+        url = str(links.get(name) or "").strip()
+        if url:
+            link_bits.append(f"{name.upper()}: {url}")
+    if link_bits:
+        lines.append("Isoform check (same GRCh38 base): " + " | ".join(link_bits))
 
     alt_tx = parsed_data.get("alternate_transcript_literature") or []
     if alt_tx:
@@ -2597,6 +2618,85 @@ def _collect_hgmd_ps1_alleles(parsed_data):
                 "link": hit.get("link") or "",
                 "source": "HGMD",
             })
+
+
+def _hgmd_missense_on_curated_residue(user_p, amino, maps):
+    """Different missense at the curated residue, including an alternate numbering.
+
+    p.Asn241Ser matches p.Asn241Ile directly. p.Asn211Ser matches when an isoform
+    map shifts 211 onto 241. p.Lys211Ter does not: a stop is not a missense, and
+    Lys is not the curated residue.
+    """
+    user = _parse_missense_substitution_hgvs_p(user_p)
+    hit = _parse_missense_substitution_hgvs_p(amino)
+    if not user or not hit:
+        return False
+    if hit["ref_1"] in ("*", "X") or hit["alt_1"] in ("*", "X"):
+        return False
+    if hit["ref_1"] != user["ref_1"] or hit["alt_1"] == user["alt_1"]:
+        return False
+    if hit["pos"] == user["pos"]:
+        return True
+    for row in maps or []:
+        if not isinstance(row, dict) or row.get("aa_delta") is None:
+            continue
+        try:
+            delta = int(row["aa_delta"])
+        except (TypeError, ValueError):
+            continue
+        if hit["pos"] - delta == user["pos"]:
+            return True
+    return False
+
+
+def _collect_hgmd_pm5_alleles(parsed_data):
+    """HGMD DM missense at this residue with a different substitution is PM5."""
+    user_p = str(parsed_data.get("hgvs_p") or "").strip()
+    if not user_p or "missense" not in str(parsed_data.get("consequence") or ""):
+        return
+    maps = parsed_data.get("refseq_isoform_maps") or []
+    found = []
+    seen = set()
+    for bucket in ("hgmd_amino_acid_alternates", "hgmd_nucleotide_alternates"):
+        for hit in parsed_data.get(bucket) or []:
+            if not isinstance(hit, dict):
+                continue
+            amino = str(hit.get("amino") or "").strip()
+            tag = str(hit.get("tag") or "").strip()
+            hgvs_c = str(hit.get("hgvs_c") or "").strip()
+            if not tag.upper().startswith("DM") or not hgvs_c:
+                continue
+            if _same_queried_cdot(parsed_data.get("c_dot"), hgvs_c):
+                continue
+            if not _hgmd_missense_on_curated_residue(user_p, amino, maps):
+                continue
+            key = hgvs_c.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            found.append({
+                "hgvs_c": hgvs_c,
+                "hgvs_p": amino,
+                "tag": tag,
+                "pmids": list(hit.get("pmids") or []),
+                "link": hit.get("link") or "",
+                "source": "HGMD",
+            })
+    if not found:
+        return
+    parsed_data["hgmd_pm5_alleles"] = found
+    if parsed_data.get("different_pathogenic"):
+        return
+    first = found[0]
+    parsed_data["different_pathogenic"] = True
+    parsed_data["different_pathogenic_details"] = {
+        "hgvs_c": first["hgvs_c"],
+        "hgvs_p": first["hgvs_p"],
+        "tag": first["tag"],
+        "pmids": first["pmids"],
+        "link": first["link"],
+        "source": "HGMD",
+    }
 
 
 def _transcript_base_id(transcript):
@@ -4799,7 +4899,7 @@ def analyze_variant():
             try:
                 # Target specific transcript to bypass minus-strand reference phase errors in Ensembl
                 hgvs_target = _vep_hgvs_query(target_transcript, c_dot, effective_gene) or f"{effective_gene}:{c_dot}"
-                vep_url = f"https://rest.ensembl.org/vep/human/hgvs/{urllib.parse.quote(hgvs_target, safe='')}?NMD=1&Protein=1&hgvs=1&mane=1&canonical=1&numbers=1&vcf_string=1"
+                vep_url = f"https://rest.ensembl.org/vep/human/hgvs/{urllib.parse.quote(hgvs_target, safe='')}?NMD=1&Protein=1&hgvs=1&refseq=1&mane=1&canonical=1&numbers=1&vcf_string=1"
                 vep_response = http_session.get(vep_url, timeout=120)
                 
                 if vep_response.status_code == 400:
@@ -4810,7 +4910,7 @@ def analyze_variant():
                     except: pass
                     
                 if vep_response.status_code != 200 and target_transcript:
-                    vep_url = f"https://rest.ensembl.org/vep/human/hgvs/{urllib.parse.quote(f'{effective_gene}:{c_dot}', safe='')}?NMD=1&Protein=1&hgvs=1&mane=1&canonical=1&numbers=1&vcf_string=1"
+                    vep_url = f"https://rest.ensembl.org/vep/human/hgvs/{urllib.parse.quote(f'{effective_gene}:{c_dot}', safe='')}?NMD=1&Protein=1&hgvs=1&refseq=1&mane=1&canonical=1&numbers=1&vcf_string=1"
                     vep_response = http_session.get(vep_url, timeout=120)
                     
                     if vep_response.status_code == 400:
@@ -4900,14 +5000,22 @@ def analyze_variant():
                                 best_t_dict = t
                                 best_score_math = transcript_score
                             elif transcript_score == best_score_math and transcript_score > 0:
-                                # Tiebreaker: Ensure we pick the functionally longest physical protein string to aggressively protect against Ensembl API omitting MANE tags dynamically on pseudogenes
-                                try:
-                                    cl = int(t.get('amino_acid_length') or 0)
-                                    bl = int(best_t_dict.get('amino_acid_length') or 0) if best_t_dict else 0
-                                    if cl > bl:
-                                        best_transcript_id = t_id
-                                        best_t_dict = t
-                                except: pass
+                                # refseq=1 adds NM_ rows beside the ENST that already
+                                # matched this accession. Keep the ENST so sequence
+                                # lookups stay on Ensembl ids; length breaks remaining ties.
+                                cur_enst = str(best_transcript_id or "").upper().startswith("ENST")
+                                new_enst = str(t_id or "").upper().startswith("ENST")
+                                if new_enst and not cur_enst:
+                                    best_transcript_id = t_id
+                                    best_t_dict = t
+                                elif new_enst == cur_enst:
+                                    try:
+                                        cl = int(t.get('amino_acid_length') or 0)
+                                        bl = int(best_t_dict.get('amino_acid_length') or 0) if best_t_dict else 0
+                                        if cl > bl:
+                                            best_transcript_id = t_id
+                                            best_t_dict = t
+                                    except: pass
 
                             # Try to extract the HGVS p. notation for any transcript
                             if t.get('hgvsp'):
@@ -7622,6 +7730,17 @@ def analyze_variant():
                 _merge_into_parsed_refseq_synonyms(parsed_data, _sup_syn)
             _ensure_user_nm_on_refseq_synonyms(parsed_data, target_transcript, c_dot)
 
+        parsed_data["refseq_isoform_maps"] = build_refseq_isoform_maps(
+            parsed_data.get("refseq_nm_synonyms") or [],
+            target_transcript or parsed_data.get("transcript") or "",
+            c_dot,
+            parsed_data.get("hgvs_p") or "",
+        )
+        parsed_data["refseq_browser_links"] = browser_links(
+            parsed_data.get("grch38_chrom") or "",
+            parsed_data.get("grch38_start"),
+        )
+
         # Local HGMD Map Resolution
         # Candidate keys include ClinVar/VEP RefSeq isoform synonyms (e.g. DTNA
         # NM_001386795 c.1651_1671del ↔ NM_001390 c.1570_1590del) and normalize
@@ -7652,12 +7771,15 @@ def analyze_variant():
                 c_dot,
                 parsed_data.get("hgvs_p") or "",
                 equivalent=hgmd_candidate_keys,
+                isoform_maps=parsed_data.get("refseq_isoform_maps") or [],
+                curated_refseq=target_transcript or parsed_data.get("transcript") or "",
             )
             parsed_data["hgmd_nucleotide_alternates"] = hgmd_alts["nucleotide"]
             parsed_data["hgmd_amino_acid_alternates"] = hgmd_alts["amino_acid"]
             parsed_data["hgmd_c_allele_search_link"] = hgmd_alts["nucleotide_search"]
             parsed_data["hgmd_p_allele_search_link"] = hgmd_alts["amino_acid_search"]
             _collect_hgmd_ps1_alleles(parsed_data)
+            _collect_hgmd_pm5_alleles(parsed_data)
         except Exception as hgmd_alt_err:
             print(f"HGMD alternate-residue lookup error: {hgmd_alt_err}")
 
@@ -7684,11 +7806,22 @@ def analyze_variant():
 
         # Local Literature Index (supplement cohorts) — mutation search + HGMD PMID overlap
         try:
+            _extra_c = []
+            _extra_p = []
+            for _syn in parsed_data.get("refseq_isoform_maps") or []:
+                _sc = str(_syn.get("hgvs_c") or "").strip()
+                _sp = str(_syn.get("hgvs_p") or "").strip()
+                if _sc:
+                    _extra_c.append(_sc)
+                if _sp:
+                    _extra_p.append(_sp)
             parsed_data["literature_index"] = search_lit_index(
                 effective_gene,
                 c_dot,
                 hgvs_p=(parsed_data.get("hgvs_p") or "").strip(),
                 hgmd_pmids=parsed_data.get("hgmd_excel_pmids") or [],
+                extra_c_dots=_extra_c,
+                extra_hgvs_p=_extra_p,
             )
         except Exception as lit_idx_err:
             print(f"[lit_index] search failed: {lit_idx_err}", flush=True)

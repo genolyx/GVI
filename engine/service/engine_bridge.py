@@ -181,6 +181,7 @@ def enrich_with_literature(
             str(p) for p in (parsed.get("hgmd_excel_pmids") or []) if str(p).strip()
         ),
         "alternate_transcript_literature": parsed.get("alternate_transcript_literature") or [],
+        "refseq_nm_synonyms": parsed.get("refseq_nm_synonyms") or [],
     }
 
     literature: dict[str, Any] = {"status": "skipped"}

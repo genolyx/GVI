@@ -103,6 +103,35 @@ def _run_gemini(client, contents: str):
         )
 
 
+def _literature_merge_refseq_synonyms(isoform_lit, synonyms, primary_c=""):
+    """VEP/ClinVar NM synonyms are the same allele under other numbering."""
+    merged = list(isoform_lit or [])
+    primary = re.sub(r"\s+", "", str(primary_c or "").lower())
+    seen = set()
+    for entry in merged:
+        if isinstance(entry, dict):
+            seen.add(re.sub(r"\s+", "", str(entry.get("hgvs_full") or entry.get("hgvs_c") or "").lower()))
+    for pair in synonyms or []:
+        if not isinstance(pair, dict) or pair.get("user_input"):
+            continue
+        c_dot = str(pair.get("hgvs_c") or "").strip()
+        if primary and re.sub(r"\s+", "", c_dot.lower()) == primary:
+            continue
+        full = str(pair.get("full") or "").strip()
+        key = re.sub(r"\s+", "", (full or c_dot).lower())
+        if not c_dot or key in seen:
+            continue
+        seen.add(key)
+        merged.append({
+            "transcript": str(pair.get("refseq") or "").strip(),
+            "hgvs_c": c_dot,
+            "hgvs_p": str(pair.get("hgvs_p") or "").strip(),
+            "hgvs_full": full or c_dot,
+            "hgvs_kind": "coding",
+        })
+    return merged
+
+
 def _literature_isoform_searchable_entries(isoform_lit):
     """Non-genomic ClinVar alternate names on the curated VID — for PubMed / EuropePMC."""
     out = []
@@ -592,7 +621,11 @@ def download_literature():
         hgmd_pmids_list = re.findall(r'\d{5,}', _hgmd_raw)
 
     hgvs_p = data.get('hgvs_p', '').strip()
-    isoform_lit = data.get('alternate_transcript_literature') or []
+    isoform_lit = _literature_merge_refseq_synonyms(
+        data.get('alternate_transcript_literature') or [],
+        data.get('refseq_nm_synonyms') or [],
+        c_dot,
+    )
     _, p_terms, _, isoform_entries = _literature_all_variant_terms(c_dot, hgvs_p, isoform_lit)
 
     forced_list = []
@@ -1170,7 +1203,11 @@ def summarize_literature():
     gene = data.get('gene', '').strip()
     c_dot = data.get('c_dot', '').strip()
     force_pmids = data.get('force_pmids', '').strip()
-    isoform_lit = data.get('alternate_transcript_literature') or []
+    isoform_lit = _literature_merge_refseq_synonyms(
+        data.get('alternate_transcript_literature') or [],
+        data.get('refseq_nm_synonyms') or [],
+        c_dot,
+    )
     hgvs_p = (data.get('hgvs_p') or '').strip()
     lit_ctx = _literature_summarize_variant_context(gene, c_dot, hgvs_p, isoform_lit)
     
@@ -1327,7 +1364,11 @@ def summarize_functional():
     gene = data.get('gene', '').strip()
     c_dot = data.get('c_dot', '').strip()
     force_pmids = data.get('force_pmids', '').strip()
-    isoform_lit = data.get('alternate_transcript_literature') or []
+    isoform_lit = _literature_merge_refseq_synonyms(
+        data.get('alternate_transcript_literature') or [],
+        data.get('refseq_nm_synonyms') or [],
+        c_dot,
+    )
     hgvs_p = (data.get('hgvs_p') or '').strip()
     lit_ctx = _literature_summarize_variant_context(gene, c_dot, hgvs_p, isoform_lit)
     
