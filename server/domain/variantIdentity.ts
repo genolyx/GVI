@@ -18,11 +18,25 @@ function expandHome(value: string): string {
   return value;
 }
 
-export function clinvarVcfPath(): string {
+export type ClinvarAssembly = "GRCh37" | "GRCh38";
+
+/** GRCh38 file, or the GRCh37 file stored beside it as clinvar.GRCh37.vcf.gz. */
+export function clinvarAssemblyVcfPath(grch38Path: string, referenceBuild: ClinvarAssembly): string {
+  if (referenceBuild !== "GRCh37") return grch38Path;
+  return path.join(path.dirname(grch38Path), "clinvar.GRCh37.vcf.gz");
+}
+
+export function clinvarVcfPath(referenceBuild: ClinvarAssembly = "GRCh38"): string {
   const override = (process.env.VC_CLINVAR_PATH || "").trim();
-  if (override) return expandHome(override);
-  const root = expandHome((process.env.VC_DATA_ROOT || "").trim() || path.join(os.homedir(), "gvi-data"));
-  return path.join(root, "reference", "clinvar", "clinvar.vcf.gz");
+  const grch38 = override
+    ? expandHome(override)
+    : path.join(
+        expandHome((process.env.VC_DATA_ROOT || "").trim() || path.join(os.homedir(), "gvi-data")),
+        "reference",
+        "clinvar",
+        "clinvar.vcf.gz"
+      );
+  return clinvarAssemblyVcfPath(grch38, referenceBuild);
 }
 
 export function clinvarContig(chrom: string): string | null {

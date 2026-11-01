@@ -75,9 +75,11 @@ export async function selectVcfRecords(
     applyClinvarAlleles(parsed, clinvarBySite);
   } else {
     const wanted = new Set(parsed.map(variant => gnomadSiteKey(variant)));
-    const matched = await clinvarSignificanceForSites(wanted);
+    const matched = await clinvarSignificanceForSites(wanted, referenceBuild);
     if (matched) applyClinvarAlleles(parsed, matched);
-    else clinvarNote = "ClinVar classifications were left as VEP wrote them. The local ClinVar VCF is not installed.";
+    else {
+      clinvarNote = `ClinVar classifications were left as VEP wrote them. The local ${referenceBuild} ClinVar VCF is not installed.`;
+    }
   }
   let genes: VcfFilters["genes"] = null;
   let matches: { id: string; label: string; geneCount: number }[] = [];
@@ -127,7 +129,7 @@ export async function selectVcfRecords(
   } else if (track !== "none") {
     try {
       await access(submissionSummaryPath());
-      majorLabSites = await loadMajorLabBenignSites();
+      majorLabSites = await loadMajorLabBenignSites(referenceBuild);
     } catch {
       majorLabNote =
         "Major-laboratory ClinVar submissions were not applied. submission_summary.txt.gz is not next to the ClinVar VCF.";

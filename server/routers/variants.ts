@@ -459,7 +459,8 @@ export const variantsRouter = router({
               record.variant.chromosome,
               record.variant.position,
               record.variant.referenceAllele,
-              record.variant.alternateAllele
+              record.variant.alternateAllele,
+              record.variant.referenceBuild
             )
           ).id
         : null;

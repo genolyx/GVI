@@ -130,13 +130,13 @@ export async function alignClinvarClaim<T extends CurationDocument>(document: T)
   const alt = String(parsed.alt || "");
   if (!chrom || !Number.isInteger(position) || !ref || !alt) return document;
   const aligned = await alignStoredIndel(chrom, position, ref, alt);
-  let matched: ClinvarRecordLookup = await clinvarRecordAt(chrom, aligned.position, aligned.ref, aligned.alt);
+  let matched: ClinvarRecordLookup = await clinvarRecordAt(chrom, aligned.position, aligned.ref, aligned.alt, "GRCh38");
   if (!matched.available) return document;
   const strand = Number(parsed.strand ?? document.variant.strand ?? 0);
   if (!matched.id && strand < 0) {
     const flipped = complementAllele(aligned.ref, aligned.alt);
     if (flipped) {
-      const coding = await clinvarRecordAt(chrom, aligned.position, flipped.ref, flipped.alt);
+      const coding = await clinvarRecordAt(chrom, aligned.position, flipped.ref, flipped.alt, "GRCh38");
       if (!coding.available) return document;
       if (coding.id) matched = coding;
     }

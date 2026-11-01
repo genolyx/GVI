@@ -5,7 +5,7 @@ import { createInterface } from "node:readline";
 import { promisify } from "node:util";
 import { createGunzip } from "node:zlib";
 import { gnomadSiteKey } from "./gnomadLocal";
-import { clinvarContig, clinvarVcfPath } from "./variantIdentity";
+import { clinvarContig, clinvarVcfPath, type ClinvarAssembly } from "./variantIdentity";
 
 const execFileAsync = promisify(execFile);
 
@@ -116,11 +116,12 @@ export async function clinvarRecordAt(
   chromosome: string,
   position: number,
   ref: string,
-  alt: string
+  alt: string,
+  referenceBuild: ClinvarAssembly = "GRCh38"
 ): Promise<ClinvarRecordLookup> {
   const contig = clinvarContig(chromosome);
   if (!contig || !Number.isInteger(position)) return { available: false, id: null, significance: null };
-  const file = clinvarVcfPath();
+  const file = clinvarVcfPath(referenceBuild);
   try {
     await access(file);
   } catch {
@@ -144,15 +145,19 @@ export async function clinvarVariationIdAt(
   chromosome: string,
   position: number,
   ref: string,
-  alt: string
+  alt: string,
+  referenceBuild: ClinvarAssembly = "GRCh38"
 ): Promise<ClinvarVariationLookup> {
-  const record = await clinvarRecordAt(chromosome, position, ref, alt);
+  const record = await clinvarRecordAt(chromosome, position, ref, alt, referenceBuild);
   return { available: record.available, id: record.id };
 }
 
-/** Null when the local ClinVar VCF is not installed. */
-export async function clinvarSignificanceForSites(wanted: ReadonlySet<string>): Promise<Map<string, string> | null> {
-  const file = clinvarVcfPath();
+/** Null when the ClinVar VCF for this assembly is not installed. */
+export async function clinvarSignificanceForSites(
+  wanted: ReadonlySet<string>,
+  referenceBuild: ClinvarAssembly = "GRCh38"
+): Promise<Map<string, string> | null> {
+  const file = clinvarVcfPath(referenceBuild);
   try {
     await access(file);
   } catch {

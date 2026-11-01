@@ -3,7 +3,7 @@ import { stat } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import path from "node:path";
 import { createGunzip } from "node:zlib";
-import { clinvarVcfPath } from "./variantIdentity";
+import { clinvarVcfPath, type ClinvarAssembly } from "./variantIdentity";
 import { gnomadSiteKey } from "./gnomadLocal";
 
 const BENIGN_SUBMISSION = new Set(["benign", "likely benign"]);
@@ -107,14 +107,20 @@ export async function loadMajorLabBenignSitesFrom(summaryFile: string, clinvarFi
   return sites;
 }
 
-let cachedKey = "";
-let cachedSites: ReadonlySet<string> | null = null;
-let pending: Promise<ReadonlySet<string>> | null = null;
+type LabSiteCache = {
+  key: string;
+  sites: ReadonlySet<string>;
+  pending: Promise<ReadonlySet<string>> | null;
+};
+
+const labSitesByFile = new Map<string, LabSiteCache>();
 
 /** Sites a major laboratory called Benign or Likely benign. Empty when a source file is missing. */
-export async function loadMajorLabBenignSites(): Promise<ReadonlySet<string>> {
+export async function loadMajorLabBenignSites(
+  referenceBuild: ClinvarAssembly = "GRCh38"
+): Promise<ReadonlySet<string>> {
   const summaryFile = submissionSummaryPath();
-  const clinvarFile = clinvarVcfPath();
+  const clinvarFile = clinvarVcfPath(referenceBuild);
   let key = "";
   try {
     const [summaryStat, clinvarStat] = await Promise.all([stat(summaryFile), stat(clinvarFile)]);
@@ -122,19 +128,21 @@ export async function loadMajorLabBenignSites(): Promise<ReadonlySet<string>> {
   } catch {
     return new Set();
   }
-  if (cachedSites && cachedKey === key) return cachedSites;
-  if (!pending) {
-    pending = loadMajorLabBenignSitesFrom(summaryFile, clinvarFile)
-      .then(sites => {
-        cachedKey = key;
-        cachedSites = sites;
-        pending = null;
-        return sites;
-      })
-      .catch(error => {
-        pending = null;
-        throw error;
-      });
-  }
-  return pending;
+  const cached = labSitesByFile.get(clinvarFile);
+  if (cached?.sites && cached.key === key) return cached.sites;
+  if (cached?.pending) return cached.pending;
+  const slot: LabSiteCache = cached ?? { key: "", sites: new Set(), pending: null };
+  slot.pending = loadMajorLabBenignSitesFrom(summaryFile, clinvarFile)
+    .then(sites => {
+      slot.key = key;
+      slot.sites = sites;
+      slot.pending = null;
+      return sites;
+    })
+    .catch(error => {
+      slot.pending = null;
+      throw error;
+    });
+  labSitesByFile.set(clinvarFile, slot);
+  return slot.pending;
 }

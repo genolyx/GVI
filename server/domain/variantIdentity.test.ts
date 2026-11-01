@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { matchClinvarRecords, normalizeRsid, rsidFromEnsembl, rsidFromMyvariant } from "./variantIdentity";
+import { clinvarAssemblyVcfPath, matchClinvarRecords, normalizeRsid, rsidFromEnsembl, rsidFromMyvariant } from "./variantIdentity";
 
 describe("variant identity parsers", () => {
   it("reads the dbSNP RS field and genomic HGVS from a ClinVar query line", () => {
@@ -21,6 +21,12 @@ describe("variant identity parsers", () => {
     expect(normalizeRsid("28934578")).toBe("rs28934578");
     expect(normalizeRsid("rs28934578")).toBe("rs28934578");
     expect(normalizeRsid(".")).toBeNull();
+  });
+
+  it("keeps the GRCh38 ClinVar file and selects the GRCh37 file beside it", () => {
+    const grch38 = "/data/reference/clinvar/clinvar.vcf.gz";
+    expect(clinvarAssemblyVcfPath(grch38, "GRCh38")).toBe(grch38);
+    expect(clinvarAssemblyVcfPath(grch38, "GRCh37")).toBe("/data/reference/clinvar/clinvar.GRCh37.vcf.gz");
   });
 
   it("reads MyVariant and Ensembl rs ids", () => {
