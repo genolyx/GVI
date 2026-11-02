@@ -80,6 +80,35 @@ def classify_source(url: str) -> str:
     return "other"
 
 
+def redact_url(url: str) -> str:
+    """Drop credential query params before a URL is written to a log."""
+    parts = urlsplit(url)
+    query = [
+        (key, value)
+        for key, value in parse_qsl(parts.query, keep_blank_values=True)
+        if key.lower() not in {"api_key", "key", "token"}
+    ]
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
+
+
+def url_with_params(url: str, params: Optional[dict] = None) -> str:
+    """Fold a ``requests``-style ``params`` dict into the URL.
+
+    Cache lookups key on the URL string. Leaving ``params`` off the string
+    made every NCBI efetch share one entry, so one transcript's GFF was
+    reused as the next transcript's exon map.
+    """
+    if not params:
+        return url
+    parts = urlsplit(url)
+    query = dict(parse_qsl(parts.query, keep_blank_values=True))
+    for key, value in params.items():
+        if value is None:
+            continue
+        query[str(key)] = str(value)
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
+
+
 def with_ncbi_api_key(url: str, api_key: Optional[str] = None) -> str:
     """Attach ``api_key`` to an NCBI eutils URL when one is configured.
 

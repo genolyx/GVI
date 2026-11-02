@@ -1059,6 +1059,138 @@ def test_promote_exonic_coding_indel_frameshift_primary():
     assert pd2["consequence"] == "splice_acceptor_variant"
 
 
+def test_cfi_exonic_indel_frameshift_owns_trunc_and_nmd():
+    """CFI c.80_81del p.Asp27AlafsTer18: coding FS PTC is product 1; splice stays product 2."""
+    from vc_engine.analyze import (
+        _promote_exonic_coding_indel_frameshift_primary,
+        _restore_coding_indel_frameshift_readout,
+        _stash_coding_indel_frameshift_nmd,
+    )
+    from vc_engine.splice import (
+        _append_truncation_nmd_sections,
+        _apply_exon_skip_truncation_as_primary,
+    )
+    from vc_engine.truncation import parse_frameshift_hgvs, sync_truncation_fraction_from_ptc
+
+    spec = parse_frameshift_hgvs("p.Asp27AlafsTer18")
+    assert spec["onset"] == 27 and spec["n"] == 18 and spec["stop"] == 44
+
+    plain = {
+        "c_dot": "c.80_81del",
+        "hgvs_p": "p.Asp27AlafsTer18",
+        "consequence": "frameshift",
+    }
+    _promote_exonic_coding_indel_frameshift_primary(plain)
+    assert plain["exonic_indel_frameshift_primary"] is True
+    assert plain["consequence"] == "frameshift"
+    assert "splice_site_overlap_secondary" not in plain
+
+    pd = {
+        "c_dot": "c.80_81del",
+        "hgvs_p": "p.Asp27AlafsTer18",
+        "consequence": "frameshift",
+        "protein_length": 583,
+        "spliceai_ds_al": 0.42,
+        "splice_frame_math": "<b>Product 1 (loss / exon skip)</b> whole-exon skip",
+        "spliceai_exon_skip_spliceai_primary": True,
+        "splice_is_in_frame": False,
+        "exon_skip_model_truncation_fraction": 0.33,
+        "exon_skip_model_protein_start": 12,
+        "exon_skip_model_downstream_aas": 40,
+        "exon_skip_oof_ptc_aa": 200,
+        "protein_start": 12,
+        "novel_stop_aa": 200,
+        "downstream_aas": 40,
+        "nmd_escape_truncation_fraction": 0.33,
+        "nmd_decision_basis": (
+            "PTC in coding exon 2 of 13, 90 nt upstream of the final exon-exon "
+            "junction — predicted to trigger NMD."
+        ),
+        "nmd_escape": False,
+    }
+    _promote_exonic_coding_indel_frameshift_primary(pd)
+    assert pd["exonic_indel_frameshift_primary"] is True
+    assert pd["splice_site_overlap_secondary"] is True
+    _stash_coding_indel_frameshift_nmd(pd)
+
+    _apply_exon_skip_truncation_as_primary(pd)
+    assert pd["protein_start"] == 27
+    assert pd["novel_stop_aa"] == 44
+    assert pd["downstream_aas"] == 17
+    assert "Product 2 (alternate splice)" in pd["splice_frame_math"]
+    assert "Product 1" not in pd["splice_frame_math"]
+
+    pd["nmd_decision_basis"] = "PTC after in-frame exon skip — predicted to trigger NMD."
+    pd["protein_start"] = 12
+    pd["novel_stop_aa"] = 200
+    pd["nmd_escape_truncation_fraction"] = 0.33
+    pd["met_reinitiation"] = True
+    pd["next_methionine_position"] = 60
+    pd["next_met_sop_line"] = (
+        "If a transcript escapes NMD, translation may re-initiate at the "
+        "next in-frame Methionine (aa 60): N-terminal loss 10.3% of the "
+        "583-amino-acid protein."
+    )
+    _restore_coding_indel_frameshift_readout(pd)
+    assert pd["novel_stop_aa"] == 44
+    assert "coding exon 2" in pd["nmd_decision_basis"]
+    assert "exon skip" not in pd["nmd_decision_basis"].lower()
+    assert "next in-frame Methionine" in pd["nmd_math"]
+
+    frac = sync_truncation_fraction_from_ptc(pd)
+    assert abs(frac - (1.0 - 44 / 583)) < 1e-9
+    assert pd["protein_start"] == 27
+
+    pd["nmd_math"] = pd["next_met_sop_line"]
+    sections = []
+    _append_truncation_nmd_sections(
+        sections, pd, "CFI", "frameshift", True, True, False, frac,
+    )
+    blob = sections[0][1]
+    assert "coding exon 2" in blob
+    assert "Frameshift PTC: p.Asp27AlafsTer18 — onset aa 27 + fsTer18 → stop 44 / 583" in blob
+    assert "next in-frame Methionine" in blob
+
+    intronic = {"c_dot": "c.45-2A>C", "consequence": "splice_acceptor_variant", "hgvs_p": ""}
+    _promote_exonic_coding_indel_frameshift_primary(intronic)
+    assert "exonic_indel_frameshift_primary" not in intronic
+
+
+def test_bare_frameshift_hgvs_completed_from_cds_and_nmd_names_ptc():
+    """p.Lys3fs has no Ter count. The mutated CDS supplies p.Lys3ThrfsTer7 and the NMD line names it."""
+    from vc_engine.splice import complete_coding_frameshift_hgvs
+    from vc_engine.truncation import apply_nmd_escape_from_coding_exons, parse_frameshift_hgvs
+
+    codons = ["ATG", "GCT", "AAA", "CCC", "TTT", "GGA", "TTA", "CGA", "AGT", "GAC", "CTG", "TAA"]
+    pd = {
+        "consequence": "frameshift",
+        "c_dot": "c.7_8del",
+        "hgvs_p": "p.Lys3fs",
+        "cds_seq": "".join(codons),
+        "protein_length": 11,
+        "exonic_indel_frameshift_primary": True,
+    }
+    assert complete_coding_frameshift_hgvs(pd) is True
+    spec = parse_frameshift_hgvs(pd["hgvs_p"])
+    assert pd["hgvs_p"] == "p.Lys3ThrfsTer7"
+    assert spec["onset"] == 3 and spec["n"] == 7 and spec["stop"] == 9
+    assert pd["novel_stop_aa"] == 9
+    assert pd["protein_start"] == 3
+
+    pd["coding_exons"] = [
+        {"start_cds": 1, "end_cds": 40, "anatomical_rank": 2},
+        {"start_cds": 41, "end_cds": 80, "anatomical_rank": 3},
+        {"start_cds": 81, "end_cds": 120, "anatomical_rank": 4},
+    ]
+    # Stop codon 9 occupies c.25–27. Use the 3′ base of that codon as the PTC index.
+    assert apply_nmd_escape_from_coding_exons(pd, 27) is True
+    basis = pd["nmd_decision_basis"]
+    assert "p.Lys3ThrfsTer7" in basis
+    assert "stop aa 9" in basis
+    assert "13 nt upstream of the next exon-exon junction" in basis
+    assert "predicted to trigger NMD" in basis
+
+
 # --- hgmd ---
 
 def test_hgmd_cell_pubmed_ids():
@@ -2345,6 +2477,62 @@ def test_exonic_dup_not_deep_intronic_or_pre_atg():
     assert sp._met_reinitiation_applies(
         pd_first, current_cons='start_lost', current_rank=2, is_first_exon=False,
     )
+
+
+def test_cfi_exon2_frameshift_logic_includes_next_met_sop():
+    """CFI c.80_81del is mRNA exon 2 and aa 27/583. NMD stays primary; next-Met is added."""
+    from vc_engine.splice import (
+        _append_truncation_nmd_sections,
+        append_early_frameshift_next_met_sop,
+    )
+
+    cds = "ATG" + ("GCT" * 8) + "ATG" + ("GCT" * 30)
+    pd = {
+        "consequence": "frameshift",
+        "c_dot": "c.80_81del",
+        "hgvs_p": "p.Asp27AlafsTer18",
+        "protein_start": 27,
+        "novel_stop_aa": 44,
+        "downstream_aas": 17,
+        "protein_length": 583,
+        "variant_exon": 2,
+        "exonic_indel_frameshift_primary": True,
+        "cds_seq": cds,
+        "nmd_escape": False,
+        "nmd_escape_truncation_fraction": 1.0 - (44 / 583),
+        "nmd_decision_basis": (
+            "PTC in coding exon 2 of 13, 197 nt upstream of the next exon-exon "
+            "junction — predicted to trigger NMD. Novel PTC p.Asp27AlafsTer18 / stop aa 44."
+        ),
+        "coding_exons": [
+            {"anatomical_rank": 1, "start_cds": 1, "end_cds": 57},
+            {"anatomical_rank": 2, "start_cds": 58, "end_cds": 328},
+        ],
+    }
+    assert append_early_frameshift_next_met_sop(pd) is True
+    assert pd.get("met_reinitiation") is not True
+    assert pd["next_methionine_position"] == 10
+    assert abs(pd["nmd_escape_truncation_fraction"] - (1.0 - 44 / 583)) < 1e-9
+    sections = []
+    _append_truncation_nmd_sections(
+        sections, pd, "CFI", "frameshift", True, False, False,
+        pd["nmd_escape_truncation_fraction"],
+    )
+    blob = sections[0][1]
+    assert "197 nt upstream" in blob
+    assert "p.Asp27AlafsTer18" in blob
+    assert "next in-frame Methionine (aa 10)" in blob
+
+    flg = {
+        "consequence": "frameshift",
+        "c_dot": "c.477dup",
+        "variant_exon": 3,
+        "protein_start": 159,
+        "protein_length": 4061,
+        "cds_seq": cds,
+    }
+    assert append_early_frameshift_next_met_sop(flg) is False
+    assert "next_met_sop_line" not in flg
 
 
 def test_met_reinitiation_early_ptc_on_midgene_and_single_exon_off():

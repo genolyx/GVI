@@ -90,21 +90,38 @@ class EnsemblCurlSession:
 
     def get(self, url, headers=None, timeout=30, **kwargs):
         try:
-            from engine.service.http_cache import acquire, cache_get, cache_set, with_ncbi_api_key
+            from engine.service.http_cache import (
+                acquire,
+                cache_get,
+                cache_set,
+                redact_url,
+                url_with_params,
+                with_ncbi_api_key,
+            )
         except ImportError:
-            from service.http_cache import acquire, cache_get, cache_set, with_ncbi_api_key
+            from service.http_cache import (
+                acquire,
+                cache_get,
+                cache_set,
+                redact_url,
+                url_with_params,
+                with_ncbi_api_key,
+            )
 
+        params = kwargs.pop("params", None)
+        if params:
+            url = url_with_params(url, params)
         url = with_ncbi_api_key(url)
         cached = cache_get(url)
         if cached is not None:
-            print(f"DEBUG intercepted (Cached): {url}", flush=True)
+            print(f"DEBUG intercepted (Cached): {redact_url(url)}", flush=True)
             return cached
         # Process-local fallback for callers that still poke ``self.cache`` in tests.
         if url in self.cache:
-            print(f"DEBUG intercepted (Cached): {url}", flush=True)
+            print(f"DEBUG intercepted (Cached): {redact_url(url)}", flush=True)
             return self.cache[url]
 
-        print(f"DEBUG intercepted: {url}", flush=True)
+        print(f"DEBUG intercepted: {redact_url(url)}", flush=True)
         acquire(url)
         if "rest.ensembl.org" in url:
             import time
@@ -154,7 +171,7 @@ class EnsemblCurlSession:
                 self.cache[url] = resp_obj
             return resp_obj
 
-        print(f"DEBUG FALLEN BACK TO REQUESTS FOR: {url}")
+        print(f"DEBUG FALLEN BACK TO REQUESTS FOR: {redact_url(url)}")
         req_resp = self._session.get(url, headers=headers, timeout=timeout, **kwargs)
         # Do not cache MyVariant query responses — allele lists must stay fresh in long-running servers.
         if getattr(req_resp, "status_code", 500) == 200:

@@ -534,6 +534,31 @@
     );
   }
 
+  // Coding indel frameshift PTC (p.Asp27AlafsTer18 → onset 27, stop 44).
+  // Percent and stop come from HGVS, never from a splice junction or exon-skip PTC.
+  function resolveCodingFsTer(pd) {
+    if (!pd || !pd.exonic_indel_frameshift_primary) return null;
+    const m = String(pd.hgvs_p || '').match(
+      /p\.([A-Z][a-z]{2}|[A-Z*])(\d+)(?:[A-Z][a-z]{2}|[A-Z])?fs(?:Ter|\*)(\d+)/i
+    );
+    if (!m) return null;
+    const onset = parseInt(m[2], 10);
+    const n = parseInt(m[3], 10);
+    if (!onset || !n) return null;
+    const stop = onset + n - 1;
+    const plen = Number(pd.protein_length);
+    let frac = null;
+    if (Number.isFinite(plen) && plen > 0 && stop > 0) {
+      if (stop > plen) {
+        const product = stop - 1;
+        frac = product > plen ? -((product - plen) / plen) : 0;
+      } else {
+        frac = 1 - (stop / plen);
+      }
+    }
+    return { aa: m[1], onset: onset, n: n, stop: stop, frac: frac, plen: plen };
+  }
+
   function clingenHaploScorePresent(score) {
     const s = score == null ? '' : String(score).trim();
     return s !== '' && s.toUpperCase() !== 'N/A';
@@ -859,7 +884,7 @@ let nmdPill = '';
 const csq = res.parsed_data.original_consequence || res.parsed_data.consequence || '';
 if (res.parsed_data.cryptic_natural_stop_preserved) {
     nmdPill = `<span class="data-pill" title="No premature termination codon — the cryptic splice is in-frame and the native stop codon is preserved (just shifted by N/3 codons). NMD requires a PTC, so it is not applicable here." style="border-color: rgba(125, 211, 252, 0.5); color: #bae6fd; background: rgba(56, 189, 248, 0.08);">NMD: <strong style="color:#bae6fd;">N/A (no PTC)</strong></span>`;
-} else if (csq.includes('nonsense') || csq.includes('frameshift') || res.parsed_data.is_splice_frameshift || res.parsed_data.splice_is_in_frame === false || csq === 'start_lost') {
+} else if (csq.includes('nonsense') || csq.includes('frameshift') || csq.includes('stop_lost') || String(res.parsed_data.consequence || '').includes('stop_lost') || res.parsed_data.stop_lost_extension || res.parsed_data.is_splice_frameshift || res.parsed_data.splice_is_in_frame === false || csq === 'start_lost') {
     const escapes = res.parsed_data.nmd_escape ? "Yes" : "No";
     const nmdTip = esc(res.parsed_data.nmd_decision_basis || (
         res.parsed_data.nmd_escape
@@ -882,7 +907,11 @@ if (res.parsed_data.cryptic_natural_stop_preserved) {
 
 let truncPill = '';
 let truncSkipIsoLbl = '';
-if (res.parsed_data.spliceai_competing_splice_isoforms && res.parsed_data.exon_skip_oof_ptc_aa != null) {
+const codingFsLock = resolveCodingFsTer(res.parsed_data);
+if (codingFsLock) {
+    truncSkipIsoLbl = '';
+    inframePreservedPill = '';
+} else if (res.parsed_data.spliceai_competing_splice_isoforms && res.parsed_data.exon_skip_oof_ptc_aa != null) {
     truncSkipIsoLbl = ' <span style="color:#94a3b8;font-weight:600;font-size:0.82em;">(whole-exon skip isoform)</span>';
 }
 const _truncFracRaw = Number(res.parsed_data.nmd_escape_truncation_fraction);
@@ -906,7 +935,15 @@ const _stopLostUnknown = (
     && !!res.parsed_data.protein_extension
     && !(Number.isFinite(_novelStopForExt) && Number.isFinite(_pLenForExt) && _novelStopForExt > _pLenForExt)
 );
-if (_stopLostUnknown) {
+if (codingFsLock && codingFsLock.frac != null && codingFsLock.frac > 0 && codingFsLock.stop <= codingFsLock.plen) {
+    const pct = (codingFsLock.frac * 100).toFixed(1);
+    const showStop = `${codingFsLock.aa}${codingFsLock.onset} → stop ${codingFsLock.stop} (fsTer${codingFsLock.n}) / ${codingFsLock.plen}`;
+    const ptcLabel = res.parsed_data.hgvs_p || '';
+    const ptcSuffix = ptcLabel
+        ? ` &middot; <span style="color:#fca5a5;background:rgba(239,68,68,0.12);padding:1px 6px;border-radius:3px;font-weight:600;">${esc(ptcLabel)}</span>`
+        : '';
+    truncPill = `<span class="data-pill" style="border-color: #fca5a5; color: #fca5a5; background: rgba(239, 68, 68, 0.1);">Truncated: <strong style="color: #fca5a5;">${pct}% (${showStop})</strong>${ptcSuffix}</span>`;
+} else if (_stopLostUnknown) {
     const expl = res.parsed_data.protein_extension_explanation
         || 'Stop-lost read-through past the native terminus — extends the protein (novel Ter length not resolved) — elongated ORF with a novel C-terminus (not a shorter truncation).';
     const ptcLabel = res.parsed_data.hgvs_p || '';
@@ -925,16 +962,29 @@ if (_stopLostUnknown) {
         ? (((productLen - pLen) / pLen) * 100).toFixed(1)
         : (Math.abs(_truncFracRaw) * 100).toFixed(1);
     const productBit = productLen ? `${productLen} vs ${pLen} aa` : `stop aa ${novelStop} vs ${pLen} aa`;
-    const _extLead = String(res.parsed_data.consequence || '').indexOf('stop_lost') >= 0
+    const _isStopLostExt = String(res.parsed_data.consequence || '').indexOf('stop_lost') >= 0
+        || !!res.parsed_data.stop_lost_extension;
+    const _extLead = _isStopLostExt
         ? 'Stop-lost read-through past the native terminus — extends the protein'
         : 'Frameshift stop past the native terminus — extends the protein';
     const expl = res.parsed_data.protein_extension_explanation
         || `${_extLead} by ${extPct}% (${productBit}) (novel stop at aa ${novelStop} vs ${pLen}-aa reference) — elongated ORF with a novel C-terminus (not a shorter truncation).`;
     const ptcLabel = res.parsed_data.hgvs_p || '';
     const ptcSuffix = ptcLabel
-        ? ` &middot; <span style="color:#fde68a;background:rgba(251,191,36,0.12);padding:1px 6px;border-radius:3px;font-weight:600;">${ptcLabel}</span>`
+        ? ` &middot; <span style="color:#fde68a;background:rgba(251,191,36,0.12);padding:1px 6px;border-radius:3px;font-weight:600;">${esc(ptcLabel)}</span>`
         : '';
-    truncPill = `<span class="data-pill" title="${esc(expl)}" style="border-color: #fcd34d; color: #fde68a; background: rgba(251, 191, 36, 0.10);">Extends the protein: <strong style="color: #fde68a;">+${extPct}%</strong> past the native stop (${productBit}) · novel Ter ${novelStop} in the 3′ UTR${ptcSuffix}</span>`;
+    if (_isStopLostExt) {
+        const nativeTer = (Number(res.parsed_data.protein_start) > Number(pLen))
+            ? Number(res.parsed_data.protein_start)
+            : (Number(pLen) + 1);
+        const nAaRaw = Number(res.parsed_data.downstream_aas);
+        const nAa = (Number.isFinite(nAaRaw) && nAaRaw > 0)
+            ? nAaRaw
+            : (Number(novelStop) - nativeTer);
+        truncPill = `<span class="data-pill" title="${esc(expl)}" style="border-color: #fcd34d; color: #fde68a; background: rgba(251, 191, 36, 0.10);">3′ extension: <strong style="color: #fde68a;">+${extPct}%</strong> (Native Ter ${nativeTer} → novel Ter ${novelStop} / ${pLen} (+${nAa} aa))${ptcSuffix}</span>`;
+    } else {
+        truncPill = `<span class="data-pill" title="${esc(expl)}" style="border-color: #fcd34d; color: #fde68a; background: rgba(251, 191, 36, 0.10);">Extends the protein: <strong style="color: #fde68a;">+${extPct}%</strong> past the native stop (${productBit}) · novel Ter ${novelStop} in the 3′ UTR${ptcSuffix}</span>`;
+    }
 } else if (!res.parsed_data.cryptic_natural_stop_preserved && res.parsed_data.nmd_escape_truncation_fraction > 0 && isTruncatingConsequence(res.parsed_data)) {
     const pct = (res.parsed_data.nmd_escape_truncation_fraction * 100).toFixed(1);
     const pLen = res.parsed_data.protein_length;
@@ -948,7 +998,7 @@ if (_stopLostUnknown) {
     if ((!pStart || pStart <= 0) && Number.isFinite(cryptTL) && cryptTL > 0) {
         pStart = cryptTL + 1;
     }
-    if (res.parsed_data.consequence === 'start_lost' || res.parsed_data.early_oof_exon_skip_next_met || res.parsed_data.met_reinitiation) {
+    if (!res.parsed_data.exonic_indel_frameshift_primary && (res.parsed_data.consequence === 'start_lost' || res.parsed_data.early_oof_exon_skip_next_met || res.parsed_data.met_reinitiation)) {
         // Start-loss, or an early OOF exon skip that keeps Met1: missing N-terminus to the next Met.
         const nextMetPos = res.parsed_data.next_methionine_position || Math.round(res.parsed_data.nmd_escape_truncation_fraction * pLen) + 1;
         if (nextMetPos !== -1) {
@@ -971,13 +1021,15 @@ if (_stopLostUnknown) {
             fsOnset = novelStop - d_aas;
         }
         let stopPos = null;
-        if (Number.isFinite(junctionPTC) && junctionPTC > 0) stopPos = junctionPTC;
-        else if (Number.isFinite(exonSkipPTC) && exonSkipPTC > 0) stopPos = exonSkipPTC;
+        const codingFsOwnsStop = !!res.parsed_data.exonic_indel_frameshift_primary;
+        if (!codingFsOwnsStop && Number.isFinite(junctionPTC) && junctionPTC > 0) stopPos = junctionPTC;
+        else if (!codingFsOwnsStop && Number.isFinite(exonSkipPTC) && exonSkipPTC > 0) stopPos = exonSkipPTC;
         else if (Number.isFinite(novelStop) && novelStop > 0) stopPos = novelStop;
         else if (Number.isFinite(fsOnset) && fsOnset > 0 && Number.isFinite(d_aas) && d_aas > 0) stopPos = fsOnset + d_aas;
-        const ptcLabel = res.parsed_data.exon_skip_predicted_hgvs_p
-                       || res.parsed_data.junction_model_hgvs_p
-                       || res.parsed_data.cryptic_splice_ptc
+        const ptcLabel = (codingFsOwnsStop ? '' : (
+                           res.parsed_data.exon_skip_predicted_hgvs_p
+                        || res.parsed_data.junction_model_hgvs_p
+                        || res.parsed_data.cryptic_splice_ptc))
                        || res.parsed_data.hgvs_p
                        || (Number.isFinite(d_aas) && d_aas > 0 && Number.isFinite(pStart) && pStart > 0
                               ? `p.X${pStart}fs*${d_aas + 1}` : '');
@@ -1006,16 +1058,28 @@ if (_stopLostUnknown) {
 
 let truncThresholdPill = '';
 const TRUNC_SEVERE_THRESHOLD = 0.10;
-const truncFracVal = Number(res.parsed_data.nmd_escape_truncation_fraction) || 0;
+const truncFracVal = (codingFsLock && codingFsLock.frac != null)
+    ? codingFsLock.frac
+    : (Number(res.parsed_data.nmd_escape_truncation_fraction) || 0);
 const _csqForTrunc = String(res.parsed_data.consequence || '');
 if (!res.parsed_data.cryptic_natural_stop_preserved && _pastNativeStop && !_absurdExtFrac
     && isTruncatingConsequence(res.parsed_data)) {
-    // The <10% / ≥10% threshold is for C-terminal loss only. Extensions show
-    // the percent and stop vs WT length on the extension pill and in the
-    // explanation text, without a cutoff label.
-    truncThresholdPill = '';
+    const _stopLostThresh = String(res.parsed_data.consequence || '').indexOf('stop_lost') >= 0
+        || !!res.parsed_data.stop_lost_extension;
+    if (_stopLostThresh) {
+        const _extAbs = Math.abs(Number(truncFracVal) || 0);
+        const _underExt = _extAbs < TRUNC_SEVERE_THRESHOLD;
+        const _extLbl = _underExt ? '<10% 3′ extension' : '≥10% 3′ extension';
+        const _extTip = 'Informational only. The <10% / ≥10% SOP threshold applies to C-terminal loss, not an elongated ORF.';
+        truncThresholdPill = `<span class="data-pill" title="${esc(_extTip)}" style="border-color: #fcd34d; color: #fde68a; background: rgba(251, 191, 36, 0.10);">3′ extension: <strong>${_extLbl}</strong> (+${(_extAbs * 100).toFixed(1)}%)</span>`;
+    } else {
+        // Frameshift extensions keep the percent on the extension pill.
+        // The <10% / ≥10% cutoff is a C-terminal-loss rule.
+        truncThresholdPill = '';
+    }
 } else if (
-    !res.parsed_data.cryptic_natural_stop_preserved
+    !codingFsLock
+    && !res.parsed_data.cryptic_natural_stop_preserved
     && truncFracVal > 0
     && (_csqForTrunc === 'start_lost' || res.parsed_data.early_oof_exon_skip_next_met || res.parsed_data.met_reinitiation)
 ) {
@@ -1045,6 +1109,26 @@ if (!res.parsed_data.cryptic_natural_stop_preserved && _pastNativeStop && !_absu
         : 'At least 10% of the protein is lost — severe C-terminal truncation (PVS1 pathway when NMD is escaped).';
     const threshColor = isUnder10Trunc ? '#fcd34d' : '#fca5a5';
     truncThresholdPill = `<span class="data-pill" title="${esc(threshTip)}" style="border-color: ${threshColor}; color: ${threshColor}; background: rgba(239, 68, 68, 0.08);">Truncation: <strong>${threshLbl}</strong> (${(truncFracVal * 100).toFixed(1)}%)</span>`;
+}
+
+// Coding frameshift keeps the PTC pill. The next-Met calculation is a second pill.
+let nextMetPill = '';
+const _metAlreadyInTrunc = /5' Missing/.test(truncPill);
+const _nextMetPos = Number(res.parsed_data.next_methionine_position);
+const _pLenForMet = Number(res.parsed_data.protein_length);
+if (!_metAlreadyInTrunc && Number.isFinite(_pLenForMet) && _pLenForMet > 0 && Number.isFinite(_nextMetPos) && _nextMetPos !== 0) {
+    if (_nextMetPos === -1) {
+        nextMetPill = `<span class="data-pill" title="No downstream in-frame Methionine is available for re-initiation." style="border-color: #38bdf8; color: #7dd3fc; background: rgba(56, 189, 248, 0.12);">5' Missing: <strong style="color: #7dd3fc;">100.0% (No Viable Next Met)</strong></span>`;
+    } else {
+        const metFrac = _nextMetPos / _pLenForMet;
+        const metPct = (metFrac * 100).toFixed(1);
+        const metWhere = nextMetWhere(res.parsed_data) || ('aa ' + _nextMetPos);
+        const metUnder = metFrac < TRUNC_SEVERE_THRESHOLD;
+        const metTip = metUnder
+            ? 'If a transcript escapes NMD, translation may re-initiate at the next in-frame Methionine. This N-terminal percent is separate from the frameshift stop.'
+            : 'If a transcript escapes NMD, the next in-frame Methionine removes ≥10% of the N-terminus. This percent is separate from the frameshift stop.';
+        nextMetPill = `<span class="data-pill" title="${esc(metTip)}" style="border-color: #38bdf8; color: #7dd3fc; background: rgba(56, 189, 248, 0.12);">5' Missing: <strong style="color: #7dd3fc;">${metPct}% (Next Met: ${esc(metWhere)})</strong></span>`;
+    }
 }
 
 let spliceaiPill = '';
@@ -1272,7 +1356,7 @@ const clingenLof = clingenHaploScoreInt(res.parsed_data.clingen_haplo_score) ===
 const clingenAbsent = !clingenHaploScorePresent(res.parsed_data.clingen_haplo_score);
 const storedMech = String(res.parsed_data.disease_mechanism || '').trim();
 let mech = clingenLof ? 'LOF' : (storedMech || 'Unknown');
-const spliceLofPrimary = !!(
+const spliceLofPrimary = !res.parsed_data.exonic_indel_frameshift_primary && !!(
     res.parsed_data.splice_lof_mechanism_established
     || res.parsed_data.spliceai_exon_skip_spliceai_primary
 );
@@ -1730,6 +1814,7 @@ ${exonPill}
 ${nmdPill}
 ${truncPill}
 ${truncThresholdPill}
+${nextMetPill}
 ${inframePreservedPill}
   </div>
   ${transcriptMapHtml}

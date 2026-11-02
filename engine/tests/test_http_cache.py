@@ -45,6 +45,23 @@ def test_ncbi_api_key_is_attached_only_to_eutils(monkeypatch):
     assert "api_key" not in other
 
 
+def test_url_with_params_keeps_efetch_ids_distinct():
+    base = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
+    a = hc.url_with_params(base, {"db": "nuccore", "id": "NM_001318852.2", "rettype": "gff3"})
+    b = hc.url_with_params(base, {"db": "nuccore", "id": "NM_000204.5", "rettype": "gff3"})
+    assert a != b
+    assert "NM_001318852.2" in a
+    assert "NM_000204.5" in b
+    assert hc.cache_key(a) != hc.cache_key(b)
+    # Existing query string is preserved and new params are appended.
+    merged = hc.url_with_params(base + "?db=nuccore", {"id": "NM_001318852.2"})
+    assert "db=nuccore" in merged
+    assert "id=NM_001318852.2" in merged
+    redacted = hc.redact_url(a + "&api_key=secret")
+    assert "api_key" not in redacted
+    assert "NM_001318852.2" in redacted
+
+
 def test_ncbi_api_key_absent_leaves_url_untouched(monkeypatch):
     monkeypatch.delenv("NCBI_API_KEY", raising=False)
     url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi?db=pubmed"

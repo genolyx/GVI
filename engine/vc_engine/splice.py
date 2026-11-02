@@ -32,9 +32,12 @@ from vc_engine.regions import (
 )
 from vc_engine.truncation import (
     c_terminal_loss_fraction,
+    formalize_frameshift_ptc,
     is_marginal_loss,
     is_severe_loss,
     is_start_loss_reinit_viable,
+    parse_frameshift_hgvs,
+    relock_exonic_indel_frameshift_fields,
     resolved_ptc_stop_aa,
     truncation_pct_display,
 )
@@ -118,6 +121,72 @@ def _append_splice_product_logic_sections(sections, parsed_data, include_deep_in
         sections.append(('Splice products', '<br><br>'.join(parts)))
 
 
+def _coding_indel_frameshift_owns_truncation(parsed_data):
+    """Direct exonic del/dup/ins frameshift PTC owns trunc fields; splice is secondary."""
+    if not parsed_data:
+        return False
+    if parsed_data.get("exonic_indel_frameshift_primary"):
+        return True
+    csq = str(parsed_data.get("consequence") or "").lower()
+    if csq not in ("frameshift", "nonsense"):
+        return False
+    s = re.sub(r"\s+", "", str(parsed_data.get("c_dot") or "")).lower()
+    if not re.search(r"c\.-?\d+.*(?:del|dup|ins|inv)", s):
+        return False
+    if re.search(r"c\.-?\d+[\+\-]\d", s):
+        return False
+    return True
+
+
+def _frameshift_ptc_geometry_line(parsed_data):
+    spec = parse_frameshift_hgvs((parsed_data or {}).get("hgvs_p") or "")
+    hp = str((parsed_data or {}).get("hgvs_p") or "").strip()
+    plen = (parsed_data or {}).get("protein_length") or "?"
+    if spec:
+        named = f"{hp} — " if hp else ""
+        return (
+            f"Frameshift PTC: {named}onset aa {spec['onset']} + fsTer{spec['n']} "
+            f"→ stop {spec['stop']} / {plen}"
+        )
+    try:
+        onset = int((parsed_data or {}).get("protein_start") or 0)
+        stop = int((parsed_data or {}).get("novel_stop_aa") or 0)
+    except (TypeError, ValueError):
+        return f"Frameshift PTC: {hp}" if hp else ""
+    if onset > 0 and stop > onset:
+        named = f"{hp} — " if hp else ""
+        return f"Frameshift PTC: {named}onset aa {onset} → stop {stop} / {plen}"
+    return f"Frameshift PTC: {hp}" if hp else ""
+
+
+def _label_coding_fs_splice_as_product2(parsed_data):
+    """Splice models stay Product 2 when the coding frameshift PTC is primary."""
+    if not parsed_data or not parsed_data.get("exonic_indel_frameshift_primary"):
+        return
+    keys = (
+        "splice_frame_math",
+        "splice_frame_math_exon_skip_ref",
+        "spliceai_secondary_splice_frame_math",
+        "splice_products_panel_html",
+    )
+    touched = False
+    for key in keys:
+        html = parsed_data.get(key)
+        if not isinstance(html, str) or not html.strip():
+            continue
+        touched = True
+        if "Product 1" not in html:
+            continue
+        new = html
+        new = new.replace("Product 1 (loss / exon skip)", "Product 2 (alternate splice)")
+        new = new.replace("Product 1 (gain / cryptic junction)", "Product 2 (alternate splice)")
+        new = new.replace("Product 1 (primary)", "Product 2 (alternate splice)")
+        new = new.replace("Product 1 (duplication baseline)", "Product 2 (alternate splice)")
+        parsed_data[key] = new
+    if touched:
+        parsed_data["splice_site_overlap_secondary"] = True
+
+
 def _append_truncation_nmd_sections(
     sections, parsed_data, effective_gene, csq, is_trunc, is_start_loss, is_nmd_escape, trunc_frac,
 ):
@@ -164,9 +233,10 @@ def _append_truncation_nmd_sections(
         else:
             lines.append("NMD predicted — premature stop triggers transcript decay.")
 
+    coding_fs_primary = bool(parsed_data.get("exonic_indel_frameshift_primary"))
     if trunc_frac and trunc_frac > 0:
         pct = round(trunc_frac * 100, 1)
-        if is_start_loss:
+        if is_start_loss and not coding_fs_primary:
             # nmd_math already narrates next-Met / N-terminal % — avoid a second
             # (and historically wrong C-term) percentage line.
             if not nmd_math:
@@ -181,7 +251,7 @@ def _append_truncation_nmd_sections(
                         f"N-terminal loss: {pct}% of protein; next Met at aa {next_met} "
                         f"(≥10% — severe N-terminal truncation)."
                     )
-        elif is_nmd_escape:
+        elif is_nmd_escape and not coding_fs_primary:
             t_m = _format_truncation_coord_for_logic(parsed_data, p_len, trunc_frac)
             if is_marginal_loss(trunc_frac):
                 lines.append(f"NMD escape: {pct}% C-terminal lost ({t_m}).")
@@ -195,18 +265,29 @@ def _append_truncation_nmd_sections(
                     "despite NMD escape (PVS1 pathway)."
                 )
 
-    if early_fs:
-        # Structural NMD stays the first line. Next-Met is the re-initiation
-        # SOP line. A later C-terminal rewrite of nmd_math must not drop either.
+    if early_fs or coding_fs_primary:
+        # Structural exon-junction NMD is the first line. Frameshift PTC geometry
+        # is next. Next-Met is an added SOP line and must not be the only line.
         if nmd_basis and not any(nmd_basis[:48] in ln for ln in lines):
             lines.insert(0, nmd_basis)
+        elif not any(
+            "NMD predicted" in ln or "exon-junction" in ln or "predicted to" in ln.lower()
+            for ln in lines
+        ):
+            spec = parse_frameshift_hgvs(parsed_data.get("hgvs_p") or "")
+            stop_bit = f"{spec['stop']}/{p_len}" if spec else str(p_len)
+            lines.insert(0, f"NMD predicted (exon-junction rule) — Stop: {stop_bit}.")
+        geo = _frameshift_ptc_geometry_line(parsed_data)
+        if geo and not any("Frameshift PTC" in ln for ln in lines):
+            lines.insert(1 if lines else 0, geo)
         sop = (parsed_data.get('next_met_sop_line') or '').strip()
         if sop and not any('N-terminal loss' in ln or 'next in-frame' in ln.lower() for ln in lines):
             lines.append(sop)
-        lines = [
-            ln for ln in lines
-            if 'C-terminal lost' not in ln and 'C-terminal truncation' not in ln
-        ]
+        if early_fs:
+            lines = [
+                ln for ln in lines
+                if 'C-terminal lost' not in ln and 'C-terminal truncation' not in ln
+            ]
 
     lcr = parsed_data.get('nmd_last_coding_exon_rank')
     tot = parsed_data.get('nmd_exon_total')
@@ -216,6 +297,11 @@ def _append_truncation_nmd_sections(
             lines.append(f"ORF ends in coding exon {lcr}; exon {tot} is 3′-UTR only.")
         else:
             lines.append(f"ORF ends in coding exon {lcr}; exons {int(lcr) + 1}–{tot} are 3′-UTR.")
+
+    if not lines and trunc_frac and trunc_frac < 0:
+        expl = str(parsed_data.get("protein_extension_explanation") or parsed_data.get("nmd_math") or "").strip()
+        if expl:
+            lines.append(expl)
 
     if lines:
         sections.append(("Truncation & NMD", _logic_lines_block(*lines)))
@@ -476,6 +562,128 @@ def _met_reinitiation_applies(parsed_data, *, current_cons, current_rank, is_fir
     if _single_coding_exon_gene(parsed_data):
         return False
     return _early_ptc_in_first_coding_exon(parsed_data, current_rank, is_first_exon)
+
+
+def _onset_fraction(parsed_data):
+    try:
+        onset = int((parsed_data or {}).get("protein_start") or 0)
+        plen = int((parsed_data or {}).get("protein_length") or 0)
+    except (TypeError, ValueError):
+        return None
+    if onset <= 0 or plen <= 0:
+        spec = parse_frameshift_hgvs((parsed_data or {}).get("hgvs_p") or "")
+        if not spec:
+            return None
+        onset = spec["onset"]
+    if onset <= 0 or plen <= 0:
+        return None
+    return onset / float(plen)
+
+
+def _early_frameshift_next_met_display(parsed_data):
+    """Additive next-Met SOP for a 5′ frameshift.
+
+    The trunc pill stays the frameshift PTC. This is only the re-initiation
+    line: first coding exon, or an onset in the first ~10% of the protein that
+    still sits in the first or second coding exon (CFI c.80_81del, aa 27).
+    A later exon stays off even when a very long ORF makes that residue <10%
+    (FLG c.477dup).
+    """
+    cons = str((parsed_data or {}).get("consequence") or "")
+    if cons not in ("nonsense", "frameshift"):
+        return False
+    if (parsed_data or {}).get("splice_viz_exon_internal_cryptic"):
+        return False
+    if _single_coding_exon_gene(parsed_data):
+        return False
+    frac = _onset_fraction(parsed_data)
+    if frac is None or frac >= 0.10:
+        return False
+    # mRNA exon 1–2 and an onset in the first ~10% (CFI c.80_81del, aa 27,
+    # exon 2). Exon 3+ stays off even when a huge ORF makes the residue <10%
+    # (FLG c.477dup, aa 159, exon 3).
+    try:
+        rank = int(
+            (parsed_data or {}).get("variant_exon")
+            or (parsed_data or {}).get("snpeff_exon_rank")
+            or 0
+        )
+    except (TypeError, ValueError):
+        rank = 0
+    if 0 < rank <= 2:
+        return True
+    anchor = _hgvs_coding_anchor_nt((parsed_data or {}).get("c_dot"))
+    return bool(rank <= 0 and anchor and anchor <= 200)
+
+
+def _next_original_frame_met_aa(parsed_data, http_session=None):
+    """Next in-frame Met after aa 1 on the reference CDS. -1 when none exists."""
+    cds = (parsed_data or {}).get("cds_seq") or ""
+    if not cds and http_session is not None:
+        cds = _ensure_cds_seq(parsed_data, http_session) or ""
+    seq = re.sub(r"[^ACGT]", "", str(cds or "").upper())
+    pos = 3
+    while pos + 2 < len(seq):
+        if seq[pos:pos + 3] == "ATG":
+            return (pos // 3) + 1
+        pos += 3
+    if http_session is None:
+        return None
+    enst = str((parsed_data or {}).get("ensembl_transcript_id") or "").split(".")[0]
+    if not enst.startswith("ENST"):
+        return None
+    try:
+        resp = http_session.get(
+            f"https://rest.ensembl.org/sequence/id/{enst}?type=protein",
+            headers={"Content-Type": "application/json"},
+            timeout=20,
+        )
+        if getattr(resp, "status_code", 0) != 200:
+            return None
+        protein = (resp.json() or {}).get("seq") or ""
+    except Exception:
+        return None
+    found = protein.find("M", 1)
+    return (found + 1) if found != -1 else -1
+
+
+def append_early_frameshift_next_met_sop(parsed_data, http_session=None):
+    """Record the next-Met re-initiation line without replacing the PTC fraction."""
+    if not parsed_data or (parsed_data.get("next_met_sop_line") or "").strip():
+        return False
+    if not _early_frameshift_next_met_display(parsed_data):
+        return False
+    try:
+        plen = int(parsed_data.get("protein_length") or 0)
+    except (TypeError, ValueError):
+        plen = 0
+    met = _next_original_frame_met_aa(parsed_data, http_session)
+    if not met or plen <= 0:
+        return False
+    if met == -1:
+        parsed_data["next_methionine_position"] = -1
+        parsed_data["next_met_sop_line"] = (
+            "If a transcript escapes NMD, no downstream in-frame Methionine is "
+            "available for re-initiation."
+        )
+        return True
+    frac = met / float(plen)
+    pct = round(frac * 100, 1)
+    parsed_data["next_methionine_position"] = met
+    if is_start_loss_reinit_viable(frac):
+        sop = (
+            f"If a transcript escapes NMD, translation may re-initiate at the "
+            f"next in-frame Methionine (aa {met}): N-terminal loss {pct}% of the "
+            f"{plen}-amino-acid protein (<10% re-initiation pathway)."
+        )
+    else:
+        sop = (
+            f"If a transcript escapes NMD, the next in-frame Methionine "
+            f"(aa {met}) is an N-terminal loss of {pct}% of the "
+            f"{plen}-amino-acid protein (≥10% — severe N-terminal truncation)."
+        )
+    parsed_data["next_met_sop_line"] = sop
+    return True
 
 
 def _deep_intronic_should_run(consequence, c_dot):
@@ -1735,6 +1943,8 @@ def _apply_early_oof_exon_skip_next_met(parsed_data, http_session=None):
     <10% is the re-initiation path (upstream P/LP and other 5′ evidence).
     This percent replaces C-terminal PTC and exon-span truncation math.
     """
+    if _coding_indel_frameshift_owns_truncation(parsed_data):
+        return False
     span = _early_oof_exon_skip_span(parsed_data)
     if not span:
         return False
@@ -1947,6 +2157,8 @@ def _suppress_start_loss_nmd_for_exon_skip_primary(parsed_data):
     """
     if not _whole_exon_skip_primary_resolved(parsed_data):
         return
+    if _coding_indel_frameshift_owns_truncation(parsed_data):
+        return
     # Early-OOF next Met is the N-terminal readout for this skip; do not clear it.
     if parsed_data.get('early_oof_exon_skip_next_met'):
         return
@@ -1975,6 +2187,10 @@ def _apply_exon_skip_truncation_as_primary(parsed_data):
     Mirror whole-exon skip (OOF) PTC into canonical truncation fields when skip is the
     primary splice product — not a stale SnpEff/junction placeholder from pre-splice init.
     """
+    if _coding_indel_frameshift_owns_truncation(parsed_data):
+        relock_exonic_indel_frameshift_fields(parsed_data)
+        _label_coding_fs_splice_as_product2(parsed_data)
+        return
     if parsed_data.get('early_oof_exon_skip_next_met'):
         return
     if parsed_data.get('splice_is_in_frame'):
@@ -5287,6 +5503,7 @@ def _finalize_splice_report_narratives(parsed_data):
     splice-model box, parallel-junction strip, logic list). Collapse to one short disclaimer
     and rely on structural math for numbers + ordering.
     """
+    _label_coding_fs_splice_as_product2(parsed_data)
     sfm = (parsed_data.get('splice_frame_math') or '').strip()
     if not sfm:
         return
@@ -13718,6 +13935,121 @@ def _pick_deep_intronic_donor_gain_candidate(
     if len(scored) > 1:
         best['pick_runner_up_model'] = scored[1][0].get('model')
     return best
+
+
+def apply_exonic_coding_indel_to_cds(cds, c_dot):
+    """Apply an exonic c. del/dup/ins/delins to a CDS. Returns the mutant CDS or None."""
+    seq = re.sub(r"[^ACGT]", "", str(cds or "").upper())
+    s = re.sub(r"\s+", "", str(c_dot or ""))
+    if not seq or not s:
+        return None
+    if re.search(r"c\.-?\d+[\+\-]\d", s, re.I):
+        return None
+
+    def _span_ok(a, b):
+        return 1 <= a <= b <= len(seq)
+
+    m = re.search(r"c\.(-?\d+)_(-?\d+)delins([ACGT]+)", s, re.I)
+    if m:
+        a, b = int(m.group(1)), int(m.group(2))
+        if not _span_ok(a, b):
+            return None
+        return seq[: a - 1] + m.group(3).upper() + seq[b:]
+    m = re.search(r"c\.(-?\d+)_(-?\d+)del([ACGT]*)", s, re.I)
+    if m:
+        a, b = int(m.group(1)), int(m.group(2))
+        if not _span_ok(a, b):
+            return None
+        return seq[: a - 1] + seq[b:]
+    m = re.search(r"c\.(-?\d+)del([ACGT]*)", s, re.I)
+    if m and "_" not in s.lower().split("del", 1)[0]:
+        a = int(m.group(1))
+        bases = (m.group(2) or "").upper()
+        n = len(bases) if bases else 1
+        if not _span_ok(a, a + n - 1):
+            return None
+        return seq[: a - 1] + seq[a - 1 + n :]
+    m = re.search(r"c\.(-?\d+)_(-?\d+)dup", s, re.I)
+    if m:
+        a, b = int(m.group(1)), int(m.group(2))
+        if not _span_ok(a, b):
+            return None
+        return seq[:b] + seq[a - 1 : b] + seq[b:]
+    m = re.search(r"c\.(-?\d+)dup([ACGT]*)", s, re.I)
+    if m and "_" not in s.lower().split("dup", 1)[0]:
+        a = int(m.group(1))
+        bases = (m.group(2) or "").upper()
+        frag = bases or (seq[a - 1 : a] if 1 <= a <= len(seq) else "")
+        if not frag or a < 1 or a > len(seq):
+            return None
+        return seq[:a] + frag + seq[a:]
+    m = re.search(r"c\.(-?\d+)_(-?\d+)ins([ACGT]+)", s, re.I)
+    if m:
+        a = int(m.group(1))
+        ins = m.group(3).upper()
+        if a < 1 or a > len(seq) or not ins:
+            return None
+        return seq[:a] + ins + seq[a:]
+    return None
+
+
+def complete_coding_frameshift_hgvs(parsed_data, http_session=None):
+    """Fill p.Xfs (no fsTerN) from the mutated CDS so the novel PTC is explicit.
+
+    VEP often stores only ``p.D27fs``. The frameshift stop is the first in-frame
+    stop after the indel, written as ``p.Asp27AlafsTer18``.
+    """
+    if not parsed_data:
+        return False
+    if str(parsed_data.get("consequence") or "") != "frameshift":
+        return False
+    if parse_frameshift_hgvs(parsed_data.get("hgvs_p") or ""):
+        return False
+    c_dot = parsed_data.get("c_dot") or ""
+    if re.search(r"c\.-?\d+[\+\-]\d", re.sub(r"\s+", "", str(c_dot)), re.I):
+        return False
+    if not re.search(r"c\.-?\d+.*(?:del|dup|ins)", str(c_dot), re.I):
+        return False
+    cds = parsed_data.get("cds_seq") or ""
+    if not cds and http_session is not None:
+        cds = _ensure_cds_seq(parsed_data, http_session) or ""
+    mut = apply_exonic_coding_indel_to_cds(cds, c_dot)
+    if not mut:
+        return False
+    ref_aas = _translate_cds_aas(cds)
+    mut_aas = _translate_cds_aas(mut)
+    if not ref_aas or not mut_aas or "*" not in mut_aas:
+        return False
+    onset = None
+    for i, (aa_ref, aa_mut) in enumerate(zip(ref_aas, mut_aas)):
+        if aa_ref != aa_mut:
+            onset = i + 1
+            break
+    if onset is None:
+        return False
+    stop = mut_aas.index("*") + 1
+    if stop < onset:
+        return False
+    n = stop - onset + 1
+    ref_aa = ref_aas[onset - 1] if onset - 1 < len(ref_aas) else "X"
+    alt_aa = mut_aas[onset - 1]
+    ref3 = _AA_ONE_TO_THREE.get(ref_aa, "Xaa")
+    if alt_aa == "*":
+        hgvs = f"p.{ref3}{onset}Ter"
+    else:
+        alt3 = _AA_ONE_TO_THREE.get(alt_aa, "Xaa")
+        hgvs = f"p.{ref3}{onset}{alt3}fsTer{n}"
+    parsed_data["hgvs_p"] = hgvs
+    parsed_data["frameshift_hgvs_from_cds"] = True
+    try:
+        plen = int(parsed_data.get("protein_length") or 0)
+    except (TypeError, ValueError):
+        plen = 0
+    if plen <= 0 and ref_aas and ref_aas[-1] == "*":
+        plen = len(ref_aas) - 1
+        parsed_data["protein_length"] = plen
+    formalize_frameshift_ptc(parsed_data, onset, stop, plen, force=True)
+    return True
 
 
 def _translate_cds_aas(cds):

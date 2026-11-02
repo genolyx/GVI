@@ -392,6 +392,78 @@ def test_stop_lost_ext_n_uses_onset_plus_n():
     assert "Stop-lost read-through" in pd["nmd_math"]
 
 
+def test_mapk8ip3_stop_lost_extension_survives_sync():
+    """p.Ter1338CysextTer17: Ter 1355 on a 1337-aa protein, +17 aa, about +1.3%."""
+    from vc_engine.splice import _append_truncation_nmd_sections
+    from vc_engine.truncation import (
+        apply_stop_lost_extension,
+        parse_stop_lost_hgvs,
+        sync_truncation_fraction_from_ptc,
+    )
+
+    for label in (
+        "p.Ter1338CysextTer17",
+        "p.*1338Cext*17",
+        "NP_001305781.1:p.Ter1338CysextTer17",
+    ):
+        spec = parse_stop_lost_hgvs(label)
+        assert spec is not None
+        assert spec["onset"] == 1338
+        assert spec["n"] == 17
+
+    pd = {
+        "consequence": "stop_lost",
+        "hgvs_p": "p.Ter1338CysextTer17",
+        "c_dot": "c.4014A>C",
+        "protein_length": 1337,
+    }
+    apply_stop_lost_extension(pd)
+    assert pd["protein_start"] == 1338
+    assert pd["novel_stop_aa"] == 1355
+    assert pd["downstream_aas"] == 17
+    assert pd["nmd_escape"] is True
+    assert pd["stop_lost_extension"] is True
+    frac = pd["nmd_escape_truncation_fraction"]
+    assert frac < 0
+    assert round(abs(frac) * 100.0, 1) == 1.3
+    assert "Stop-lost read-through past the native terminus — extends the protein by" in pd["nmd_math"]
+
+    pd["nmd_escape_truncation_fraction"] = 0.0
+    pd["novel_stop_aa"] = 0
+    restored = sync_truncation_fraction_from_ptc(pd)
+    assert pd["novel_stop_aa"] == 1355
+    assert round(abs(restored) * 100.0, 1) == 1.3
+
+    sections = []
+    _append_truncation_nmd_sections(
+        sections, pd, "MAPK8IP3", "stop_lost", True, False, True, restored,
+    )
+    blob = " ".join(str(part) for part in sections)
+    assert "Truncation & NMD" in blob
+    assert "extends the protein by" in blob
+
+
+def test_stop_lost_short_protein_length_uses_hgvs_stop():
+    """A 401-aa map must not turn p.Ter1338CysextTer17 into a 237% extension."""
+    from vc_engine.truncation import apply_stop_lost_extension
+
+    pd = {
+        "consequence": "stop_lost",
+        "hgvs_p": "p.Ter1338CysextTer17",
+        "c_dot": "c.4014A>C",
+        "protein_length": 401,
+    }
+    apply_stop_lost_extension(pd)
+    assert pd["protein_length"] == 1337
+    assert pd["protein_start"] == 1338
+    assert pd["novel_stop_aa"] == 1355
+    assert pd["downstream_aas"] == 17
+    assert round(abs(pd["nmd_escape_truncation_fraction"]) * 100.0, 1) == 1.3
+    assert "237" not in pd["protein_extension_explanation"]
+    assert "1.3%" in pd["protein_extension_explanation"]
+    assert "1354 vs 1337" in pd["protein_extension_explanation"]
+
+
 def test_stop_lost_readthrough_scan_sets_novel_stop():
     """Mutate the native TGA and scan the appended 3′ UTR for the next stop."""
     from vc_engine.truncation import apply_stop_lost_extension, stop_lost_ter_from_readthrough

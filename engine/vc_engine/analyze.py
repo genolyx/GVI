@@ -67,6 +67,7 @@ from vc_engine.truncation import (
     apply_stop_lost_extension,
     formalize_frameshift_ptc,
     formalize_nonsense_ptc,
+    relock_exonic_indel_frameshift_fields,
     parse_stop_lost_hgvs,
     is_marginal_loss,
     is_severe_loss,
@@ -75,7 +76,7 @@ from vc_engine.truncation import (
     start_loss_fraction_from_next_met,
 )
 from vc_engine.scoring import apply_acmg, apply_clingen_disease_mechanism, apply_rubric
-from vc_engine.splice import SPLICEAI_RECONCILE_MIN, _append_deep_intronic_splice_logic_sections, _append_nmd_escape_clinical_context, _append_splice_product_logic_sections, _append_splice_support_sections, _append_truncation_nmd_sections, _apply_canonical_splice_hgvs_override, _apply_coding_snv_loss_exon_skip, _apply_near_splice_region_context, _apply_early_oof_exon_skip_next_met, _early_oof_next_met_sop_sentence, _apply_exon_skip_truncation_as_primary, _apply_pre_atg_splice_acceptor_context, _apply_pre_atg_splice_donor_context, _build_junction_align_payload, _build_splice_products_panel_html, _build_splice_variant_intro_short, _build_splice_viz_payload, _canonical_splice_junction_from_hgvs, _coding_snv_spliceai_loss_site, _consequence_is_acceptor_splice, _consequence_is_donor_splice, _deep_intronic_signal_label, _defer_whole_exon_skip_to_deep_intronic, _ensure_cds_seq, _ensure_coding_exons_for_splice_viz, _stop_lost_cds_and_utr, _ensure_protein_length_from_coding_exons, _ensure_splice_secondary_cryptic_gain, _finalize_splice_report_narratives, _format_whole_exon_skip_hgvs_p, _hit_at_user_splice_junction_locus, _hydrate_exon_skip_truncation_metrics, _junction_align_ruler_ticks, _logic_csq_is_splice_context, _logic_lines_block, _mark_oof_exon_skip_nmd_provisional, _logic_section_text_plain, _logic_should_show_deep_intronic_context, _lookup_clinvar_plp_downstream_of_ptc, _met_reinitiation_applies, _missense_same_codon_different_change, _normalize_to_forward_strand, _oofs_exon_skip_ptc_cds_and_cdna, _reconcile_splice_model_precedence, refresh_pre_atg_deep_intronic_readouts, _resolve_cryptic_splice_outcome, _resolve_exon_internal_cryptic_outcome, _resolve_splice_junction_locus, _same_canonical_splice_junction_locus, _select_splice_coding_exon, _set_spliceai_narrative_sentence, _should_show_spliceai_narrative_in_logic, _splice_cdna_anchor_from_hgvs, _splice_variant_intro_is_complete, _spliceai_exon_skip_takes_precedence_over_weak_cryptic, _refresh_secondary_gain_at_spliceai_dp, _spliceai_scores_4, _spliceai_secondary_acceptor_parallel_exon_skip_math, _spliceai_secondary_donor_parallel_exon_skip_math, _spliceai_variant_locus_string, _stash_transcript_mrna_exon_metadata, _suppress_start_loss_nmd_for_exon_skip_primary, _translate_cds_aas, _whole_exon_skip_primary_resolved, compute_deep_intronic_splice_math, compute_deep_intronic_spliceai_products
+from vc_engine.splice import SPLICEAI_RECONCILE_MIN, _append_deep_intronic_splice_logic_sections, _append_nmd_escape_clinical_context, _append_splice_product_logic_sections, _append_splice_support_sections, _append_truncation_nmd_sections, _apply_canonical_splice_hgvs_override, _apply_coding_snv_loss_exon_skip, _apply_near_splice_region_context, _apply_early_oof_exon_skip_next_met, _early_oof_next_met_sop_sentence, _apply_exon_skip_truncation_as_primary, _apply_pre_atg_splice_acceptor_context, _apply_pre_atg_splice_donor_context, _build_junction_align_payload, _build_splice_products_panel_html, _build_splice_variant_intro_short, _build_splice_viz_payload, _canonical_splice_junction_from_hgvs, _coding_snv_spliceai_loss_site, _consequence_is_acceptor_splice, _consequence_is_donor_splice, _deep_intronic_signal_label, _defer_whole_exon_skip_to_deep_intronic, _ensure_cds_seq, complete_coding_frameshift_hgvs, append_early_frameshift_next_met_sop, _ensure_coding_exons_for_splice_viz, _stop_lost_cds_and_utr, _ensure_protein_length_from_coding_exons, _ensure_splice_secondary_cryptic_gain, _finalize_splice_report_narratives, _format_whole_exon_skip_hgvs_p, _hit_at_user_splice_junction_locus, _hydrate_exon_skip_truncation_metrics, _junction_align_ruler_ticks, _logic_csq_is_splice_context, _logic_lines_block, _mark_oof_exon_skip_nmd_provisional, _logic_section_text_plain, _logic_should_show_deep_intronic_context, _lookup_clinvar_plp_downstream_of_ptc, _met_reinitiation_applies, _missense_same_codon_different_change, _normalize_to_forward_strand, _oofs_exon_skip_ptc_cds_and_cdna, _reconcile_splice_model_precedence, refresh_pre_atg_deep_intronic_readouts, _resolve_cryptic_splice_outcome, _resolve_exon_internal_cryptic_outcome, _resolve_splice_junction_locus, _same_canonical_splice_junction_locus, _select_splice_coding_exon, _set_spliceai_narrative_sentence, _should_show_spliceai_narrative_in_logic, _splice_cdna_anchor_from_hgvs, _splice_variant_intro_is_complete, _spliceai_exon_skip_takes_precedence_over_weak_cryptic, _refresh_secondary_gain_at_spliceai_dp, _spliceai_scores_4, _spliceai_secondary_acceptor_parallel_exon_skip_math, _spliceai_secondary_donor_parallel_exon_skip_math, _spliceai_variant_locus_string, _stash_transcript_mrna_exon_metadata, _suppress_start_loss_nmd_for_exon_skip_primary, _translate_cds_aas, _whole_exon_skip_primary_resolved, compute_deep_intronic_splice_math, compute_deep_intronic_spliceai_products
 from vc_engine.spliceai import _apply_emg_spliceai_ds_only, _apply_emg_spliceai_if_broad_unavailable, _emg_spliceai_ds_snapshot, _ingest_spliceai_broad_json, _refresh_spliceai_in_silico_source
 from vc_engine.state import clingen_db, clingen_gene_lookup
 from vc_engine.uniprot import (
@@ -750,6 +751,8 @@ def _build_lof_variant_intro(parsed_data, effective_gene, c_dot, csq, is_start_l
     else:
         if parsed_data.get('is_splice_frameshift'):
             v_type = 'structural splice LOF'
+        elif 'stop_lost' in csq or parsed_data.get('stop_lost_extension'):
+            v_type = 'stop-lost'
         elif 'frameshift' in csq:
             v_type = 'frameshift'
         else:
@@ -2887,25 +2890,73 @@ def _promote_exonic_coding_indel_frameshift_primary(parsed_data):
     if not parsed_data or not _is_exonic_coding_indel_c_dot(parsed_data.get("c_dot")):
         return
     csq = (parsed_data.get("consequence") or "").lower()
-    if csq in ("frameshift", "nonsense", "start_lost"):
+    if csq == "start_lost" or "inframe" in csq:
         return
     hp = parsed_data.get("hgvs_p") or ""
     debug = (parsed_data.get("debug_vep") or "").lower()
     orig = (parsed_data.get("original_consequence") or csq or "").lower()
     has_fs = (
-        _hgvs_p_indicates_frameshift_ptc(hp)
+        csq in ("frameshift", "nonsense")
+        or _hgvs_p_indicates_frameshift_ptc(hp)
         or "frameshift" in debug
         or "frameshift" in orig
         or _exonic_indel_deleted_bp_not_multiple_of_three(parsed_data.get("c_dot"))
     )
     if not has_fs:
         return
-    if "splice" not in csq and csq not in ("unknown", ""):
+    if csq not in ("frameshift", "nonsense", "unknown", "") and "splice" not in csq:
         return
-    parsed_data.setdefault("original_consequence", parsed_data.get("consequence"))
-    parsed_data["consequence"] = "frameshift"
+    if csq not in ("frameshift", "nonsense"):
+        parsed_data.setdefault("original_consequence", parsed_data.get("consequence"))
+        parsed_data["consequence"] = "frameshift"
     parsed_data["exonic_indel_frameshift_primary"] = True
-    parsed_data["splice_site_overlap_secondary"] = True
+    splice_blob = " ".join([
+        csq,
+        orig,
+        str(parsed_data.get("splice_frame_math") or ""),
+    ]).lower()
+    splice_ds = False
+    for _sk in ("spliceai_ds_ag", "spliceai_ds_al", "spliceai_ds_dg", "spliceai_ds_dl"):
+        try:
+            if float(parsed_data.get(_sk) or 0) >= 0.2:
+                splice_ds = True
+                break
+        except (TypeError, ValueError):
+            pass
+    if "splice" in splice_blob or splice_ds:
+        parsed_data["splice_site_overlap_secondary"] = True
+
+
+def _stash_coding_indel_frameshift_nmd(parsed_data):
+    """Remember the direct-frameshift NMD call before splice models rewrite it."""
+    if not parsed_data or not parsed_data.get("exonic_indel_frameshift_primary"):
+        return
+    basis = (parsed_data.get("nmd_decision_basis") or "").strip()
+    if basis and "exon skip" not in basis.lower():
+        parsed_data["_coding_fs_nmd_basis"] = basis
+        parsed_data["_coding_fs_nmd_escape"] = parsed_data.get("nmd_escape")
+        parsed_data["_coding_fs_nmd_distance"] = parsed_data.get("nmd_exon_distance")
+        parsed_data["_coding_fs_nmd_math"] = parsed_data.get("nmd_math")
+
+
+def _restore_coding_indel_frameshift_readout(parsed_data):
+    """Put trunc fields and the exon-junction NMD basis back on the coding frameshift PTC."""
+    if not parsed_data or not parsed_data.get("exonic_indel_frameshift_primary"):
+        return
+    relock_exonic_indel_frameshift_fields(parsed_data)
+    basis = (parsed_data.get("_coding_fs_nmd_basis") or "").strip()
+    if basis:
+        parsed_data["nmd_decision_basis"] = basis
+    if parsed_data.get("_coding_fs_nmd_escape") is not None and "_coding_fs_nmd_basis" in parsed_data:
+        parsed_data["nmd_escape"] = parsed_data.get("_coding_fs_nmd_escape")
+    if parsed_data.get("_coding_fs_nmd_distance") is not None and "_coding_fs_nmd_basis" in parsed_data:
+        parsed_data["nmd_exon_distance"] = parsed_data.get("_coding_fs_nmd_distance")
+    sop = (parsed_data.get("next_met_sop_line") or "").strip()
+    if basis and sop:
+        parsed_data["nmd_math"] = f"{basis} {sop}".strip()
+    elif basis:
+        stored = (parsed_data.get("_coding_fs_nmd_math") or "").strip()
+        parsed_data["nmd_math"] = stored or basis
 
 
 def _exonic_coding_indel_span_bp(c_dot):
@@ -5346,6 +5397,11 @@ def analyze_variant():
                 parsed_data['hgvs_p'] = _vep_p
             elif _hgvs_p_is_placeholder(parsed_data.get('hgvs_p')) and (_vep_p or "").strip():
                 parsed_data['hgvs_p'] = _vep_p
+            if (
+                str(parsed_data.get("consequence") or "") == "stop_lost"
+                or parse_stop_lost_hgvs(parsed_data.get("hgvs_p") or "")
+            ):
+                _apply_stop_lost_readthrough(parsed_data)
             # Only store real ENST ids here — NM_ placeholders break Ensembl lookup/id.
             _bt = (best_transcript_id or "").strip()
             if _bt.startswith("ENST"):
@@ -5373,6 +5429,11 @@ def analyze_variant():
 
         # Evaluate Structural NMD Escape
         if parsed_data.get('consequence') in ['nonsense', 'frameshift']:
+            if parsed_data.get('consequence') == 'frameshift':
+                # p.D27fs has no Ter count. Translate the mutated CDS so the novel
+                # PTC (p.Asp27AlafsTer18) is known before the junction math.
+                _resolve_ensembl_transcript_id(http_session, parsed_data)
+                complete_coding_frameshift_hgvs(parsed_data, http_session)
             # Intercept Frameshift PTC Offset if present (e.g., Ter13 -> +13 AA distance downstream)
             # Formally calculate the New Stop Codon boundary to measure exact NMD junction distance
             p_current = parsed_data.get('protein_start', 0)
@@ -5435,6 +5496,13 @@ def analyze_variant():
                                         physical_stop_pos = approx_aa + ter_offset
                     except Exception:
                         pass
+            if (
+                parsed_data.get("exonic_indel_frameshift_primary")
+                and ter_offset > 0
+                and p_current > 0
+            ):
+                # Direct coding fsTer owns the PTC (Asp27AlafsTer18 → stop 44).
+                physical_stop_pos = frameshift_ter_index(p_current, ter_offset)
             
             curr_stop_eval = physical_stop_pos if physical_stop_pos > 0 else p_current
             
@@ -5468,9 +5536,14 @@ def analyze_variant():
             # Translate Protein-Level Stop Codon into DNA-Level Junction Math
             nmd_calc_cds_pos = cds_pos  # Default to the mutation start
             if physical_stop_pos > 0 and p_current > 0:
-                # DNA boundary distance is simply (stop - start) * 3 base pairs
+                # NMD follows the novel stop, not the variant-only c. anchor.
                 ptc_nt_shift = (physical_stop_pos - p_current) * 3
-                nmd_calc_cds_pos += ptc_nt_shift
+                if cds_pos > 0:
+                    nmd_calc_cds_pos = cds_pos + ptc_nt_shift
+                elif parsed_data.get("exonic_indel_frameshift_primary"):
+                    nmd_calc_cds_pos = physical_stop_pos * 3
+                else:
+                    nmd_calc_cds_pos += ptc_nt_shift
 
             enst_id = _resolve_ensembl_transcript_id(http_session, parsed_data)
             if not enst_id and nmd_calc_cds_pos > 0:
@@ -5562,7 +5635,9 @@ def analyze_variant():
                 p_len_final = 0
             if parsed_data.get('consequence') == 'frameshift' and ter_offset > 0 and p_current > 0:
                 ter_index = frameshift_ter_index(p_current, ter_offset)
-                if p_len_final > 0 and ter_index > p_len_final:
+                if parsed_data.get("exonic_indel_frameshift_primary") or (
+                    p_len_final > 0 and ter_index > p_len_final
+                ):
                     physical_stop_pos = ter_index
                 else:
                     physical_stop_pos = p_current + ter_offset
@@ -5596,6 +5671,8 @@ def analyze_variant():
                     # Record PTC onset even without WT length (fraction filled later).
                     parsed_data['protein_start'] = stop_aa
                     parsed_data['novel_stop_aa'] = stop_aa
+
+        _stash_coding_indel_frameshift_nmd(parsed_data)
 
         # [Start Loss block structurally relocated below Splicing block]
 
@@ -6488,6 +6565,7 @@ def analyze_variant():
         )
         _apply_exon_skip_truncation_as_primary(parsed_data)
         _finalize_splice_report_narratives(parsed_data)
+        _restore_coding_indel_frameshift_readout(parsed_data)
         # Unified 5-Prime Start Loss Logic Integration
         current_cons = parsed_data.get('consequence', '')
         p_start = parsed_data.get('protein_start', 0)
@@ -6526,7 +6604,10 @@ def analyze_variant():
                 except: pass
         
         # Whole-exon skip primary: skip-product ORF is not start-loss re-initiation on the WT map.
-        if _whole_exon_skip_primary_resolved(parsed_data):
+        if (
+            _whole_exon_skip_primary_resolved(parsed_data)
+            and not parsed_data.get("exonic_indel_frameshift_primary")
+        ):
             _suppress_start_loss_nmd_for_exon_skip_primary(parsed_data)
         elif _met_reinitiation_applies(
             parsed_data,
@@ -6610,6 +6691,11 @@ def analyze_variant():
                                 parsed_data['protein_start'] = 1
                 except Exception as e:
                     print(f"5' Logic Error: {e}")
+
+        # 5′ frameshift outside the strict first-exon gate (CFI c.80, aa 27) still
+        # gets the next-Met line beside the exon-junction NMD call. The PTC
+        # fraction is left alone.
+        append_early_frameshift_next_met_sop(parsed_data, http_session)
 
         # Early OOF whole-exon skip that keeps Met1: N-terminal % is the next
         # original-frame Met. Runs after start-loss suppression so that pop does
@@ -7971,6 +8057,7 @@ def analyze_variant():
             sync_truncation_fraction_from_ptc(parsed_data)
             # Wins over the C-terminal PTC / exon-span sync just above.
             _apply_early_oof_exon_skip_next_met(parsed_data, http_session)
+            _restore_coding_indel_frameshift_readout(parsed_data)
         except Exception as _nmd_backfill_err:
             print(f"[nmd/ptc backfill] {_nmd_backfill_err}")
 
@@ -7980,7 +8067,9 @@ def analyze_variant():
             if not _logic_csq_is_splice_context(csq, parsed_data):
                 parsed_data['spliceai_narrative'] = ''
             is_trunc = (
-                csq in ['nonsense', 'frameshift']
+                csq in ['nonsense', 'frameshift', 'stop_lost']
+                or 'stop_lost' in str(csq)
+                or bool(parsed_data.get('stop_lost_extension'))
                 or (
                     parsed_data.get('is_splice_frameshift')
                     and not parsed_data.get('cryptic_gain_outcome')

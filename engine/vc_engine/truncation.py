@@ -20,6 +20,30 @@ _HGVSP_NONSENSE_RE = re.compile(
 )
 
 
+_FS_TER_HGVS_RE = re.compile(
+    r"p\.(?:[A-Z][a-z]{2}|[A-Z*])(\d+)(?:[A-Z][a-z]{2}|[A-Z])?fs(?:Ter|\*)(\d+)",
+    re.I,
+)
+
+
+def parse_frameshift_hgvs(hgvs_p: str) -> Optional[dict]:
+    """Parse ``p.Asp27AlafsTer18`` / ``p.Val958Glyfs*3`` into onset, N, and Ter index.
+
+    Ter codon index is onset + N − 1 (the stop is included in the HGVS count).
+    """
+    m = _FS_TER_HGVS_RE.search(str(hgvs_p or ""))
+    if not m:
+        return None
+    try:
+        onset = int(m.group(1))
+        n = int(m.group(2))
+    except (TypeError, ValueError):
+        return None
+    if onset <= 0 or n <= 0:
+        return None
+    return {"onset": onset, "n": n, "stop": onset + n - 1}
+
+
 def frameshift_ter_index(onset_aa: int, fs_ter_n: int) -> int:
     """HGVS ``fsTerN`` / ``fs*N`` termination-codon index.
 
@@ -84,8 +108,7 @@ _STOP_CODONS = {"TAA", "TAG", "TGA"}
 _SNV_CDOT_RE = re.compile(r"c\.(\d+)([ACGT])>([ACGT])", re.I)
 
 STOP_LOST_NMD_BASIS = (
-    "Stop-lost read-through continues past the native CDS end into the 3′ UTR; "
-    "no exon–exon junction remains downstream of the original terminus — predicted to escape NMD."
+    "Native terminator abolished; novel stop past WT CDS (NMD escape / nonstop-like)."
 )
 
 
@@ -410,6 +433,14 @@ def _restore_early_frameshift_dual_readout(parsed_data: MutableMapping[str, Any]
 
 def sync_truncation_fraction_from_ptc(parsed_data: MutableMapping[str, Any]) -> float:
     """Recompute truncation fraction for nonsense/frameshift (C-term) or start-loss (N-term)."""
+    # Exonic coding indel frameshift owns the trunc % even if splice PTC fields
+    # or a next-Met SOP line were written later.
+    if parsed_data.get("exonic_indel_frameshift_primary"):
+        if relock_exonic_indel_frameshift_fields(parsed_data):
+            try:
+                return float(parsed_data.get("nmd_escape_truncation_fraction") or 0)
+            except (TypeError, ValueError):
+                return 0.0
     if parsed_data.get("cryptic_natural_stop_preserved"):
         try:
             return float(parsed_data.get("nmd_escape_truncation_fraction") or 0)
@@ -455,7 +486,16 @@ def sync_truncation_fraction_from_ptc(parsed_data: MutableMapping[str, Any]) -> 
             return float(parsed_data.get("nmd_escape_truncation_fraction") or 0)
         except (TypeError, ValueError):
             return 0.0
-    csq = parsed_data.get("consequence") or ""
+    csq = str(parsed_data.get("consequence") or "")
+
+    # Stop-lost extensions are negative fractions. Recompute from HGVS instead of
+    # wiping them in the nonsense/frameshift gate below.
+    if "stop_lost" in csq or parsed_data.get("stop_lost_extension"):
+        apply_stop_lost_extension(parsed_data)
+        try:
+            return float(parsed_data.get("nmd_escape_truncation_fraction") or 0)
+        except (TypeError, ValueError):
+            return 0.0
 
     # Start-loss, or an early PTC that entered the same next-Met block:
     # fraction is distance to the next in-frame Met, never C-terminal PTC math.
@@ -554,11 +594,29 @@ def formalize_nonsense_ptc(
         parsed_data["nmd_escape_truncation_fraction"] = frac
 
 
+def relock_exonic_indel_frameshift_fields(parsed_data: MutableMapping[str, Any]) -> bool:
+    """Put protein_start / novel stop / trunc % back on the HGVS fsTer, ignoring splice PTC fields."""
+    if not parsed_data.get("exonic_indel_frameshift_primary"):
+        return False
+    spec = parse_frameshift_hgvs(parsed_data.get("hgvs_p") or "")
+    if not spec:
+        return False
+    try:
+        plen = int(parsed_data.get("protein_length") or 0)
+    except (TypeError, ValueError):
+        plen = 0
+    formalize_frameshift_ptc(
+        parsed_data, spec["onset"], spec["stop"], plen, force=True,
+    )
+    return True
+
+
 def formalize_frameshift_ptc(
     parsed_data: MutableMapping[str, Any],
     onset_aa: int,
     stop_aa: int,
     protein_length: int,
+    force: bool = False,
 ) -> None:
     """Set canonical PTC fields for frameshift (onset != stop when extension present).
 
@@ -567,8 +625,10 @@ def formalize_frameshift_ptc(
     Ter 233 on a 202-aa protein), the fraction is the extension
     ``(product − WT) / WT`` with ``product = Ter − 1``. Stops inside the
     reference protein keep the C-terminal loss fraction.
+
+    ``force`` re-applies the HGVS stop even when a 5′ next-Met SOP flag is set.
     """
-    if parsed_data.get("met_reinitiation"):
+    if parsed_data.get("met_reinitiation") and not force:
         return
     try:
         onset = int(onset_aa)
@@ -621,11 +681,16 @@ def apply_stop_lost_extension(
         plen = 0
     if plen < 0:
         plen = 0
-    if not str(parsed_data.get("nmd_decision_basis") or "").strip():
-        parsed_data["nmd_decision_basis"] = STOP_LOST_NMD_BASIS
+    parsed_data["nmd_decision_basis"] = STOP_LOST_NMD_BASIS
     parsed_data["nmd_escape"] = True
+    parsed_data["stop_lost_extension"] = True
 
     onset = int(spec["onset"]) if spec else (plen + 1 if plen > 0 else 0)
+    # p.Ter1338 names codon 1338 as the native stop, so the protein is 1337 aa.
+    # A shorter length is a failed lookup (a reused exon map), not the reference.
+    if onset > 1 and plen < onset - 1:
+        plen = onset - 1
+        parsed_data["protein_length"] = plen
     n = spec.get("n") if spec else None
     ter = 0
     if n is not None:
@@ -641,15 +706,18 @@ def apply_stop_lost_extension(
             existing = 0
         if existing > plen > 0:
             ter = existing
-    if ter > plen > 0:
-        if onset > 0:
-            parsed_data["protein_start"] = onset
+    if onset > 0:
+        parsed_data["protein_start"] = onset
+    if ter > 0:
         parsed_data["novel_stop_aa"] = ter
         if onset > 0:
-            parsed_data["downstream_aas"] = max(0, ter - onset)
+            parsed_data["downstream_aas"] = ter - onset
+    if ter > plen > 0:
         if plen > 0:
             parsed_data["protein_length"] = plen
         refresh_protein_extension_readout(parsed_data)
+        return
+    if ter > 0 and plen <= 0:
         return
 
     parsed_data["stop_lost_ter_unknown"] = True
@@ -742,6 +810,8 @@ def apply_nmd_escape_from_coding_exons(
         return False
     if cds_pos <= 0:
         return False
+    if "stop_lost" in str(parsed_data.get("consequence") or ""):
+        return False
     coding_exons = parsed_data.get("coding_exons") or []
     if not isinstance(coding_exons, list) or not coding_exons:
         return False
@@ -828,8 +898,27 @@ def apply_nmd_escape_from_coding_exons(
         return True
 
     parsed_data["nmd_escape"] = False
+    try:
+        dist_next = int(ptc_cx.get("end_cds") or 0) - cds_pos
+    except (TypeError, ValueError):
+        dist_next = None
+    if dist_next is not None:
+        parsed_data["nmd_exon_distance"] = dist_next
+    dist_bit = (
+        f", {dist_next} nt upstream of the next exon-exon junction"
+        if dist_next is not None and dist_next >= 0
+        else ""
+    )
+    stop = resolved_ptc_stop_aa(parsed_data)
+    hp = str(parsed_data.get("hgvs_p") or "").strip()
+    ptc_bits = []
+    if hp:
+        ptc_bits.append(hp)
+    if stop > 0:
+        ptc_bits.append(f"stop aa {stop}")
+    ptc_bit = f" Novel PTC {' / '.join(ptc_bits)}." if ptc_bits else ""
     parsed_data["nmd_decision_basis"] = (
-        f"PTC in coding exon {ptc_rank} of {n_coding}, upstream of the "
-        "penultimate exon-exon junction — predicted to trigger NMD."
+        f"PTC in coding exon {ptc_rank} of {n_coding}{dist_bit}, upstream of the "
+        f"penultimate exon-exon junction — predicted to trigger NMD.{ptc_bit}"
     )
     return True
